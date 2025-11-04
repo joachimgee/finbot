@@ -1,5 +1,4 @@
 # 1. Stdlib
-from __future__ import annotations
 import os
 import pickle
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -10,7 +9,6 @@ import logging
 # 2. Données & Calculs
 import numpy as np
 import pandas as pd
-from pandas import DataFrame, Series
 
 # 3. Financier (optionnel selon ratios)
 # from financetoolkit import Toolkit  # non requis ici
@@ -43,6 +41,7 @@ class MLPredictorConfig:
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
+    sentiment_ma_window: int = 5  # fenêtre MA pour sentiment
     tscv_splits: int = 5
     random_state: int = 42
 
@@ -86,7 +85,7 @@ class MLPredictor:
 
     # ------------------------ Feature Engineering ------------------------
     @staticmethod
-    def _calculate_rsi(prices: Series, period: int = 14) -> Series:
+    def _calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
         delta = prices.diff()
         gain = delta.clip(lower=0).rolling(window=period).mean()
         loss = (-delta.clip(upper=0)).rolling(window=period).mean()
@@ -95,7 +94,7 @@ class MLPredictor:
         return rsi
 
     @staticmethod
-    def _calculate_macd(prices: Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[Series, Series, Series]:
+    def _calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
         ema_fast = prices.ewm(span=fast, adjust=False).mean()
         ema_slow = prices.ewm(span=slow, adjust=False).mean()
         macd = ema_fast - ema_slow
@@ -104,7 +103,7 @@ class MLPredictor:
         return macd, macd_signal, macd_hist
 
     @staticmethod
-    def _calculate_bollinger(prices: Series, window: int = 20, num_std: float = 2.0) -> Tuple[Series, Series, Series]:
+    def _calculate_bollinger(prices: pd.Series, window: int = 20, num_std: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
         ma = prices.rolling(window).mean()
         std = prices.rolling(window).std()
         upper = ma + num_std * std
@@ -114,10 +113,10 @@ class MLPredictor:
 
     def prepare_features(
         self,
-        df_prices: DataFrame,
-        df_sentiment: Optional[DataFrame] = None,
-        df_ratios: Optional[DataFrame] = None,
-    ) -> Tuple[DataFrame, Series]:
+        df_prices: pd.DataFrame,
+        df_sentiment: Optional[pd.DataFrame] = None,
+        df_ratios: Optional[pd.DataFrame] = None,
+    ) -> Tuple[pd.DataFrame, pd.Series]:
         """
         Construit X, y à partir des prix (OHLCV), du sentiment agrégé et des ratios facultatifs.
 
@@ -196,7 +195,7 @@ class MLPredictor:
             if cols:
                 sent = sent[cols].sort_index()
                 # Lissage et variations
-                sent["sentiment_ma_5d"] = sent.get("sentiment_score", pd.Series(index=sent.index)).rolling(5).mean()
+                sent["sentiment_ma_5d"] = sent.get("sentiment_score", pd.Series(index=sent.index)).rolling(self.config.sentiment_ma_window).mean()
                 sent["sentiment_change"] = sent.get("sentiment_score", pd.Series(index=sent.index)).diff()
                 # Aligner à la fréquence des prix
                 sent = sent.reindex(feats.index).ffill().bfill()
@@ -278,12 +277,13 @@ class MLPredictor:
 
     def train(
         self,
-        X_train: DataFrame,
-        y_train: Series,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
         model_type: str = "random_forest",
         param_grid: Optional[Dict[str, List[Any]]] = None,
         cv_splits: Optional[int] = None,
         scoring: str = "neg_mean_absolute_error",
+        verbose: int = 0,
     ) -> Any:
         """
         Entraîne le modèle avec normalisation des features et CV temporelle.
@@ -298,6 +298,7 @@ class MLPredictor:
             param_grid: Grille d'hyperparamètres pour GridSearchCV
             cv_splits: Nombre de splits TimeSeries (défaut config)
             scoring: Métrique de score pour GridSearchCV
+            verbose: Niveau de verbosité GridSearchCV (0=silencieux, 1+=progressif)
 
         Returns:
             Le modèle entraîné
@@ -328,7 +329,7 @@ class MLPredictor:
                 scoring=scoring,
                 cv=tscv,
                 n_jobs=-1,
-                verbose=0,
+                verbose=verbose,
             )
             search.fit(X_train, y_train)
             self.best_params_ = search.best_params_
@@ -342,7 +343,7 @@ class MLPredictor:
         self._is_trained = True
         return self.model
 
-    def predict(self, X_test: DataFrame) -> np.ndarray:
+    def predict(self, X_test: pd.DataFrame) -> np.ndarray:
         """
         Prédit les rendements futurs pour X_test.
 
@@ -358,11 +359,14 @@ class MLPredictor:
         missing = [c for c in self.feature_names if c not in X_test.columns]
         if missing:
             raise ValueError(f"Colonnes manquantes dans X_test: {missing}")
+        extra = [c for c in X_test.columns if c not in self.feature_names]
+        if extra:
+            self.logger.warning(f"Colonnes supplémentaires dans X_test (ignorées): {extra}")
         X_aligned = X_test[self.feature_names]
         preds = self.model.predict(X_aligned)
         return np.asarray(preds)
 
-    def evaluate(self, X_test: DataFrame, y_test: Series) -> Dict[str, float]:
+    def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
         """
         Évalue le modèle sur un jeu de test.
 
@@ -374,12 +378,21 @@ class MLPredictor:
         mse = float(mean_squared_error(y_test, y_pred))
         rmse = float(np.sqrt(mse))
         r2 = float(r2_score(y_test, y_pred))
-        mape = float(np.mean(np.abs((y_test - y_pred) / (y_test + 1e-12))))
+        
+        # MAPE robuste: exclure y_test == 0
+        if (y_test == 0).any():
+            self.logger.warning("y_test contient des zéros, MAPE peut être imprécis")
+        mask = y_test != 0
+        if mask.sum() > 0:
+            mape = float(np.mean(np.abs((y_test[mask] - y_pred[mask]) / y_test[mask])))
+        else:
+            mape = float('nan')
+        
         metrics = {"mae": mae, "mse": mse, "rmse": rmse, "r2": r2, "mape": mape}
         self.logger.info(f"Evaluation: {metrics}")
         return metrics
 
-    def get_feature_importance(self) -> DataFrame:
+    def get_feature_importance(self) -> pd.DataFrame:
         """
         Retourne l'importance des features si disponible.
 
