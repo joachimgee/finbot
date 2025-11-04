@@ -13,6 +13,14 @@ from financetoolkit import Toolkit
 
 # 6. Projet local
 from financial_analyzer.utils.helpers import get_logger
+from financial_analyzer.config import CONSTANTS, TRADING_CONFIG
+
+# 7. (Optionnel) Plotting
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except Exception:
+    HAS_MATPLOTLIB = False
 
 
 @dataclass
@@ -27,6 +35,7 @@ class Trade:
     slippage: float
     cash_after: float
     position_after: float
+    realized_pnl: float = 0.0
 
 
 class BacktestEngine:
@@ -60,6 +69,9 @@ class BacktestEngine:
         sentiment_threshold: float = 0.3,
         rebalance_freq: str = "W",
         target_leverage: float = 1.0,
+        momentum_lookback: int = 20,
+        meanrev_lookback: int = 20,
+        zscore_threshold: float = 1.0,
     ) -> None:
         if initial_capital <= 0:
             raise ValueError("initial_capital doit être > 0")
@@ -80,6 +92,9 @@ class BacktestEngine:
         self.sentiment_threshold = float(sentiment_threshold)
         self.rebalance_freq = rebalance_freq
         self.target_leverage = float(target_leverage)
+        self.momentum_lookback = int(momentum_lookback)
+        self.meanrev_lookback = int(meanrev_lookback)
+        self.zscore_threshold = float(zscore_threshold)
 
         self.logger = get_logger(__name__)
 
@@ -200,6 +215,19 @@ class BacktestEngine:
         self._prices_full = prices_dict
         self.sentiment = df_sentiment
 
+        # Validation NaN post-alignement
+        n_price_nans = int(self.prices.isna().sum().sum())
+        if n_price_nans > 0:
+            self.logger.warning(
+                f"Des valeurs prix NaN subsistent après alignement: {n_price_nans} cellules."
+            )
+        if "sentiment_score" in self.sentiment.columns:
+            n_sent_nans = int(self.sentiment["sentiment_score"].isna().sum())
+            if n_sent_nans > 0:
+                self.logger.warning(
+                    f"Des valeurs sentiment NaN subsistent après alignement: {n_sent_nans} lignes."
+                )
+
         # Reset état
         self.positions = {t: 0.0 for t in self._tickers}
         self.avg_cost = {t: 0.0 for t in self._tickers}
@@ -225,15 +253,18 @@ class BacktestEngine:
                 sent_series = self.sentiment[self.sentiment["ticker"] == t]["sentiment_score"].reindex(self.prices.index).ffill()
                 sig[t] = np.where(sent_series > self.sentiment_threshold, 1, np.where(sent_series < -self.sentiment_threshold, -1, 0))
         elif self.strategy == "momentum":
-            # simple momentum: retour 20 jours
-            ret = self.prices.pct_change(20)
+            # momentum configurable
+            lb = max(1, self.momentum_lookback)
+            ret = self.prices.pct_change(lb)
             sig = np.where(ret > 0, 1, -1)
             sig = pd.DataFrame(sig, index=self.prices.index, columns=self._tickers)
         elif self.strategy == "mean_reversion":
-            # z-score 20 jours
-            roll = self.prices.rolling(20)
+            # mean-reversion configurable via z-score
+            lb = max(2, self.meanrev_lookback)
+            thr = self.zscore_threshold
+            roll = self.prices.rolling(lb)
             z = (self.prices - roll.mean()) / (roll.std() + 1e-12)
-            sig = np.where(z > 1.0, -1, np.where(z < -1.0, 1, 0))
+            sig = np.where(z > thr, -1, np.where(z < -thr, 1, 0))
             sig = pd.DataFrame(sig, index=self.prices.index, columns=self._tickers)
         return sig.astype(int)
 
@@ -284,6 +315,15 @@ class BacktestEngine:
             commission = abs(delta_qty) * exec_price * self.commission_rate
             cost = delta_qty * exec_price + commission
 
+            # Calcul PnL réalisé lors d'une réduction de position
+            realized_pnl = 0.0
+            if current_qty > 0 and delta_qty < 0:
+                close_qty = min(abs(delta_qty), abs(current_qty))
+                realized_pnl = close_qty * (exec_price - (self.avg_cost.get(t, exec_price)))
+            elif current_qty < 0 and delta_qty > 0:
+                close_qty = min(abs(delta_qty), abs(current_qty))
+                realized_pnl = close_qty * ((self.avg_cost.get(t, exec_price)) - exec_price)
+
             # Vérifier cash si achat
             if delta_qty > 0 and (self.cash - cost) < -1e-8:
                 # limiter à cash disponible
@@ -319,6 +359,7 @@ class BacktestEngine:
                     slippage=float(self.slippage_bps),
                     cash_after=float(self.cash),
                     position_after=float(new_qty),
+                    realized_pnl=float(realized_pnl - commission),
                 )
             )
             self.logger.debug(
@@ -354,7 +395,7 @@ class BacktestEngine:
         trades_df = pd.DataFrame([t.__dict__ for t in self.trades])
         if not trades_df.empty:
             trades_df = trades_df.sort_values("date").reset_index(drop=True)
-        self.equity_curve = self.equity_curve.astype(float).fillna(method="ffill").fillna(method="bfill")
+        self.equity_curve = self.equity_curve.astype(float).ffill().bfill()
 
         self.logger.info(
             f"Backtest terminé: {len(trades_df)} trades, equity finale={self.equity_curve['equity'].iloc[-1]:.2f}"
@@ -362,7 +403,7 @@ class BacktestEngine:
         return {"trades": trades_df, "equity_curve": self.equity_curve.copy()}
 
     # -------------- Métriques --------------
-    def calculate_metrics(self, risk_free_rate: float = 0.0) -> Dict[str, Any]:
+    def calculate_metrics(self, risk_free_rate: Optional[float] = None) -> Dict[str, Any]:
         """
         Calcule les métriques de performance.
 
@@ -380,16 +421,22 @@ class BacktestEngine:
         total_return = (eq.iloc[-1] - self.initial_capital) / self.initial_capital
         returns = eq.pct_change().dropna()
 
-        # Déterminer facteur d'annualisation d'après period
-        ann_factor = {"D": 252, "W": 52, "M": 12}[self.period]
+        # Déterminer facteur d'annualisation d'après period (via TRADING_CONFIG)
+        ann_map = {
+            "D": TRADING_CONFIG.get("trading_days_per_year", 252),
+            "W": TRADING_CONFIG.get("trading_weeks_per_year", 52),
+            "M": TRADING_CONFIG.get("trading_months_per_year", 12),
+        }
+        ann_factor = ann_map[self.period]
         annual_return = (1 + returns.mean()) ** ann_factor - 1
         annual_vol = returns.std() * np.sqrt(ann_factor)
-        sharpe = (annual_return - risk_free_rate) / (annual_vol + 1e-12)
+        rf = risk_free_rate if risk_free_rate is not None else TRADING_CONFIG.get("risk_free_rate", 0.0)
+        sharpe = (annual_return - rf) / (annual_vol + 1e-12)
 
         # Sortino: std des rendements négatifs
         downside = returns[returns < 0]
         downside_vol = downside.std() * np.sqrt(ann_factor) if not downside.empty else 0.0
-        sortino = (annual_return - risk_free_rate) / (downside_vol + 1e-12)
+        sortino = (annual_return - rf) / (downside_vol + 1e-12)
 
         # Max drawdown
         cummax = eq.cummax()
@@ -402,16 +449,23 @@ class BacktestEngine:
         win_rate = 0.0
         profit_factor = np.nan
         avg_trade = np.nan
-        if total_trades > 0:
-            # Approx PnL par trade: variation de position * prix d'exécution opposé (approx)
-            # Pour simplicité, on estime profit par signe * qty * (prix courant - avg_cost) lors des rebalancements
-            # Ici, on dérive via changement d'équity ajusté du cash flow; approximation raisonnable pour reporting.
-            pnl_series = eq.diff().dropna()
-            avg_trade = pnl_series.mean() if len(pnl_series) > 0 else 0.0
-            profits = pnl_series[pnl_series > 0].sum()
-            losses = -pnl_series[pnl_series < 0].sum()
-            profit_factor = (profits / losses) if losses > 0 else np.inf
-            win_rate = (pnl_series > 0).mean()
+        if total_trades > 0 and "realized_pnl" in trades_df.columns:
+            realized = trades_df["realized_pnl"].astype(float)
+            realized_nonzero = realized[realized != 0]
+            if not realized_nonzero.empty:
+                avg_trade = realized_nonzero.mean()
+                profits = realized_nonzero[realized_nonzero > 0].sum()
+                losses = -realized_nonzero[realized_nonzero < 0].sum()
+                profit_factor = (profits / losses) if losses > 0 else np.inf
+                win_rate = (realized_nonzero > 0).mean()
+            else:
+                # Fallback: variations d'equity
+                pnl_series = eq.diff().dropna()
+                avg_trade = pnl_series.mean() if len(pnl_series) > 0 else 0.0
+                profits = pnl_series[pnl_series > 0].sum()
+                losses = -pnl_series[pnl_series < 0].sum()
+                profit_factor = (profits / losses) if losses > 0 else np.inf
+                win_rate = (pnl_series > 0).mean()
 
         metrics = {
             "total_return": float(total_return),
@@ -443,8 +497,8 @@ class BacktestEngine:
     def plot_results(self) -> Optional[Any]:
         """Trace l'equity curve et les drawdowns. Retourne une Figure matplotlib si dispo."""
         try:
-            import matplotlib.pyplot as plt
-
+            if not HAS_MATPLOTLIB:
+                raise ImportError("matplotlib indisponible")
             fig, ax = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
             eq = self.equity_curve["equity"].astype(float)
             ax[0].plot(eq.index, eq.values, label="Equity")
@@ -461,3 +515,23 @@ class BacktestEngine:
         except Exception as e:
             self.logger.warning(f"Plot indisponible: {e}")
             return None
+
+    def save_results(self, output_dir: str = "./backtest_results") -> None:
+        """
+        Sauvegarder les résultats en CSV.
+
+        Args:
+            output_dir: Répertoire de sortie
+        """
+        import os
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        results = self.get_results()
+        results["trades"].to_csv(f"{output_dir}/trades.csv", index=False)
+        results["equity_curve"].to_csv(f"{output_dir}/equity_curve.csv")
+
+        metrics = self.calculate_metrics()
+        pd.Series(metrics).to_csv(f"{output_dir}/metrics.csv")
+
+        self.logger.info(f"Résultats sauvegardés dans {output_dir}")
