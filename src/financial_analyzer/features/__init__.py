@@ -10,6 +10,7 @@ Version: 2.0.0
 """
 
 from financial_analyzer.features.fundamental import FundamentalFeatureEngine
+from financial_analyzer.features.pipeline import FeaturePipeline
 from financial_analyzer.features.technical import TechnicalFeatureEngine
 
-__all__ = ['TechnicalFeatureEngine', 'FundamentalFeatureEngine']
+__all__ = ['TechnicalFeatureEngine', 'FundamentalFeatureEngine', 'FeaturePipeline']
