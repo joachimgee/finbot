@@ -56,7 +56,7 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def cache_result(cache_key: str, expiry_hours: int = 24) -> Callable[[F], F]:
+def cache_result(cache_key: str = "", expiry_hours: Optional[int] = None, ttl: Optional[int] = None) -> Callable[[F], F]:
     """
     Décorateur pour cacher les résultats de fonctions.
     
@@ -64,8 +64,9 @@ def cache_result(cache_key: str, expiry_hours: int = 24) -> Callable[[F], F]:
     Le caching peut être désactivé via config.CACHE_ENABLED.
     
     Args:
-        cache_key: Clé unique pour le cache (support format strings)
+        cache_key: Clé unique pour le cache (support format strings, optionnel)
         expiry_hours: Durée de validité du cache en heures (défaut: 24h)
+        ttl: Time-to-live en secondes (alternative à expiry_hours)
     
     Returns:
         Décorateur qui cache le résultat de la fonction
@@ -79,14 +80,26 @@ def cache_result(cache_key: str, expiry_hours: int = 24) -> Callable[[F], F]:
         >>>     # ... fetch data ...
         >>>     return data
         >>> 
+        >>> # Ou avec ttl en secondes
+        >>> @cache_result(ttl=7200)  # 2 heures
+        >>> def get_data():
+        >>>     return expensive_operation()
+        >>> 
         >>> # Premier appel: récupère et cache
         >>> data = get_stock_data("AAPL", "1y")
         >>> 
         >>> # Deuxième appel: charge depuis cache
         >>> data = get_stock_data("AAPL", "1y")
     """
+    # Calculer expiry_hours depuis ttl si fourni
+    if ttl is not None:
+        expiry_hours = ttl / 3600
+    elif expiry_hours is None:
+        expiry_hours = 24
+    
+    # Générer cache_key par défaut si non fourni
     if not cache_key:
-        raise ValueError("cache_key ne peut pas être vide")
+        cache_key = "cache_{func.__name__}"
     
     def decorator(func: F) -> F:
         @wraps(func)
@@ -121,19 +134,19 @@ def cache_result(cache_key: str, expiry_hours: int = 24) -> Callable[[F], F]:
                     logger.warning(f"Cache load error: {e}. Recomputing.")
             
             # Exécuter la fonction et cacher le résultat
+            result = func(*args, **kwargs)
+            
             try:
-                result = func(*args, **kwargs)
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
                 
                 with open(cache_file, 'wb') as f:
                     pickle.dump(result, f)
                 
                 logger.debug(f"Cache saved: {formatted_key}")
-                return result
-            
             except Exception as e:
-                logger.error(f"Cache save error: {e}")
-                return func(*args, **kwargs)
+                logger.warning(f"Cache save error: {e}. Result still returned.")
+            
+            return result
         
         return wrapper
     
