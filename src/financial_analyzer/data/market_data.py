@@ -40,7 +40,6 @@ class MarketDataFetcher:
         else:
             logger.info("MarketDataFetcher initialisé avec yfinance (pas d'API key)")
     
-    @cache_result("market_data_historical", ttl=3600)
     def get_historical_data(
         self,
         tickers: Union[str, List[str]],
@@ -64,8 +63,25 @@ class MarketDataFetcher:
         Raises:
             ValueError: Si dates invalides (start > end)
         """
-        logger.info(f"Récupération données: {tickers}, {start_date} -> {end_date}")
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers))
+        cache_key = f"market_data_hist_{tickers_str}_{start_date}_{end_date}_{interval}"
         
+        @cache_result(cache_key, ttl=3600)
+        def _fetch():
+            logger.info(f"Récupération données: {tickers}, {start_date} -> {end_date}")
+            return self._get_historical_data_impl(tickers, start_date, end_date, interval)
+        
+        return _fetch()
+    
+    def _get_historical_data_impl(
+        self,
+        tickers: Union[str, List[str]],
+        start_date: str,
+        end_date: str,
+        interval: str,
+    ) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+        """Implémentation interne de get_historical_data."""
         # Validation dates
         start_dt = datetime.strptime(start_date, '%Y-%m-%d')
         end_dt = datetime.strptime(end_date, '%Y-%m-%d')
@@ -136,7 +152,6 @@ class MarketDataFetcher:
         
         return df
     
-    @cache_result("market_data_latest", ttl=300)
     def get_latest_price(self, tickers: Union[str, List[str]]) -> pd.Series:
         """
         Récupère le dernier prix Close pour un ou plusieurs tickers.
@@ -144,6 +159,18 @@ class MarketDataFetcher:
         Returns:
             Series avec index=tickers, values=last close price
         """
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers if isinstance(tickers, list) else [tickers]))
+        cache_key = f"market_data_latest_{tickers_str}"
+        
+        @cache_result(cache_key, ttl=300)
+        def _fetch():
+            return self._get_latest_price_impl(tickers)
+        
+        return _fetch()
+    
+    def _get_latest_price_impl(self, tickers: Union[str, List[str]]) -> pd.Series:
+        """Implémentation interne de get_latest_price."""
         logger.info(f"Récupération derniers prix: {tickers}")
         
         is_single = isinstance(tickers, str)
@@ -162,7 +189,7 @@ class MarketDataFetcher:
         
         return pd.Series(prices)
     
-    def validate_ohlcv(self, df: pd.DataFrame) -> bool:
+    def validate_ohlcv(self, df: pd.DataFrame) -> None:
         """
         Valide un DataFrame OHLCV.
         
@@ -188,5 +215,3 @@ class MarketDataFetcher:
         
         if not df.index.is_monotonic_increasing:
             raise ValueError("Dates non en ordre croissant")
-        
-        return True

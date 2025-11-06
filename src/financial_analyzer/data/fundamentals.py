@@ -65,7 +65,6 @@ class FundamentalsProvider:
         self.toolkit = None  # Sera initialisé par ticker dans les méthodes
         logger.info("FundamentalsProvider initialisé avec Financial Modeling Prep API")
 
-    @cache_result("fundamentals_ratios", ttl=21600)  # 6 heures
     def get_all_ratios(
         self,
         tickers: Union[str, List[str]],
@@ -100,6 +99,23 @@ class FundamentalsProvider:
             >>> print(ratios.index.names)
             ['ticker', 'date']
         """
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers))
+        cache_key = f"fundamentals_ratios_{tickers_str}_{period}_{limit}"
+        
+        @cache_result(cache_key, ttl=21600)
+        def _fetch():
+            return self._get_all_ratios_impl(tickers, period, limit)
+        
+        return _fetch()
+
+    def _get_all_ratios_impl(
+        self,
+        tickers: Union[str, List[str]],
+        period: str,
+        limit: int,
+    ) -> pd.DataFrame:
+        """Implémentation interne de get_all_ratios."""
         logger.info(
             f"Récupération ratios: tickers={tickers}, period={period}, limit={limit}"
         )
@@ -174,7 +190,6 @@ class FundamentalsProvider:
             logger.error(f"Erreur FinanceToolkit ratios {ticker}: {e}")
             return pd.DataFrame()
 
-    @cache_result("fundamentals_income", ttl=21600)  # 6 heures
     def get_income_statement(
         self,
         tickers: Union[str, List[str]],
@@ -200,6 +215,23 @@ class FundamentalsProvider:
             >>> print(income.columns[:5])
             Index(['Revenue', 'Cost_of_Revenue', 'Gross_Profit', 'Operating_Expenses', 'EBIT'], dtype='object')
         """
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers))
+        cache_key = f"fundamentals_income_{tickers_str}_{period}_{limit}"
+        
+        @cache_result(cache_key, ttl=21600)
+        def _fetch():
+            return self._get_income_statement_impl(tickers, period, limit)
+        
+        return _fetch()
+    
+    def _get_income_statement_impl(
+        self,
+        tickers: Union[str, List[str]],
+        period: str,
+        limit: int,
+    ) -> pd.DataFrame:
+        """Implémentation interne de get_income_statement."""
         logger.info(
             f"Récupération income statement: tickers={tickers}, period={period}, limit={limit}"
         )
@@ -271,7 +303,6 @@ class FundamentalsProvider:
             logger.error(f"Erreur FinanceToolkit income statement {ticker}: {e}")
             return pd.DataFrame()
 
-    @cache_result("fundamentals_balance", ttl=21600)  # 6 heures
     def get_balance_sheet(
         self,
         tickers: Union[str, List[str]],
@@ -295,8 +326,25 @@ class FundamentalsProvider:
             >>> provider = FundamentalsProvider(api_key="your_key")
             >>> balance = provider.get_balance_sheet('AAPL', period='quarterly', limit=4)
             >>> print(balance.columns[:5])
-            Index(['Total_Assets', 'Total_Liabilities', 'Total_Equity', 'Cash', 'Debt'], dtype='object')
+            Index(['Total_Assets', 'Current_Assets', 'Cash', 'Marketable_Securities', 'Accounts_Receivable'], dtype='object')
         """
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers))
+        cache_key = f"fundamentals_balance_{tickers_str}_{period}_{limit}"
+        
+        @cache_result(cache_key, ttl=21600)
+        def _fetch():
+            return self._get_balance_sheet_impl(tickers, period, limit)
+        
+        return _fetch()
+    
+    def _get_balance_sheet_impl(
+        self,
+        tickers: Union[str, List[str]],
+        period: str,
+        limit: int,
+    ) -> pd.DataFrame:
+        """Implémentation interne de get_balance_sheet."""
         logger.info(
             f"Récupération balance sheet: tickers={tickers}, period={period}, limit={limit}"
         )
@@ -368,7 +416,6 @@ class FundamentalsProvider:
             logger.error(f"Erreur FinanceToolkit balance sheet {ticker}: {e}")
             return pd.DataFrame()
 
-    @cache_result("fundamentals_cashflow", ttl=21600)  # 6 heures
     def get_cash_flow(
         self,
         tickers: Union[str, List[str]],
@@ -390,10 +437,27 @@ class FundamentalsProvider:
 
         Example:
             >>> provider = FundamentalsProvider(api_key="your_key")
-            >>> cashflow = provider.get_cash_flow('AAPL', period='annual', limit=5)
+            >>> cashflow = provider.get_cash_flow('AAPL', period='quarterly', limit=4)
             >>> print(cashflow.columns[:5])
-            Index(['Operating_Cash_Flow', 'Investing_Cash_Flow', 'Financing_Cash_Flow', 'Free_Cash_Flow', 'CapEx'], dtype='object')
+            Index(['Operating_CF', 'Investing_CF', 'Financing_CF', 'Free_Cash_Flow', 'CapEx'], dtype='object')
         """
+        # Créer clé cache dynamique
+        tickers_str = tickers if isinstance(tickers, str) else ','.join(sorted(tickers))
+        cache_key = f"fundamentals_cashflow_{tickers_str}_{period}_{limit}"
+        
+        @cache_result(cache_key, ttl=21600)
+        def _fetch():
+            return self._get_cash_flow_impl(tickers, period, limit)
+        
+        return _fetch()
+    
+    def _get_cash_flow_impl(
+        self,
+        tickers: Union[str, List[str]],
+        period: str,
+        limit: int,
+    ) -> pd.DataFrame:
+        """Implémentation interne de get_cash_flow."""
         logger.info(
             f"Récupération cash flow: tickers={tickers}, period={period}, limit={limit}"
         )
