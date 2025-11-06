@@ -285,7 +285,7 @@ class FeaturePipeline:
                 
                 # Si encore des NaN (début/fin), ffill puis bfill
                 if nan_after > 0:
-                    self.features = self.features.fillna(method='ffill').fillna(method='bfill')
+                    self.features = self.features.ffill().bfill()
                     nan_final = self.features.isna().sum().sum()
                     logger.info(f"Fill supplémentaire appliqué, NaN final: {nan_final}")
             
@@ -582,6 +582,10 @@ class FeaturePipeline:
         """
         mean = col.mean()
         std_dev = col.std()
+        
+        # Protection division par zéro (valeurs constantes)
+        if std_dev == 0:
+            return pd.Series([False] * len(col), index=col.index)
         
         # Outlier si |valeur - mean| > std × std_dev
         lower_bound = mean - (std * std_dev)
