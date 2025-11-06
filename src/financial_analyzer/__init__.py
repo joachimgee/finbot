@@ -1,0 +1,1 @@
+"""FinBot - Financial Analyzer package."""

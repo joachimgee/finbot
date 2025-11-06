@@ -93,3 +93,9 @@ types-requests>=2.31.0
 # ta-lib>=0.4.28  # Technical Analysis Library (installer via conda ou compilation manuelle)
 #                 # conda install -c conda-forge ta-lib
 #                 # ou voir https://github.com/TA-Lib/ta-lib-python
+
+# News scraping & sentiment (optional)
+newsapi-python>=0.2.7  # NewsAPI client for financial news
+# praw>=7.7.0  # Reddit API (uncomment if needed: pip install praw)
+# python-Levenshtein>=0.21.0  # Fast fuzzy string matching (uncomment if needed)
+

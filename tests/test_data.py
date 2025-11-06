@@ -77,7 +77,7 @@ def sample_news_df() -> pd.DataFrame:
     Colonnes: headline, source, url, text, ticker
     Index: DatetimeIndex UTC
     """
-    idx = pd.date_range("2023-01-03", periods=3, periods="D", tz="UTC", name="date")
+    idx = pd.date_range("2023-01-03", periods=3, freq="D", tz="UTC", name="date")
     df = pd.DataFrame({
         "headline": [
             "Apple beats Q1 earnings expectations",

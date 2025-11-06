@@ -331,4 +331,496 @@ class FinancialNewsScraper:
                     for item in ticker_obj.news:
                         try:
                             headline = self._clean_text(item.get("title", ""))
-                            text = self._clean_text(item
+                            text = self._clean_text(item.get("description", ""))
+                            source = item.get("publisher", "Yahoo Finance")
+                            url = item.get("link", "")
+                            pub_date_raw = item.get("providerPublishTime")
+                            pub_date = pd.to_datetime(pub_date_raw, unit='s', utc=True) if pub_date_raw else pd.NaT
+
+                            if headline:
+                                articles.append({
+                                    'headline': headline,
+                                    'source': source,
+                                    'url': url,
+                                    'text': text or headline,
+                                    'published': pub_date,
+                                })
+                        except Exception as e:
+                            self.logger.warning(f"Erreur parsing item Yahoo: {e}")
+                            continue
+
+            except Exception as e:
+                self.logger.error(f"Erreur Yahoo Finance {ticker}: {e}")
+                return pd.DataFrame()
+
+            if not articles:
+                self.logger.warning(f"Aucune news Yahoo pour {ticker}")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(articles)
+            df = df.sort_values('published', ascending=False).reset_index(drop=True)
+            return df
+
+        return _fetch()
+
+    def get_news_from_newsapi(
+        self,
+        ticker: str,
+        max_articles: int = 50,
+        language: str = 'en'
+    ) -> pd.DataFrame:
+        """
+        Récupère news via NewsAPI (100 req/jour gratuit).
+
+        ⚠️ Nécessite API key de https://newsapi.org
+        
+        Args:
+            ticker: Ticker symbol (ex: 'AAPL')
+            max_articles: Max articles à récupérer
+            language: Language code (ex: 'en')
+
+        Returns:
+            DataFrame avec colonnes: ['headline', 'source', 'url', 'text', 'published']
+            Index: DatetimeIndex UTC
+
+        Example:
+            >>> df = scraper.get_news_from_newsapi("AAPL", max_articles=50)
+            >>> print(df.head())
+        """
+        ticker = validate_ticker(ticker)
+        
+        # Check API key
+        api_key = API_KEYS.get('newsapi_key')
+        if not api_key:
+            self.logger.warning("NewsAPI key not configured, returning empty DataFrame")
+            return pd.DataFrame()
+
+        cache_key = f"newsapi_{ticker}_{language}"
+
+        @cache_result(cache_key, expiry_hours=12)
+        def _fetch() -> pd.DataFrame:
+            self.logger.info(f"Récupération NewsAPI: {ticker}")
+
+            articles = []
+            url = "https://newsapi.org/v2/everything"
+            
+            params = {
+                'q': ticker,
+                'sortBy': 'publishedAt',
+                'language': language,
+                'pageSize': min(max_articles, 100),  # API limit
+                'apiKey': api_key
+            }
+
+            try:
+                response = self._request(url, params=params)
+                if response and response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get('status') == 'ok':
+                        for item in data.get('articles', []):
+                            try:
+                                headline = self._clean_text(item.get('title', ''))
+                                text = self._clean_text(item.get('description', ''))
+                                source = item.get('source', {}).get('name', 'NewsAPI')
+                                url_item = item.get('url', '')
+                                pub_date_str = item.get('publishedAt')
+                                pub_date = pd.to_datetime(pub_date_str, utc=True) if pub_date_str else pd.NaT
+
+                                if headline:
+                                    articles.append({
+                                        'headline': headline,
+                                        'source': source,
+                                        'url': url_item,
+                                        'text': text or headline,
+                                        'published': pub_date,
+                                    })
+                            except Exception as e:
+                                self.logger.warning(f"Erreur parsing article NewsAPI: {e}")
+                                continue
+                    else:
+                        self.logger.error(f"NewsAPI error: {data.get('message', 'Unknown')}")
+                        
+                elif response and response.status_code == 429:
+                    self.logger.warning("NewsAPI rate limit exceeded (100/day)")
+                    
+            except Exception as e:
+                self.logger.error(f"Erreur NewsAPI {ticker}: {e}")
+                return pd.DataFrame()
+
+            if not articles:
+                self.logger.warning(f"Aucune news NewsAPI pour {ticker}")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(articles)
+            df = df.sort_values('published', ascending=False).reset_index(drop=True)
+            return df
+
+        return _fetch()
+
+    def get_news_from_reddit(
+        self,
+        ticker: str,
+        subreddits: Optional[List[str]] = None,
+        limit: int = 50
+    ) -> pd.DataFrame:
+        """
+        Récupère discussions Reddit (optionnel via PRAW).
+
+        ⚠️ Optionnel: Nécessite PRAW + Reddit app credentials
+        
+        Args:
+            ticker: Ticker symbol (ex: 'AAPL')
+            subreddits: Liste subreddits (default: ['stocks', 'investing', 'wallstreetbets'])
+            limit: Nombre de posts par subreddit
+
+        Returns:
+            DataFrame avec colonnes: ['headline', 'source', 'url', 'text', 'published', 'score']
+            Index: DatetimeIndex UTC
+
+        Note:
+            Si PRAW non installé ou credentials manquantes:
+            - Log warning
+            - Return empty DataFrame
+            - Do NOT crash
+
+        Example:
+            >>> df = scraper.get_news_from_reddit("AAPL", limit=50)
+            >>> print(df.head())
+        """
+        ticker = validate_ticker(ticker)
+        
+        # Try import PRAW (optional dependency)
+        try:
+            import praw
+        except ImportError:
+            self.logger.warning("PRAW not installed, skipping Reddit (install with: pip install praw)")
+            return pd.DataFrame()
+
+        # Check Reddit credentials
+        client_id = API_KEYS.get('reddit_client_id')
+        client_secret = API_KEYS.get('reddit_client_secret')
+        user_agent = API_KEYS.get('reddit_user_agent', 'FinBot/1.0')
+        
+        if not client_id or not client_secret:
+            self.logger.warning("Reddit credentials not configured, returning empty DataFrame")
+            return pd.DataFrame()
+
+        if subreddits is None:
+            subreddits = ['stocks', 'investing', 'wallstreetbets']
+
+        cache_key = f"reddit_{ticker}_{'_'.join(subreddits)}"
+
+        @cache_result(cache_key, expiry_hours=24)
+        def _fetch() -> pd.DataFrame:
+            self.logger.info(f"Récupération Reddit: {ticker} from {subreddits}")
+
+            articles = []
+
+            try:
+                reddit = praw.Reddit(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    user_agent=user_agent
+                )
+
+                for subreddit_name in subreddits:
+                    try:
+                        subreddit = reddit.subreddit(subreddit_name)
+                        
+                        # Search posts with ticker keyword
+                        for submission in subreddit.search(ticker, limit=limit, time_filter='month'):
+                            try:
+                                headline = self._clean_text(submission.title)
+                                text = self._clean_text(submission.selftext)
+                                url_item = f"https://reddit.com{submission.permalink}"
+                                pub_date = pd.to_datetime(submission.created_utc, unit='s', utc=True)
+                                score = int(submission.score)
+
+                                if headline:
+                                    articles.append({
+                                        'headline': headline,
+                                        'source': f'Reddit r/{subreddit_name}',
+                                        'url': url_item,
+                                        'text': text or headline,
+                                        'published': pub_date,
+                                        'score': score,
+                                    })
+                            except Exception as e:
+                                self.logger.debug(f"Erreur parsing Reddit post: {e}")
+                                continue
+                                
+                    except Exception as e:
+                        self.logger.warning(f"Erreur accessing subreddit {subreddit_name}: {e}")
+                        continue
+
+            except Exception as e:
+                self.logger.error(f"Erreur Reddit API {ticker}: {e}")
+                return pd.DataFrame()
+
+            if not articles:
+                self.logger.warning(f"Aucune discussion Reddit pour {ticker}")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(articles)
+            df = df.sort_values('published', ascending=False).reset_index(drop=True)
+            return df
+
+        return _fetch()
+
+    def get_all_news(
+        self,
+        ticker: str,
+        max_articles: int = 100,
+        include_reddit: bool = False
+    ) -> pd.DataFrame:
+        """
+        Agrège toutes sources: Yahoo + FinViz + NewsAPI + Reddit (optionnel).
+
+        Args:
+            ticker: Ticker symbol
+            max_articles: Max articles total (distributed across sources)
+            include_reddit: Include Reddit discussions
+
+        Returns:
+            Combined DataFrame, deduplicated, sorted by date (latest first)
+            Columns: ['headline', 'source', 'url', 'text', 'published']
+
+        Example:
+            >>> df = scraper.get_all_news("AAPL", max_articles=100, include_reddit=True)
+            >>> print(f"Retrieved {len(df)} articles from {df['source'].nunique()} sources")
+        """
+        ticker = validate_ticker(ticker)
+        
+        self.logger.info(f"Fetching all news for {ticker} (max={max_articles}, reddit={include_reddit})")
+
+        # Fetch from all sources in parallel (I/O bound)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        results = []
+        sources = {
+            'Yahoo': lambda: self.get_news_from_yahoo(ticker),
+            'FinViz': lambda: self.get_news_from_finviz(ticker),
+            'NewsAPI': lambda: self.get_news_from_newsapi(ticker, max_articles=max_articles // 3),
+        }
+        
+        if include_reddit:
+            sources['Reddit'] = lambda: self.get_news_from_reddit(ticker, limit=max_articles // 4)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_source = {executor.submit(func): name for name, func in sources.items()}
+            
+            for future in as_completed(future_to_source):
+                source_name = future_to_source[future]
+                try:
+                    df = future.result()
+                    if not df.empty:
+                        results.append(df)
+                        self.logger.debug(f"Retrieved {len(df)} articles from {source_name}")
+                except Exception as e:
+                    self.logger.warning(f"Error fetching from {source_name}: {e}")
+
+        if not results:
+            self.logger.warning(f"No news found for {ticker} from any source")
+            return pd.DataFrame()
+
+        # Concatenate all results
+        combined = pd.concat(results, ignore_index=True)
+        
+        # Deduplicate by headline similarity
+        combined = _deduplicate_news(combined, threshold=0.85)
+        
+        # Sort by date (latest first)
+        combined = combined.sort_values('published', ascending=False)
+        
+        # Limit to max_articles
+        combined = combined.head(max_articles)
+        
+        # Set DatetimeIndex
+        combined = combined.set_index('published')
+        
+        self.logger.info(f"Retrieved {len(combined)} articles from {combined['source'].nunique()} sources for {ticker}")
+        
+        return combined
+
+    def add_sentiment_scores(
+        self,
+        news_df: pd.DataFrame,
+        batch_size: int = 32
+    ) -> pd.DataFrame:
+        """
+        Ajoute sentiment scores using FinBERT (ProsusAI/finbert).
+
+        Args:
+            news_df: DataFrame with 'text' or 'headline' column
+            batch_size: Batch size pour traitement
+
+        Returns:
+            DataFrame with new columns:
+            - 'sentiment': float -1 to +1 (negative to positive)
+            - 'sentiment_label': str ('positive', 'negative', 'neutral')
+            - 'sentiment_confidence': float 0 to 1
+
+        Note:
+            Requires transformers and torch (optional dependencies).
+            If not available, logs warning and returns original DataFrame.
+
+        Example:
+            >>> df = scraper.get_all_news("AAPL")
+            >>> df_with_sentiment = scraper.add_sentiment_scores(df)
+            >>> print(df_with_sentiment[['headline', 'sentiment', 'sentiment_label']].head())
+        """
+        if news_df.empty:
+            return news_df
+
+        # Try import transformers and torch (optional)
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            import torch
+        except ImportError:
+            self.logger.warning(
+                "transformers/torch not installed, skipping sentiment analysis "
+                "(install with: pip install transformers torch)"
+            )
+            return news_df
+
+        self.logger.info(f"Computing sentiment scores for {len(news_df)} articles (batch_size={batch_size})")
+
+        # Determine text column
+        text_col = 'text' if 'text' in news_df.columns else 'headline'
+        
+        if text_col not in news_df.columns:
+            self.logger.warning("No 'text' or 'headline' column found, skipping sentiment")
+            return news_df
+
+        try:
+            # Load FinBERT model (cached after first load)
+            model_name = "ProsusAI/finbert"
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+            model = AutoModelForSequenceClassification.from_pretrained(model_name)
+            model.eval()
+
+            sentiments = []
+            labels = []
+            confidences = []
+
+            # Batch process
+            texts = news_df[text_col].fillna('').tolist()
+            
+            for i in range(0, len(texts), batch_size):
+                batch_texts = texts[i:i + batch_size]
+                
+                try:
+                    # Tokenize batch
+                    inputs = tokenizer(
+                        batch_texts,
+                        padding=True,
+                        truncation=True,
+                        max_length=512,
+                        return_tensors='pt'
+                    )
+
+                    # Forward pass
+                    with torch.no_grad():
+                        outputs = model(**inputs)
+                        logits = outputs.logits
+                        probs = torch.nn.functional.softmax(logits, dim=-1)
+
+                    # Process batch results
+                    for prob in probs:
+                        # FinBERT classes: [negative, neutral, positive]
+                        neg, neu, pos = prob.tolist()
+                        
+                        # Map to -1 to +1 scale
+                        sentiment_score = pos - neg
+                        
+                        # Determine label
+                        if pos > neg and pos > neu:
+                            label = 'positive'
+                            confidence = pos
+                        elif neg > pos and neg > neu:
+                            label = 'negative'
+                            confidence = neg
+                        else:
+                            label = 'neutral'
+                            confidence = neu
+
+                        sentiments.append(sentiment_score)
+                        labels.append(label)
+                        confidences.append(confidence)
+
+                except Exception as e:
+                    self.logger.warning(f"Error processing batch {i}: {e}")
+                    # Fill with NaN for failed batch
+                    for _ in range(len(batch_texts)):
+                        sentiments.append(np.nan)
+                        labels.append('unknown')
+                        confidences.append(np.nan)
+
+            # Add columns to DataFrame
+            news_df = news_df.copy()
+            news_df['sentiment'] = sentiments
+            news_df['sentiment_label'] = labels
+            news_df['sentiment_confidence'] = confidences
+
+            self.logger.info(
+                f"Sentiment analysis complete: "
+                f"{(news_df['sentiment_label'] == 'positive').sum()} positive, "
+                f"{(news_df['sentiment_label'] == 'negative').sum()} negative, "
+                f"{(news_df['sentiment_label'] == 'neutral').sum()} neutral"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error in sentiment analysis: {e}")
+            return news_df
+
+        return news_df
+
+
+# ==================== Module-level helpers ====================
+
+
+def _deduplicate_news(df: pd.DataFrame, threshold: float = 0.85) -> pd.DataFrame:
+    """
+    Deduplicate news by headline similarity.
+
+    Uses SequenceMatcher for fuzzy matching to remove near-duplicate headlines.
+
+    Args:
+        df: DataFrame with 'headline' column
+        threshold: Similarity threshold (0-1), default 0.85
+
+    Returns:
+        Deduplicated DataFrame
+
+    Example:
+        >>> df = pd.DataFrame({'headline': ['Apple rises', 'Apple rises today', 'Tesla drops']})
+        >>> dedup = _deduplicate_news(df, threshold=0.85)
+        >>> print(len(dedup))  # 2 (first two considered duplicates)
+    """
+    if df.empty or 'headline' not in df.columns:
+        return df
+
+    from difflib import SequenceMatcher
+
+    keep_indices = []
+    seen_headlines = []
+
+    for idx, row in df.iterrows():
+        headline = row['headline']
+        is_duplicate = False
+
+        # Check against all previously seen headlines
+        for seen in seen_headlines:
+            similarity = SequenceMatcher(None, headline.lower(), seen.lower()).ratio()
+            if similarity >= threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            keep_indices.append(idx)
+            seen_headlines.append(headline)
+
+    return df.loc[keep_indices].reset_index(drop=True)
+
+
