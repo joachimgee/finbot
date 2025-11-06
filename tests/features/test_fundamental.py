@@ -271,7 +271,9 @@ class TestValuationFeatures:
         
         # PEG devrait gérer division par zéro
         peg = valuation['PEG_Ratio']
-        # Soit NaN, soit infini géré
+        # PEG devrait être NaN ou géré (pas inf)
+        assert not (peg == np.inf).any(), "PEG contains inf values"
+        assert not (peg == -np.inf).any(), "PEG contains -inf values"
 
 
 class TestQualityFeatures:

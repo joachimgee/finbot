@@ -218,7 +218,7 @@ class FundamentalFeatureEngine:
         # 5. Valuation Score (moyenne des scores disponibles)
         score_cols = [col for col in valuation_features.columns if 'Score' in col or 'Assessment' in col]
         if score_cols:
-            valuation_features['Valuation_Score'] = valuation_features[score_cols].mean(axis=1)
+            valuation_features['Valuation_Score'] = valuation_features[score_cols].mean(axis=1).clip(0, 100)
         else:
             valuation_features['Valuation_Score'] = 50.0  # Neutral
         
@@ -317,7 +317,7 @@ class FundamentalFeatureEngine:
         # 6. Quality Score (moyenne des scores disponibles)
         score_cols = [col for col in quality_features.columns if 'Score' in col or 'Rating' in col]
         if score_cols:
-            quality_features['Quality_Score'] = quality_features[score_cols].mean(axis=1)
+            quality_features['Quality_Score'] = quality_features[score_cols].mean(axis=1).clip(0, 100)
         else:
             quality_features['Quality_Score'] = 50.0
         
@@ -443,7 +443,7 @@ class FundamentalFeatureEngine:
         # 4. Operating Efficiency Score (moyenne des scores)
         score_cols = [col for col in efficiency_features.columns if 'Score' in col]
         if score_cols:
-            efficiency_features['Operating_Efficiency_Score'] = efficiency_features[score_cols].mean(axis=1)
+            efficiency_features['Operating_Efficiency_Score'] = efficiency_features[score_cols].mean(axis=1).clip(0, 100)
         else:
             efficiency_features['Operating_Efficiency_Score'] = 50.0
         
