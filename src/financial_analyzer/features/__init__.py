@@ -9,6 +9,7 @@ Date: 2025-11-06
 Version: 2.0.0
 """
 
+from financial_analyzer.features.fundamental import FundamentalFeatureEngine
 from financial_analyzer.features.technical import TechnicalFeatureEngine
 
-__all__ = ['TechnicalFeatureEngine']
+__all__ = ['TechnicalFeatureEngine', 'FundamentalFeatureEngine']
