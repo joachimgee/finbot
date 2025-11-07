@@ -47,30 +47,43 @@ cp .env.example .env
 # Éditer .env avec vos API keys
 ```
 
-## 🔑 API Keys Nécessaires
+## � Documentation
+
+- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation
+- **[Architecture](docs/ARCHITECTURE.md)** - System design & patterns
+- **[Examples](docs/EXAMPLES.md)** - 8+ usage examples
+- **[Deployment](docs/DEPLOYMENT.md)** - Production setup & troubleshooting
+
+## �🔑 API Keys Nécessaires
 
 1. **Financial Modeling Prep** : [Obtenir une clé](https://financialmodelingprep.com/developer/docs/)
 2. **Alpha Vantage** (optionnel) : [Obtenir une clé](https://www.alphavantage.co/support/#api-key)
 
 ## 🚀 Démarrage Rapide
 
+See [EXAMPLES.md](docs/EXAMPLES.md) for complete workflows.
+
 ```python
-from financial_analyzer.data import MarketDataFetcher
-from financial_analyzer.sentiment import FinancialSentimentAnalyzer
-from financial_analyzer.recommendations import PortfolioRecommendationEngine
+from financial_analyzer.portfolio import PortfolioOptimizer, PortfolioConstraints
+import pandas as pd
 
-# 1. Récupérer les données
-fetcher = MarketDataFetcher(api_key="YOUR_API_KEY")
-data = fetcher.get_stock_history("AAPL", period="1y")
+# 1. Load historical returns
+returns = pd.read_csv("returns.csv", index_col=0, parse_dates=True)
 
-# 2. Analyser le sentiment
-analyzer = FinancialSentimentAnalyzer()
-news = fetcher.scrape_news("AAPL")
-sentiment = analyzer.analyze_batch(news['headline'].tolist())
+# 2. Setup constraints
+constraints = PortfolioConstraints()
+constraints.add_allocation_limits(min_weight=0.05, max_weight=0.30)
+constraints.add_concentration_limit(max_herfindahl=0.25)
 
-# 3. Générer recommandations
-recommender = PortfolioRecommendationEngine(["AAPL", "MSFT", "GOOGL"], data)
-allocations = recommender.optimize_with_sentiment(sentiment)
+# 3. Optimize portfolio
+optimizer = PortfolioOptimizer(returns, risk_free_rate=0.02)
+optimizer.add_constraint(constraints)
+result = optimizer.optimize_max_sharpe()
+
+print(f"Expected Return: {result['return']:.2%}")
+print(f"Volatility: {result['volatility']:.2%}")
+print(f"Sharpe Ratio: {result['sharpe']:.2f}")
+print(f"\nOptimal Weights:\n{result['weights']}")
 ```
 
 ## 📁 Structure du Projet
@@ -78,14 +91,44 @@ allocations = recommender.optimize_with_sentiment(sentiment)
 ```
 finbot/
 ├── src/financial_analyzer/
-│   ├── data/              # Module récupération données
-│   ├── sentiment/         # Module analyse sentiment
-│   ├── analysis/          # Module analyse technique & ML
-│   └── recommendations/   # Module recommandations
-├── api/                   # API REST FastAPI
+│   ├── data/              # Data Layer (Universe, Market Data, Fundamentals)
+│   ├── features/          # Feature Engineering (Technical, Fundamental)
+│   ├── backtest/          # Backtesting Engine
+│   ├── portfolio/         # Portfolio Optimization ✅
+│   │   ├── optimizer.py       # Mean-Variance Optimization
+│   │   ├── constraints.py     # Portfolio Constraints
+│   │   ├── rebalancer.py      # Rebalancing Strategies
+│   │   └── metrics.py         # Risk/Return Metrics
+│   ├── ml/                # Machine Learning ✅
+│   │   ├── feature_engineering.py  # AlphaFactorEngine (26+ factors)
+│   │   ├── factor_selection.py     # FactorAnalyzer (IC computation)
+│   │   └── feature_importance.py   # FeatureImportance (permutation)
+│   └── trading/           # Live Trading (TODO)
+├── tests/
+│   ├── test_portfolio/    # Portfolio Tests (69 tests, 100% passed) ✅
+│   │   ├── test_integration.py   # 42 E2E tests
+│   │   ├── test_optimizer.py     # 13 tests
+│   │   ├── test_constraints.py   # 11 tests
+│   │   ├── test_rebalancer.py    # 3 tests
+│   │   └── test_metrics.py       # 3 tests
+│   ├── test_ml/           # ML Tests (19 tests, 100% passed) ✅
+│   │   ├── test_features.py           # 8 tests (factors + edge cases)
+│   │   ├── test_feature_importance.py # 7 tests (validation)
+│   │   └── test_features_edge_cases.py # 4 tests (robustness)
+│   ├── test_data/
+│   ├── test_features/
+│   └── test_backtest/
+├── docs/                  # Documentation ✅
+│   ├── API_REFERENCE.md       # Complete API docs
+│   ├── ARCHITECTURE.md        # System design
+│   ├── EXAMPLES.md            # 8+ usage examples
+│   ├── DEPLOYMENT.md          # Production guide
+│   ├── PHASE4_COMPLETION.md   # Portfolio module docs
+│   ├── PHASE4.5_COMPLETION.md # Enhanced tests docs
+│   └── PHASE5.1_COMPLETION.md # ML Alpha Factors docs
+├── api/                   # REST API (TODO)
 ├── notebooks/             # Jupyter notebooks
-├── tests/                 # Tests unitaires
-└── docs/                  # Documentation
+└── README.md              # This file
 ```
 
 ## 🧪 Tests
@@ -94,22 +137,47 @@ finbot/
 # Tous les tests
 pytest tests/ -v
 
+# Tests portfolio (69 tests)
+pytest tests/test_portfolio/ -v
+
+# Tests ML (19 tests)
+pytest tests/test_ml/ -v
+
+# Tests d'intégration (42 E2E tests)
+pytest tests/test_portfolio/test_integration.py -v
+
 # Avec couverture
 pytest tests/ --cov=financial_analyzer --cov-report=html
 
 # Tests spécifiques
-pytest tests/test_sentiment.py -v
+pytest tests/test_portfolio/test_optimizer.py -v
+pytest tests/test_ml/test_features.py -v
 ```
+
+**Phase 4 Portfolio Module - Status: ✅ COMPLETE**
+- 69 tests (100% passed, 2 skipped)
+- Unit tests: 28/28 ✅
+- Integration tests: 41/42 ✅
+- Code quality: 9.85/10
+
+**Phase 5.1 ML Alpha Factors - Status: ✅ COMPLETE**
+- 19 tests (100% passed)
+- 26+ alpha factors (Momentum/Volatility/Trend/Volume) ✅
+- Information Coefficient analysis ✅
+- Permutation importance ✅
+- Code quality: 9.8/10
 
 ## 📊 Roadmap
 
-- [x] Setup initial du projet
-- [ ] Semaine 1 : Module Data
-- [ ] Semaine 2 : Module Sentiment
-- [ ] Semaine 3 : Module Analysis & Backtesting
-- [ ] Semaine 4 : Module Recommendations
-- [ ] API REST complète
-- [ ] Dashboard web interactif
+- [x] **Phase 1**: Data Layer (Universe, Market Data, Fundamentals) ✅
+- [x] **Phase 2**: Feature Engineering (Technical, Fundamental) ✅
+- [x] **Phase 3**: Backtesting Engine (Strategy, Metrics, Signals) ✅
+- [x] **Phase 4**: Portfolio Optimization (Optimizer, Constraints, Rebalancer) ✅
+- [x] **Phase 4.5**: Enhanced Test Suite (42 E2E tests, 9.85/10) ✅
+- [x] **Phase 5.1**: Alpha Factor Engineering (26+ factors, IC analysis, 9.8/10) ✅
+- [ ] **Phase 5.2**: Extended Factor Library (100+ factors, advanced selection)
+- [ ] **Phase 6**: Live Trading (Broker Integration, Order Management)
+- [ ] **Phase 7**: Production (CLI, Dashboard, Deployment)
 
 ## 📝 License
 

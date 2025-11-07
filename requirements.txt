@@ -1,65 +1,101 @@
-# Core Data & Analysis
-pandas>=2.1.0,<3.0.0
-numpy>=1.24.0,<2.0.0
-scipy>=1.11.0,<2.0.0
+# ============================================================================
+# FinBot v2.0 - Requirements
+# Python >= 3.9
+# ============================================================================
 
-# Finance Libraries - VOS FORKS PRIORITAIRES
-financedatabase>=2.2.0,<3.0.0
-financetoolkit>=1.8.0,<2.0.0
-yfinance>=0.2.31,<0.3.0
-alpha-vantage>=2.3.1,<3.0.0
+# ============================================================================
+# CORE DATA & FINANCE
+# ============================================================================
+financedatabase>=2.2.0
+financetoolkit>=1.8.0
+yfinance>=0.2.30
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
 
-# Backtesting - FORK backtesting.py
-backtesting>=0.3.3,<1.0.0
+# ============================================================================
+# BACKTESTING
+# ============================================================================
+backtesting>=0.3.3
+bokeh>=3.2.0
 
-# Portfolio Optimization - FORKS Riskfolio-Lib & PyPortfolioOpt
-riskfolio-lib>=5.0.0,<6.0.0
-PyPortfolioOpt>=1.5.5,<2.0.0
-cvxpy>=1.4.0,<2.0.0
+# ============================================================================
+# PORTFOLIO OPTIMIZATION
+# ============================================================================
+pypfopt>=1.5.5
+riskfolio-lib>=6.0.0
+cvxpy>=1.4.0
 
-# Machine Learning & NLP - FORK machine-learning-for-trading
-scikit-learn>=1.3.0,<2.0.0
-transformers>=4.35.0,<5.0.0
-torch>=2.1.0,<3.0.0
-# tensorflow>=2.14.0,<3.0.0  # OPTIONAL: uncomment if needed (heavy)
+# ============================================================================
+# MACHINE LEARNING & NLP
+# ============================================================================
+scikit-learn>=1.3.0
+xgboost>=2.0.0
+lightgbm>=4.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0
+sentencepiece>=0.1.99
+prophet>=1.1.4
+statsmodels>=0.14.0
+scikit-optimize>=0.9.0
 
-# NLP Sentiment Analysis
-nltk>=3.8.1,<4.0.0
-textblob>=0.17.1,<1.0.0
+# ============================================================================
+# VISUALIZATION
+# ============================================================================
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.15.0
 
-# Web Scraping & APIs
-requests>=2.31.0,<3.0.0
-beautifulsoup4>=4.12.0,<5.0.0
-selenium>=4.15.0,<5.0.0
-aiohttp>=3.9.0,<4.0.0  # Pour scraping asynchrone
-httpx>=0.25.0,<1.0.0    # Alternative moderne à requests
+# ============================================================================
+# API & WEB
+# ============================================================================
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
+streamlit>=1.25.0
 
-# API Framework
-fastapi>=0.104.0,<1.0.0
-uvicorn>=0.24.0,<1.0.0
-pydantic>=2.4.0,<3.0.0
+# ============================================================================
+# UTILITIES
+# ============================================================================
+python-dotenv>=1.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+joblib>=1.3.0
+tqdm>=4.65.0
+python-dateutil>=2.8.0
 
-# Database
-sqlalchemy>=2.0.0,<3.0.0
-psycopg2-binary>=2.9.9,<3.0.0  # PostgreSQL driver (optionnel)
+# ============================================================================
+# TESTING
+# ============================================================================
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+httpx>=0.24.0
 
-# Visualization
-matplotlib>=3.8.0,<4.0.0
-seaborn>=0.13.0,<1.0.0
-plotly>=5.17.0,<6.0.0
-bokeh>=3.3.0,<4.0.0
+# ============================================================================
+# CODE QUALITY
+# ============================================================================
+black>=23.7.0
+isort>=5.12.0
+flake8>=6.1.0
+mypy>=1.5.0
+pandas-stubs>=2.0.0
+types-requests>=2.31.0
 
-# Utilities
-python-dotenv>=1.0.0,<2.0.0
-tqdm>=4.66.0,<5.0.0
-joblib>=1.3.2,<2.0.0
-loguru>=0.7.2,<1.0.0
+# ============================================================================
+# OPTIONAL (installation manuelle requise)
+# ============================================================================
+# ta-lib>=0.4.28  # Technical Analysis Library (installer via conda ou compilation manuelle)
+#                 # conda install -c conda-forge ta-lib
+#                 # ou voir https://github.com/TA-Lib/ta-lib-python
 
-# Development & Testing
-pytest>=7.4.0,<8.0.0
-pytest-cov>=4.1.0,<5.0.0
-black>=23.10.0,<24.0.0
-flake8>=6.1.0,<7.0.0
-mypy>=1.6.0,<2.0.0
-jupyter>=1.0.0,<2.0.0
-ipykernel>=6.26.0,<7.0.0
+# News scraping & sentiment (optional)
+newsapi-python>=0.2.7  # NewsAPI client for financial news
+# praw>=7.7.0  # Reddit API (uncomment if needed: pip install praw)
+# python-Levenshtein>=0.21.0  # Fast fuzzy string matching (uncomment if needed)
+
