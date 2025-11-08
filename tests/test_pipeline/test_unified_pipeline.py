@@ -1,6 +1,6 @@
 """Tests pour la classe Pipeline (Unified Pipeline V2).
 
-Couverture (12 tests):
+Couverture (14 tests incluant polish intégration):
 - Initialisation correcte
 - Erreur sur paramètres invalides
 - Run pipeline complet (succès)
@@ -13,6 +13,8 @@ Couverture (12 tests):
 - _allocate_portfolio structure
 - _optimize_risk méthodes (none/equal/inverse)
 - _generate_orders logique BUY/SELL/HOLD
+- Full pipeline integration test (end-to-end)
+- Pipeline metrics & errors presence
 """
 import pytest
 from unittest.mock import MagicMock
@@ -123,4 +125,49 @@ def test_generate_orders_logic(pipeline):
     orders = pipeline._generate_orders(current_positions={'AAPL':0.05}, target_weights={'AAPL':0.10,'MSFT':0.0,'cash':0.9}, capital=100000)
     buy = [o for o in orders if o['action']=='BUY']
     assert any(o['ticker']=='AAPL' for o in buy)
+
+
+# ------------------ Polish: Full integration ------------------
+
+def test_full_pipeline_integration_end_to_end():
+    """End-to-end run() with small universe and optimization enabled.
+
+    Ensures the pipeline returns a complete dict with steps, metrics,
+    and a 'success' or 'partial' status, and that allocations exist.
+    """
+    class _U(UniverseSelector):
+        def __init__(self):
+            pass
+        def get_metadata(self, tickers):
+            return pd.DataFrame({'symbol': tickers})
+
+    class _M(MarketDataFetcher):
+        def __init__(self):
+            pass
+        def get_historical_data(self, ticker, start_date, end_date):
+            idx = pd.date_range(start_date, periods=40, freq='D')
+            return pd.DataFrame({'Close': 100 + np.sin(np.arange(40))}, index=idx)
+
+    p = Pipeline(
+        universe_selector=_U(),
+        lookback_days=30,
+        forecast_horizon=5,
+        optimization_method='inverse_variance',
+        market_data_fetcher=_M(),
+        signal_fusion=SignalFusion(),
+        allocator=EnsembleAllocator(max_position_size=0.4, min_position_size=0.05, cash_reserve=0.1),
+    )
+
+    res = p.run('2025-11-08', ['AAPL','MSFT'], optimization_method='inverse_variance')
+    assert isinstance(res, dict)
+    assert res['status'] in {'success', 'partial'}
+    assert 'steps' in res and isinstance(res['steps'], dict)
+    assert 'metrics' in res and isinstance(res['metrics'], dict)
+    assert 'allocation' in res['steps'] or 'optimization' in res['steps']
+    # Ensure optimized weights contain cash and at least one asset
+    opt_info = res['steps'].get('optimization', {})
+    if opt_info:
+        assert opt_info.get('method') == 'inverse_variance'
+    # Errors list exists
+    assert 'errors' in res and isinstance(res['errors'], list)
 

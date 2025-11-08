@@ -1,4 +1,4 @@
-"""Tests pour OrderExecutor (8 tests)."""
+"""Tests pour OrderExecutor (9 tests + polish weighted avg cost)."""
 import pytest
 import pandas as pd
 
@@ -70,3 +70,24 @@ def test_invalid_order_action():
     exec = OrderExecutor()
     res = exec.execute({'ticker':'AAPL','action':'INVALID','target_weight':0.1,'delta_weight':0.1,'notional':10_000}, 100.0)
     assert res['status'] == 'error'
+
+
+def test_weighted_average_cost_after_multiple_buys():
+    """Vérifie calcul du prix moyen pondéré après deux achats distincts.
+
+    Achat 1: 20 actions à 100 (notional 2000)
+    Achat 2: 30 actions à 110 (notional 3300)
+    Total: 50 actions, coût total 5300 => avg_cost = 106.0
+    Cash initial 10_000 => restant 4_700
+    """
+    exec = OrderExecutor(initial_capital=10_000)
+    # Premier achat
+    exec.execute({'ticker':'AAPL','action':'BUY','target_weight':0.2,'delta_weight':0.2,'notional':2_000}, 100.0)
+    # Second achat
+    exec.execute({'ticker':'AAPL','action':'BUY','target_weight':0.5,'delta_weight':0.3,'notional':3_300}, 110.0)
+    pos = exec.get_positions()
+    qty = pos.loc[pos['ticker']=='AAPL','quantity'].iloc[0]
+    avg_cost = pos.loc[pos['ticker']=='AAPL','avg_cost'].iloc[0]
+    assert qty == pytest.approx(50.0)
+    assert avg_cost == pytest.approx(106.0, abs=1e-6)
+    assert exec.cash == pytest.approx(4_700.0, abs=1e-6)
