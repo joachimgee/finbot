@@ -109,12 +109,14 @@ def test_fit_basic(mock_keras, mock_models, mock_layers, mock_scaler, returns_df
     pred = LSTMPredictor(lookback_window=20, forecast_horizon=5)
     mock_model = MagicMock()
     mock_models.Model.return_value = mock_model
-    mock_model.fit.return_value = MagicMock(history={'loss': [0.1, 0.08]})
+    mock_model.fit.return_value = MagicMock(history={'loss': [0.1, 0.08], 'mae': [0.05, 0.04]})
     pred.build_model(n_assets=3)
 
     splits = pred.prepare_data(returns_df, train_size=0.7, val_size=0.15)
     history = pred.fit(splits['X_train'], splits['y_train'], epochs=2)
-    assert 'loss' in history
+    assert 'train_loss' in history
+    assert 'train_mae' in history
+    assert 'epochs_trained' in history
 
 
 @patch("financial_analyzer.deep_learning.lstm_predictor.MinMaxScaler")
@@ -138,6 +140,7 @@ def test_predict(mock_keras, mock_models, mock_layers, mock_scaler, returns_df):
     mock_model.predict.return_value = np.random.randn(n_test_samples, 3)
     mock_scaler_instance.inverse_transform.return_value = np.random.randn(n_test_samples, 3)
     
+    
     pred.build_model(n_assets=3)
     predictions = pred.predict(splits['X_test'])
     assert predictions.shape[0] == n_test_samples
@@ -146,3 +149,93 @@ def test_predict(mock_keras, mock_models, mock_layers, mock_scaler, returns_df):
 def test_attention_layer_flag():
     pred = LSTMPredictor(use_attention=True)
     assert pred.use_attention is True
+
+
+# -------------------- Polish Tests -------------------- #
+
+@patch("financial_analyzer.deep_learning.lstm_predictor.MinMaxScaler")
+@patch("financial_analyzer.deep_learning.lstm_predictor.layers")
+@patch("financial_analyzer.deep_learning.lstm_predictor.models")
+@patch("financial_analyzer.deep_learning.lstm_predictor.keras")
+def test_enhanced_history_format(mock_keras, mock_models, mock_layers, mock_scaler, returns_df):
+    """Test that fit returns enhanced history with train_loss, val_loss, epochs_trained, best_epoch."""
+    mock_scaler_instance = MagicMock()
+    mock_scaler.return_value = mock_scaler_instance
+    mock_scaler_instance.fit.return_value = None
+    mock_scaler_instance.transform.return_value = returns_df.values
+    
+    pred = LSTMPredictor(lookback_window=20, forecast_horizon=5)
+    mock_model = MagicMock()
+    mock_models.Model.return_value = mock_model
+    mock_model.fit.return_value = MagicMock(history={
+        'loss': [0.1, 0.08, 0.07],
+        'mae': [0.05, 0.04, 0.03],
+        'val_loss': [0.12, 0.09, 0.10],
+        'val_mae': [0.06, 0.045, 0.05]
+    })
+    pred.build_model(n_assets=3)
+    splits = pred.prepare_data(returns_df, train_size=0.7, val_size=0.15)
+    
+    history = pred.fit(splits['X_train'], splits['y_train'], splits['X_val'], splits['y_val'], epochs=3)
+    
+    # Check enhanced format
+    assert 'train_loss' in history
+    assert 'train_mae' in history
+    assert 'val_loss' in history
+    assert 'val_mae' in history
+    assert 'epochs_trained' in history
+    assert 'best_epoch' in history
+    assert history['epochs_trained'] == 3
+    assert history['best_epoch'] == 2  # Index 1 has lowest val_loss (0.09)
+
+
+def test_model_summary_logging(caplog):
+    """Test that build_model logs model summary."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
+    pred = LSTMPredictor(lookback_window=20, forecast_horizon=5)
+    pred.build_model(n_assets=3)
+    
+    # Check that summary was logged at DEBUG level
+    debug_logs = [record.message for record in caplog.records if record.levelname == 'DEBUG']
+    assert any('Model architecture' in log for log in debug_logs)
+
+
+@patch("financial_analyzer.deep_learning.lstm_predictor.MinMaxScaler")
+@patch("financial_analyzer.deep_learning.lstm_predictor.layers")
+@patch("financial_analyzer.deep_learning.lstm_predictor.models")
+@patch("financial_analyzer.deep_learning.lstm_predictor.keras")
+def test_inverse_scale_predictions(mock_keras, mock_models, mock_layers, mock_scaler, returns_df):
+    """Test inverse_scale_predictions helper method."""
+    mock_scaler_instance = MagicMock()
+    mock_scaler.return_value = mock_scaler_instance
+    mock_scaler_instance.fit.return_value = None
+    mock_scaler_instance.transform.return_value = returns_df.values
+    
+    pred = LSTMPredictor(lookback_window=20, forecast_horizon=5)
+    mock_model = MagicMock()
+    mock_models.Model.return_value = mock_model
+    pred.build_model(n_assets=3)
+    
+    splits = pred.prepare_data(returns_df, train_size=0.7, val_size=0.15)
+    
+    # Mock predictions
+    scaled_preds = np.array([[0.1, 0.2, -0.1], [0.05, 0.15, -0.05]])
+    real_preds = np.array([[0.01, 0.02, -0.01], [0.005, 0.015, -0.005]])
+    mock_scaler_instance.inverse_transform.return_value = real_preds
+    
+    result = pred.inverse_scale_predictions(scaled_preds)
+    
+    mock_scaler_instance.inverse_transform.assert_called_once()
+    np.testing.assert_array_equal(result, real_preds)
+
+
+def test_inverse_scale_predictions_without_scaler():
+    """Test that inverse_scale_predictions raises error if scaler not fitted."""
+    pred = LSTMPredictor(lookback_window=20, forecast_horizon=5)
+    pred.build_model(n_assets=3)
+    
+    with pytest.raises(ValueError, match="Scaler not fitted"):
+        pred.inverse_scale_predictions(np.array([[0.1, 0.2, -0.1]]))
+

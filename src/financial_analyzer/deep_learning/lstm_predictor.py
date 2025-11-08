@@ -159,7 +159,14 @@ class LSTMPredictor:
         self.model = models.Model(inputs=inp, outputs=x)
         self.model.compile(optimizer='adam', loss='mse', metrics=['mae'])
 
-        logger.info(f"Model built: {self.model.count_params()} params")
+        param_count = self.model.count_params()
+        logger.info(f"LSTM model built: {param_count} params")
+        
+        # Log model summary
+        summary_lines = []
+        self.model.summary(print_fn=lambda x: summary_lines.append(x))
+        logger.debug("Model architecture:\n" + "\n".join(summary_lines[:10]))  # First 10 lines
+        
         return self.model
 
     def create_sequences(self, data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -287,7 +294,15 @@ class LSTMPredictor:
         Returns
         -------
         dict
-            Training history with 'loss', 'val_loss', etc.
+            Training history with structured format:
+            {
+                'train_loss': list[float],
+                'train_mae': list[float],
+                'val_loss': list[float] (if validation provided),
+                'val_mae': list[float] (if validation provided),
+                'epochs_trained': int,
+                'best_epoch': int (epoch with lowest val_loss or loss)
+            }
         """
         if self.model is None:
             raise ValueError("Model not built; call build_model() first")
@@ -313,7 +328,25 @@ class LSTMPredictor:
             verbose=0,
         )
         logger.info(f"Training complete: final loss={history.history['loss'][-1]:.4f}")
-        return history.history
+        
+        # Enhanced history format
+        monitor_metric = 'val_loss' if X_val is not None else 'loss'
+        best_epoch = int(np.argmin(history.history[monitor_metric])) + 1
+        
+        enhanced_history = {
+            'train_loss': history.history['loss'],
+            'train_mae': history.history.get('mae', history.history.get('mean_absolute_error', [])),
+            'epochs_trained': len(history.history['loss']),
+            'best_epoch': best_epoch,
+        }
+        
+        if X_val is not None:
+            enhanced_history['val_loss'] = history.history['val_loss']
+            enhanced_history['val_mae'] = history.history.get('val_mae', history.history.get('val_mean_absolute_error', []))
+        
+        logger.info(f"Best epoch: {best_epoch}, best {monitor_metric}: {history.history[monitor_metric][best_epoch-1]:.4f}")
+        
+        return enhanced_history
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Generate predictions for input sequences.
@@ -326,12 +359,42 @@ class LSTMPredictor:
         Returns
         -------
         np.ndarray
-            Predictions (n_samples, n_assets).
+            Predictions (n_samples, n_assets) in scaled space.
+            Use inverse_scale_predictions() to convert back to original scale.
         """
         if self.model is None:
             raise ValueError("Model not built")
         preds = self.model.predict(X, verbose=0)
         return preds
+
+    def inverse_scale_predictions(self, predictions: np.ndarray) -> np.ndarray:
+        """Convert scaled predictions back to original return scale.
+
+        Parameters
+        ----------
+        predictions : np.ndarray
+            Scaled predictions from predict() (n_samples, n_assets).
+
+        Returns
+        -------
+        np.ndarray
+            Predictions in original return scale.
+
+        Raises
+        ------
+        ValueError
+            If scaler not fitted (call prepare_data first).
+
+        Example
+        -------
+        >>> splits = predictor.prepare_data(returns)
+        >>> predictor.fit(splits['X_train'], splits['y_train'])
+        >>> scaled_preds = predictor.predict(splits['X_test'])
+        >>> real_preds = predictor.inverse_scale_predictions(scaled_preds)
+        """
+        if self.scaler is None:
+            raise ValueError("Scaler not fitted; call prepare_data() before inverse scaling")
+        return self.scaler.inverse_transform(predictions)
 
     def _create_targets(self, returns: np.ndarray, forecast_horizon: int) -> np.ndarray:
         """Create forward returns targets.

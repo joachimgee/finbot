@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
 
 from financial_analyzer.utils.helpers import get_logger
 
@@ -99,6 +101,7 @@ class TransformerPredictor:
 
         self.model: Optional[keras.Model] = None
         self.n_assets: Optional[int] = None
+        self.scaler: Optional[MinMaxScaler] = None
 
         logger.info(
             f"TransformerPredictor initialized: lookback={lookback_window}, "
@@ -144,8 +147,100 @@ class TransformerPredictor:
         self.model = models.Model(inputs=inp, outputs=x)
         self.model.compile(optimizer='adam', loss='mse', metrics=['mae'])
 
-        logger.info(f"Transformer model built: {self.model.count_params()} params")
+        param_count = self.model.count_params()
+        logger.info(f"Transformer model built: {param_count} params")
+        
+        # Log model summary
+        summary_lines = []
+        self.model.summary(print_fn=lambda x: summary_lines.append(x))
+        logger.debug("Model architecture:\n" + "\n".join(summary_lines[:10]))  # First 10 lines
+        
         return self.model
+
+    def create_sequences(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Create sequences from time series data.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Time series array (rows=timesteps, cols=assets).
+
+        Returns
+        -------
+        X : np.ndarray
+            Sequences (n_sequences, lookback_window, n_assets).
+        y : np.ndarray
+            Targets (n_sequences, n_assets) - sum of forecast_horizon returns.
+        """
+        if data.shape[0] < self.lookback_window + self.forecast_horizon:
+            logger.warning("Insufficient data for sequence creation")
+            return np.empty((0, self.lookback_window, data.shape[1])), np.empty((0, data.shape[1]))
+
+        X_list, y_list = [], []
+        for i in range(len(data) - self.lookback_window - self.forecast_horizon + 1):
+            X_list.append(data[i : i + self.lookback_window])
+            # Target: sum of next forecast_horizon returns
+            y_list.append(data[i + self.lookback_window : i + self.lookback_window + self.forecast_horizon].sum(axis=0))
+        X = np.array(X_list)
+        y = np.array(y_list)
+        return X, y
+
+    def prepare_data(
+        self, returns: pd.DataFrame, train_size: float = 0.7, val_size: float = 0.15
+    ) -> Dict[str, np.ndarray]:
+        """Prepare train/val/test splits with scaling.
+
+        Parameters
+        ----------
+        returns : pd.DataFrame
+            Time series returns (rows=dates, cols=assets).
+        train_size : float, default 0.7
+            Fraction of data for training.
+        val_size : float, default 0.15
+            Fraction for validation (remaining is test).
+
+        Returns
+        -------
+        dict
+            Keys: 'X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test'.
+        """
+        data = returns.values
+        n = len(data)
+        train_end = int(n * train_size)
+        val_end = int(n * (train_size + val_size))
+
+        # Fit scaler on train
+        self.scaler = MinMaxScaler(feature_range=(-1, 1))
+        self.scaler.fit(data[:train_end])
+
+        # Scale all
+        data_scaled = self.scaler.transform(data)
+
+        # Create sequences
+        X, y = self.create_sequences(data_scaled)
+        if len(X) == 0:
+            logger.error("No sequences created; returning empty arrays")
+            return {
+                'X_train': np.empty((0, self.lookback_window, data.shape[1])),
+                'y_train': np.empty((0, data.shape[1])),
+                'X_val': np.empty((0, self.lookback_window, data.shape[1])),
+                'y_val': np.empty((0, data.shape[1])),
+                'X_test': np.empty((0, self.lookback_window, data.shape[1])),
+                'y_test': np.empty((0, data.shape[1])),
+            }
+
+        # Sequence indices aligned with original splits
+        seq_train_end = max(0, train_end - self.lookback_window - self.forecast_horizon + 1)
+        seq_val_end = max(0, val_end - self.lookback_window - self.forecast_horizon + 1)
+
+        return {
+            'X_train': X[:seq_train_end],
+            'y_train': y[:seq_train_end],
+            'X_val': X[seq_train_end:seq_val_end],
+            'y_val': y[seq_train_end:seq_val_end],
+            'X_test': X[seq_val_end:],
+            'y_test': y[seq_val_end:],
+        }
 
     def fit(
         self,
@@ -179,7 +274,15 @@ class TransformerPredictor:
         Returns
         -------
         dict
-            Training history.
+            Training history with structured format:
+            {
+                'train_loss': list[float],
+                'train_mae': list[float],
+                'val_loss': list[float] (if validation provided),
+                'val_mae': list[float] (if validation provided),
+                'epochs_trained': int,
+                'best_epoch': int (epoch with lowest val_loss)
+            }
         """
         if self.model is None:
             raise ValueError("Model not built; call build_model() first")
@@ -202,7 +305,25 @@ class TransformerPredictor:
             verbose=0,
         )
         logger.info(f"Training complete: final loss={history.history['loss'][-1]:.4f}")
-        return history.history
+        
+        # Enhanced history format
+        monitor_metric = 'val_loss'
+        best_epoch = int(np.argmin(history.history[monitor_metric])) + 1
+        
+        enhanced_history = {
+            'train_loss': history.history['loss'],
+            'train_mae': history.history.get('mae', history.history.get('mean_absolute_error', [])),
+            'epochs_trained': len(history.history['loss']),
+            'best_epoch': best_epoch,
+        }
+        
+        if 'val_loss' in history.history:
+            enhanced_history['val_loss'] = history.history['val_loss']
+            enhanced_history['val_mae'] = history.history.get('val_mae', history.history.get('val_mean_absolute_error', []))
+        
+        logger.info(f"Best epoch: {best_epoch}, best {monitor_metric}: {history.history[monitor_metric][best_epoch-1]:.4f}")
+        
+        return enhanced_history
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Generate predictions.
@@ -215,12 +336,42 @@ class TransformerPredictor:
         Returns
         -------
         np.ndarray
-            Predictions (n_samples, n_assets).
+            Predictions (n_samples, n_assets) in scaled space.
+            Use inverse_scale_predictions() to convert back to original scale.
         """
         if self.model is None:
             raise ValueError("Model not built")
         preds = self.model.predict(X, verbose=0)
         return preds
+
+    def inverse_scale_predictions(self, predictions: np.ndarray) -> np.ndarray:
+        """Convert scaled predictions back to original return scale.
+
+        Parameters
+        ----------
+        predictions : np.ndarray
+            Scaled predictions from predict() (n_samples, n_assets).
+
+        Returns
+        -------
+        np.ndarray
+            Predictions in original return scale.
+
+        Raises
+        ------
+        ValueError
+            If scaler not fitted (call prepare_data first).
+
+        Example
+        -------
+        >>> splits = predictor.prepare_data(returns)
+        >>> predictor.fit(splits['X_train'], splits['y_train'])
+        >>> scaled_preds = predictor.predict(splits['X_test'])
+        >>> real_preds = predictor.inverse_scale_predictions(scaled_preds)
+        """
+        if self.scaler is None:
+            raise ValueError("Scaler not fitted; call prepare_data() before inverse scaling")
+        return self.scaler.inverse_transform(predictions)
 
     # -------------------- Internals -------------------- #
 
