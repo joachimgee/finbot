@@ -232,3 +232,16 @@ def test_clear_cache(mock_news_df, mock_finbert):
     # Clear cache
     agg.clear_cache()
     assert len(agg.cache) == 0
+
+
+def test_aggregate_sentiment_use_reddit_forwarding(mock_news_df, mock_finbert):
+    """aggregate_sentiment forwards use_reddit to NewsScraper.get_all_news."""
+    agg = SentimentAggregator(finbert_engine=mock_finbert)
+
+    # Spy on get_all_news to assert include_reddit param
+    with patch.object(agg.news_scraper, 'get_all_news', return_value=mock_news_df) as mocked:
+        agg.aggregate_sentiment('AAPL', use_reddit=True)
+        mocked.assert_called_once()
+        # Extract kwargs from the last call
+        _, kwargs = mocked.call_args
+        assert kwargs.get('include_reddit') is True

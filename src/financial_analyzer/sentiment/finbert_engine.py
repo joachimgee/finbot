@@ -278,7 +278,9 @@ class FinBERTEngine:
                     })
             
             except Exception as e:
-                logger.error(f"Batch processing failed for batch {i//self.batch_size}: {e}")
+                logger.error(
+                    f"Batch {i//self.batch_size} processing failed (size={len(batch)}): {e}"
+                )
                 # Return neutral for failed batch
                 results.extend([
                     {'score': 0.0, 'label': 'neutral', 'confidence': 0.0}

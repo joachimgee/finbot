@@ -128,6 +128,7 @@ class SentimentAggregator:
         window_days: int = 7,
         max_articles: int = 50,
         use_ema: bool = True,
+        use_reddit: bool = False,
         previous_sentiment: Optional[float] = None
     ) -> Dict:
         """
@@ -138,6 +139,7 @@ class SentimentAggregator:
             window_days: News lookback window (not enforced by scraper, informational)
             max_articles: Maximum articles to fetch
             use_ema: Apply EMA smoothing
+            use_reddit: Include Reddit sources when fetching news (delegated to NewsScraper)
             previous_sentiment: Previous sentiment for EMA (if available)
         
         Returns:
@@ -178,7 +180,7 @@ class SentimentAggregator:
             articles_df = self.news_scraper.get_all_news(
                 ticker,
                 max_articles=max_articles,
-                include_reddit=False  # Optional: set True if want Reddit
+                include_reddit=use_reddit
             )
         except Exception as e:
             logger.error(f"News fetching failed for {ticker}: {e}")

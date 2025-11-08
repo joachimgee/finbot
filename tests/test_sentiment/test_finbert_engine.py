@@ -159,3 +159,23 @@ def test_batch_sentiment_empty_list():
     results = engine.batch_sentiment([])
     
     assert results == []
+
+
+@patch('financial_analyzer.sentiment.finbert_engine.pipeline')
+@patch('financial_analyzer.sentiment.finbert_engine.AutoTokenizer')
+@patch('financial_analyzer.sentiment.finbert_engine.AutoModelForSequenceClassification')
+def test_batch_sentiment_error_logging_includes_size(mock_model, mock_tokenizer, mock_pipeline_fn, caplog):
+    """Error log should include batch index and size when batch processing fails."""
+    mock_pipeline = Mock()
+    mock_pipeline.side_effect = Exception("Model error")
+    mock_pipeline_fn.return_value = mock_pipeline
+
+    engine = FinBERTEngine(device='cpu', batch_size=32)
+    texts = ["t1", "t2"]
+
+    with caplog.at_level("ERROR"):
+        _ = engine.batch_sentiment(texts)
+
+    # Verify log contains batch size info
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "size=2" in joined
