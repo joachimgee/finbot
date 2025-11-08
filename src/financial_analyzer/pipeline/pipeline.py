@@ -49,16 +49,19 @@ Example
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
 from financial_analyzer.utils.helpers import get_logger, calculate_returns, calculate_volatility
+from financial_analyzer.config import TRADING_CONFIG
 from financial_analyzer.data.market_data import MarketDataFetcher
 from financial_analyzer.data.universe import UniverseSelector
-from financial_analyzer.strategy.signal_fusion import SignalFusion
-from financial_analyzer.strategy.ensemble_allocator import EnsembleAllocator
+from financial_analyzer.strategy import SignalFusion, EnsembleAllocator
+from financial_analyzer.sentiment import SentimentAggregator
+from financial_analyzer.deep_learning import LSTMPredictor
+from financial_analyzer.portfolio_optimization import RiskfolioOptimizer
 
 logger = get_logger(__name__)
 
@@ -66,16 +69,16 @@ logger = get_logger(__name__)
 @dataclass
 class PipelineCache:
     """Internal cache structure for pipeline intermediate results."""
-    raw_data: Dict[str, pd.DataFrame] | None = None
+    raw_data: dict[str, pd.DataFrame] | None = None
     returns: pd.DataFrame | None = None
     metadata: pd.DataFrame | None = None
-    technical_features: Dict[str, Dict[str, float]] | None = None
-    sentiment: Dict[str, float] | None = None
-    ml_predictions: Dict[str, float] | None = None
-    fused_signals: Dict[str, Dict[str, float]] | None = None
-    allocations: Dict[str, float] | None = None
-    optimized_allocations: Dict[str, float] | None = None
-    orders: List[Dict[str, Any]] | None = None
+    technical_features: dict[str, dict[str, float]] | None = None
+    sentiment: dict[str, float] | None = None
+    ml_predictions: dict[str, float] | None = None
+    fused_signals: dict[str, dict[str, float]] | None = None
+    allocations: dict[str, float] | None = None
+    optimized_allocations: dict[str, float] | None = None
+    orders: list[dict[str, Any]] | None = None
 
 
 class Pipeline:
@@ -114,14 +117,18 @@ class Pipeline:
         lookback_days: int = 120,
         forecast_horizon: int = 5,
         optimization_method: str = 'none',
-        market_data_fetcher: Optional[MarketDataFetcher] = None,
-        signal_fusion: Optional[SignalFusion] = None,
-        allocator: Optional[EnsembleAllocator] = None,
+    market_data_fetcher: MarketDataFetcher | None = None,
+    signal_fusion: SignalFusion | None = None,
+    allocator: EnsembleAllocator | None = None,
     ) -> None:
         if lookback_days <= 0:
-            raise ValueError("lookback_days must be > 0")
+            raise ValueError(
+                "lookback_days must be > 0. Suggestion: use 60-252 depending on your strategy horizon."
+            )
         if forecast_horizon <= 0:
-            raise ValueError("forecast_horizon must be > 0")
+            raise ValueError(
+                "forecast_horizon must be > 0. Suggestion: try 5-20 trading days for short-term predictions."
+            )
 
         self.universe_selector = universe_selector
         self.lookback_days = lookback_days
@@ -146,9 +153,9 @@ class Pipeline:
     def run(
         self,
         run_date: str | datetime,
-        universe: List[str],
-        optimization_method: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        universe: list[str],
+        optimization_method: str | None = None,
+    ) -> dict[str, Any]:
         """Run the full pipeline for a given universe.
 
         Parameters
@@ -165,8 +172,8 @@ class Pipeline:
         dict
             Structured result with steps, metrics, errors.
         """
-        errors: List[str] = []
-        steps: Dict[str, Any] = {}
+        errors: list[str] = []
+        steps: dict[str, Any] = {}
 
         if not universe:
             logger.warning("Empty universe provided; aborting pipeline")
@@ -269,7 +276,10 @@ class Pipeline:
 
         # 8. Order Generation ------------------------------------------
         try:
-            orders = self._generate_orders(current_positions={}, target_weights=optimized, capital=100_000)
+            initial_capital = float(TRADING_CONFIG.get('initial_capital', 100_000.0))
+            orders = self._generate_orders(
+                current_positions={}, target_weights=optimized, capital=initial_capital
+            )
             steps['orders'] = {'count': len(orders)}
         except Exception as e:
             logger.error(f"Order generation failed: {e}")
@@ -311,10 +321,10 @@ class Pipeline:
     # ------------------------------------------------------------------
     def _fetch_data(
         self,
-        universe: List[str],
+        universe: list[str],
         lookback_days: int,
         run_date: str | datetime,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Fetch historical data and metadata.
 
         Returns
@@ -327,7 +337,7 @@ class Pipeline:
         end_dt = pd.Timestamp(run_date)
         start_dt = end_dt - timedelta(days=lookback_days)
 
-        all_prices: Dict[str, pd.DataFrame] = {}
+        all_prices: dict[str, pd.DataFrame] = {}
         for ticker in universe:
             try:
                 data = self.market_data_fetcher.get_historical_data(
@@ -339,7 +349,7 @@ class Pipeline:
                 all_prices[ticker] = pd.DataFrame()
 
         # Build returns frame
-        returns_frames = []
+        returns_frames: list[pd.Series] = []
         for t, df in all_prices.items():
             if not df.empty and 'Close' in df.columns:
                 r = calculate_returns(df['Close']).rename(t)
@@ -359,7 +369,7 @@ class Pipeline:
 
         return returns_df, metadata
 
-    def _engineer_features(self, returns: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+    def _engineer_features(self, returns: pd.DataFrame) -> dict[str, dict[str, float]]:
         """Compute simple technical features per ticker.
 
         For each ticker, derive:
@@ -373,7 +383,7 @@ class Pipeline:
         dict
             {ticker: {feature_name: value}}
         """
-        features: Dict[str, Dict[str, float]] = {}
+        features: dict[str, dict[str, float]] = {}
         if returns.empty:
             logger.warning("Empty returns passed to _engineer_features")
             return features
@@ -395,12 +405,12 @@ class Pipeline:
             }
         return features
 
-    def _analyze_sentiment(self, universe: List[str]) -> Dict[str, float]:
+    def _analyze_sentiment(self, universe: list[str]) -> dict[str, float]:
         """Mock sentiment analysis producing values in [-1, 1]."""
         np.random.seed(42)
         return {t: float(np.random.uniform(-1, 1)) for t in universe}
 
-    def _generate_predictions(self, returns: pd.DataFrame) -> Dict[str, float]:
+    def _generate_predictions(self, returns: pd.DataFrame) -> dict[str, float]:
         """Mock ML predictions producing probability-like scores in [0, 1]."""
         np.random.seed(123)
         return {
@@ -410,15 +420,15 @@ class Pipeline:
 
     def _fuse_signals(
         self,
-        technical: Dict[str, Dict[str, float]],
-        sentiment: Dict[str, float],
-        ml_pred: Dict[str, float],
-    ) -> Dict[str, Dict[str, float]]:
+        technical: dict[str, dict[str, float]],
+        sentiment: dict[str, float],
+        ml_pred: dict[str, float],
+    ) -> dict[str, dict[str, float]]:
         """Fuse signals per ticker using SignalFusion component.
 
         Falls back to neutral signal if any source missing.
         """
-        fused: Dict[str, Dict[str, float]] = {}
+        fused: dict[str, dict[str, float]] = {}
         for ticker in set(sentiment.keys()) | set(technical.keys()) | set(ml_pred.keys()):
             try:
                 tech_score = technical.get(ticker, {})
@@ -444,16 +454,16 @@ class Pipeline:
                 fused[ticker] = {'final_score': 0.5, 'confidence': 0.0}
         return fused
 
-    def _allocate_portfolio(self, signals: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    def _allocate_portfolio(self, signals: dict[str, dict[str, float]]) -> dict[str, float]:
         """Allocate portfolio weights using EnsembleAllocator."""
         return self.allocator.allocate(signals, total_capital=100_000, risk_model='signal_based')
 
     def _optimize_risk(
         self,
-        weights: Dict[str, float],
+        weights: dict[str, float],
         returns: pd.DataFrame,
         method: str = 'none',
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Apply simple risk optimization heuristics.
 
         Methods
@@ -477,7 +487,7 @@ class Pipeline:
                 eq = (1.0 - cash_weight) / n if n > 0 else 0.0
                 new_w = {k: eq for k in asset_weights}
             elif method == 'inverse_variance':
-                inv_vars: Dict[str, float] = {}
+                inv_vars: dict[str, float] = {}
                 for t in asset_weights:
                     series = returns.get(t)
                     if series is not None and len(series) > 10:
@@ -503,25 +513,26 @@ class Pipeline:
 
     def _generate_orders(
         self,
-        current_positions: Dict[str, float],
-        target_weights: Dict[str, float],
+        current_positions: dict[str, float],
+        target_weights: dict[str, float],
         capital: float,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Generate mock orders comparing current vs target weights.
 
         Returns list of orders with fields:
             ticker, action (BUY/SELL/HOLD), target_weight, delta_weight, notional
         """
-        orders: List[Dict[str, Any]] = []
+        orders: list[dict[str, Any]] = []
         for ticker, tgt_w in target_weights.items():
             if ticker == 'cash':
                 continue
             cur_w = current_positions.get(ticker, 0.0)
             delta = tgt_w - cur_w
             action = 'HOLD'
-            if delta > 0.001:
+            threshold = float(TRADING_CONFIG.get('order_delta_threshold', 0.001))
+            if delta > threshold:
                 action = 'BUY'
-            elif delta < -0.001:
+            elif delta < -threshold:
                 action = 'SELL'
             notional = delta * capital
             orders.append({
@@ -536,11 +547,11 @@ class Pipeline:
     def _compute_metrics(
         self,
         returns: pd.DataFrame,
-        alloc: Dict[str, float],
-        opt_alloc: Dict[str, float],
-    ) -> Dict[str, Any]:
+        alloc: dict[str, float],
+        opt_alloc: dict[str, float],
+    ) -> dict[str, Any]:
         """Compute simple diagnostic metrics."""
-        metrics: Dict[str, Any] = {}
+        metrics: dict[str, Any] = {}
         try:
             metrics['universe_size'] = len(returns.columns)
             metrics['allocation_positions'] = len([k for k in alloc if k != 'cash'])

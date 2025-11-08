@@ -17,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
+from dataclasses import dataclass, asdict
 
 from dotenv import load_dotenv
 
@@ -98,38 +99,48 @@ CACHE_ENABLED: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
 # MACHINE LEARNING CONFIGURATION
 # ============================================================================
 
-ML_CONFIG: Dict[str, Union[str, int]] = {
-    "device": os.getenv("MODEL_DEVICE", "cpu"),
-    "batch_size": int(os.getenv("BATCH_SIZE", "32")),
-    "finbert_model": "ProsusAI/finbert",
-}
-"""
-Configuration des modèles ML.
+@dataclass
+class MLConfig:
+    """Configuration des modèles ML.
 
-Keys:
-    device (str): Device pour exécution ('cpu', 'cuda', 'mps')
-    batch_size (int): Taille des batches pour traitement
-    finbert_model (str): Nom du modèle FinBERT sur HuggingFace
-"""
+    Notes:
+        Utiliser cette dataclass plutôt que le dict ML_CONFIG pour les nouveaux
+        développements. Le dict reste disponible pour compatibilité.
+    """
+    device: str = os.getenv("MODEL_DEVICE", "cpu")
+    batch_size: int = int(os.getenv("BATCH_SIZE", "32"))
+    finbert_model: str = os.getenv("FINBERT_MODEL", "ProsusAI/finbert")
+    lookback_window: int = int(os.getenv("ML_LOOKBACK_WINDOW", "60"))
+    forecast_horizon: int = int(os.getenv("ML_FORECAST_HORIZON", "5"))
+    lstm_units: int = int(os.getenv("ML_LSTM_UNITS", "64"))
+
+
+ML_CONFIG_D = MLConfig()
+ML_CONFIG: Dict[str, Union[str, int]] = asdict(ML_CONFIG_D)
+"""Compatibilité: dictionnaire reflétant ML_CONFIG_D (préférer ML_CONFIG_D)."""
 
 
 # ============================================================================
 # TRADING CONFIGURATION
 # ============================================================================
 
-TRADING_CONFIG: Dict[str, float] = {
-    "initial_capital": float(os.getenv("INITIAL_CAPITAL", "10000")),
-    "commission_rate": float(os.getenv("COMMISSION_RATE", "0.002")),
-    "sentiment_threshold": float(os.getenv("SENTIMENT_THRESHOLD", "0.3")),
-}
-"""
-Configuration du trading et backtesting.
+@dataclass
+class TradingConfig:
+    """Configuration du trading et backtesting."""
+    initial_capital: float = float(os.getenv("INITIAL_CAPITAL", "100000"))
+    commission_rate: float = float(os.getenv("COMMISSION_RATE", "0.002"))
+    sentiment_threshold: float = float(os.getenv("SENTIMENT_THRESHOLD", "0.3"))
+    order_delta_threshold: float = float(os.getenv("ORDER_DELTA_THRESHOLD", "0.001"))
 
-Keys:
-    initial_capital (float): Capital initial en dollars pour backtesting
-    commission_rate (float): Commission par transaction (ex: 0.002 = 0.2%)
-    sentiment_threshold (float): Seuil de sentiment pour signaux (-1 à 1)
-"""
+
+TRADING_CONFIG_D = TradingConfig()
+TRADING_CONFIG: Dict[str, float] = {
+    "initial_capital": TRADING_CONFIG_D.initial_capital,
+    "commission_rate": TRADING_CONFIG_D.commission_rate,
+    "sentiment_threshold": TRADING_CONFIG_D.sentiment_threshold,
+    "order_delta_threshold": TRADING_CONFIG_D.order_delta_threshold,
+}
+"""Compatibilité: dictionnaire reflétant TRADING_CONFIG_D (préférer TRADING_CONFIG_D)."""
 
 
 # ============================================================================
