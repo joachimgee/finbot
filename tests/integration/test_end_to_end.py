@@ -86,8 +86,11 @@ def test_pipeline_data_flow(pipeline_with_doubles, universe):
     assert cache.returns is not None and not cache.returns.empty
     assert cache.technical_features is not None
     assert cache.fused_signals is not None
-    assert cache.allocations is not None
-    assert cache.optimized_allocations is not None
+    # Singular alias supported by PipelineCache
+    assert cache.allocation is not None
+    # Validate weights sum approximately to 1
+    import pytest as _pytest
+    assert _pytest.approx(1.0, abs=0.02) == sum(cache.allocation.values())
 
 
 def test_pipeline_error_propagation(universe, synthetic_prices):

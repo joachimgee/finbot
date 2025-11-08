@@ -80,6 +80,11 @@ class PipelineCache:
     optimized_allocations: dict[str, float] | None = None
     orders: list[dict[str, Any]] | None = None
 
+    @property
+    def allocation(self) -> dict[str, float] | None:
+        """Singular alias for allocations (backwards/test compatibility)."""
+        return self.allocations
+
 
 class Pipeline:
     """Unified multi-stage trading pipeline.
@@ -140,7 +145,8 @@ class Pipeline:
         self.signal_fusion = signal_fusion or SignalFusion()
         self.allocator = allocator or EnsembleAllocator()
 
-        self.cache = PipelineCache()
+        # Internal cache object (private) exposed via property for testing/introspection
+        self._cache = PipelineCache()
 
         logger.info(
             f"Pipeline initialized: lookback_days={lookback_days}, forecast_horizon={forecast_horizon}, "
@@ -288,16 +294,16 @@ class Pipeline:
             steps['orders'] = {}
 
         # Cache everything
-        self.cache.raw_data = None  # Omitted large data for memory
-        self.cache.returns = returns_df
-        self.cache.metadata = metadata
-        self.cache.technical_features = technical
-        self.cache.sentiment = sentiment
-        self.cache.ml_predictions = ml_pred
-        self.cache.fused_signals = fused
-        self.cache.allocations = allocations
-        self.cache.optimized_allocations = optimized
-        self.cache.orders = orders
+        self._cache.raw_data = None  # Omitted large data for memory
+        self._cache.returns = returns_df
+        self._cache.metadata = metadata
+        self._cache.technical_features = technical
+        self._cache.sentiment = sentiment
+        self._cache.ml_predictions = ml_pred
+        self._cache.fused_signals = fused
+        self._cache.allocations = allocations
+        self._cache.optimized_allocations = optimized
+        self._cache.orders = orders
 
         status = 'success' if not errors else ('partial' if steps else 'error')
 
@@ -566,5 +572,19 @@ class Pipeline:
         except Exception as e:
             logger.error(f"Metric computation failed: {e}")
         return metrics
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+    @property
+    def cache(self) -> PipelineCache:  # pragma: no cover - simple accessor
+        """Expose pipeline cache for testing and diagnostics.
+
+        Returns
+        -------
+        PipelineCache
+            Current cache snapshot.
+        """
+        return self._cache
 
 __all__ = ["Pipeline", "PipelineCache"]
