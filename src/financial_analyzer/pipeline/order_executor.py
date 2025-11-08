@@ -36,7 +36,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, UTC
 
 from financial_analyzer.utils.helpers import get_logger
 
@@ -143,7 +143,7 @@ class OrderExecutor:
 
             # Record trade
             record = TradeRecord(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 ticker=ticker,
                 action=action,
                 quantity=quantity if action != "HOLD" else 0.0,

@@ -23,7 +23,7 @@ Usage:
 import os
 import time
 from typing import List, Dict, Optional, Any, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import logging
 
 # 2. Données & Calculs
@@ -247,11 +247,12 @@ class FinancialNewsScraper:
                                             dt = datetime.strptime(date_str, "%b-%d-%y %I:%M%p")
                                         else:
                                             dt = datetime.strptime(date_str, "%I:%M%p")
-                                            dt = dt.replace(year=datetime.utcnow().year,
-                                                          month=datetime.utcnow().month,
-                                                          day=datetime.utcnow().day)
+                                            now_utc = datetime.now(UTC)
+                                            dt = dt.replace(year=now_utc.year,
+                                                          month=now_utc.month,
+                                                          day=now_utc.day)
                                     except ValueError:
-                                        dt = datetime.utcnow()
+                                        dt = datetime.now(UTC)
 
                                     # Parsing headline + URL
                                     link = cols[1].find("a")
