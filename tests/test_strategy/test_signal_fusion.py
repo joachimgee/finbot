@@ -235,3 +235,202 @@ def test_fuse_with_error_handling(fusion):
     assert 'error' in signal
     assert signal['final_score'] == 0.5
     assert signal['confidence'] == 0.0
+
+
+# ============================================================================
+# POLISH TESTS: Confidence-per-source & Weight Breakdown
+# ============================================================================
+
+
+def test_confidence_per_source_all_sources(fusion):
+    """Test confidence_per_source tracks individual source confidence."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.6,  # In [-1, 1] → normalized to 0.8
+        technical_signals={'rsi': 70, 'macd': 5, 'sma_cross': 1, 'bb_position': 0.9},
+        dl_prediction=0.75,
+    )
+
+    # Should have confidence for all 3 sources
+    assert 'confidence_per_source' in signal
+    assert set(signal['confidence_per_source'].keys()) == {'sentiment', 'technical', 'dl'}
+
+    # Confidence based on distance from neutral (0.5)
+    # sentiment 0.6 → normalized (0.6+1)/2=0.8 → confidence = abs(0.8-0.5)*2 = 0.6
+    # dl 0.75 → confidence = abs(0.75-0.5)*2 = 0.5
+    assert signal['confidence_per_source']['sentiment'] == pytest.approx(0.6, abs=0.01)
+    assert signal['confidence_per_source']['technical'] > 0.5
+    assert signal['confidence_per_source']['dl'] == pytest.approx(0.5, abs=0.01)
+
+
+def test_confidence_per_source_partial_sources(fusion):
+    """Test confidence_per_source with only some sources."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.0,  # Neutral in [-1, 1]
+        technical_signals=None,
+        dl_prediction=None,
+    )
+
+    # Should only have sentiment
+    assert 'confidence_per_source' in signal
+    assert list(signal['confidence_per_source'].keys()) == ['sentiment']
+
+    # Neutral sentiment (0.0) → normalized to 0.5 → confidence = abs(0.5-0.5)*2 = 0.0
+    assert signal['confidence_per_source']['sentiment'] == pytest.approx(0.0, abs=0.01)
+
+
+def test_confidence_per_source_extreme_values(fusion):
+    """Test confidence_per_source with extreme signal values."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=1.0,  # Extreme bullish
+        technical_signals={'rsi': 100},  # Extreme
+        dl_prediction=1.0,  # Max
+    )
+
+    # All should show high confidence
+    assert signal['confidence_per_source']['sentiment'] == pytest.approx(1.0, abs=0.01)
+    assert signal['confidence_per_source']['technical'] >= 0.8
+    assert signal['confidence_per_source']['dl'] == pytest.approx(1.0, abs=0.01)
+
+
+def test_weight_contributions_structure(fusion):
+    """Test weight_contributions has correct structure."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.6,
+        technical_signals={'rsi': 60},
+        dl_prediction=0.7,
+    )
+
+    # Should have weight_contributions
+    assert 'weight_contributions' in signal
+    assert set(signal['weight_contributions'].keys()) == {'sentiment', 'technical', 'dl'}
+
+    # Each source should have complete metadata
+    for source in ['sentiment', 'technical', 'dl']:
+        contrib = signal['weight_contributions'][source]
+        assert 'raw_weight' in contrib
+        assert 'normalized_score' in contrib
+        assert 'contribution' in contrib
+        assert 'effective_weight' in contrib
+
+        # Validate types
+        assert isinstance(contrib['raw_weight'], float)
+        assert isinstance(contrib['normalized_score'], float)
+        assert isinstance(contrib['contribution'], float)
+        assert isinstance(contrib['effective_weight'], float)
+
+
+def test_weight_contributions_sum_to_one(fusion):
+    """Test effective_weight values sum to 1.0."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.6,
+        technical_signals={'rsi': 60},
+        dl_prediction=0.7,
+    )
+
+    # Effective weights should sum to 1.0
+    total_weight = sum(
+        contrib['effective_weight']
+        for contrib in signal['weight_contributions'].values()
+    )
+    assert total_weight == pytest.approx(1.0, abs=0.0001)
+
+
+def test_weight_contributions_match_fusion_weights(fusion):
+    """Test effective_weight matches fusion configuration."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.6,
+        technical_signals={'rsi': 60},
+        dl_prediction=0.7,
+    )
+
+    # Should match configured weights
+    assert signal['weight_contributions']['sentiment']['raw_weight'] == 0.3
+    assert signal['weight_contributions']['technical']['raw_weight'] == 0.4
+    assert signal['weight_contributions']['dl']['raw_weight'] == 0.3
+
+    # Effective weights should also match (all sources present)
+    assert signal['weight_contributions']['sentiment']['effective_weight'] == pytest.approx(0.3, abs=0.0001)
+    assert signal['weight_contributions']['technical']['effective_weight'] == pytest.approx(0.4, abs=0.0001)
+    assert signal['weight_contributions']['dl']['effective_weight'] == pytest.approx(0.3, abs=0.0001)
+
+
+def test_weight_contributions_partial_sources(fusion):
+    """Test weight_contributions with only some sources."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.6,
+        technical_signals=None,
+        dl_prediction=0.7,
+    )
+
+    # Should only have sentiment and dl
+    assert set(signal['weight_contributions'].keys()) == {'sentiment', 'dl'}
+
+    # Effective weights should be renormalized
+    total_effective = sum(
+        contrib['effective_weight']
+        for contrib in signal['weight_contributions'].values()
+    )
+    assert total_effective == pytest.approx(1.0, abs=0.0001)
+
+    # Effective weights should be proportional: sentiment=0.3, dl=0.3 → 0.5 each
+    assert signal['weight_contributions']['sentiment']['effective_weight'] == pytest.approx(0.5, abs=0.0001)
+    assert signal['weight_contributions']['dl']['effective_weight'] == pytest.approx(0.5, abs=0.0001)
+
+
+def test_weight_contributions_manual_calculation(fusion):
+    """Test weight_contributions against manual calculation."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=0.0,  # Normalized to 0.5 (neutral)
+        technical_signals={'rsi': 50},  # Normalized ~0.5
+        dl_prediction=1.0,  # Max bullish
+    )
+
+    # Manual calculation:
+    # sentiment_norm = (0.0 + 1) / 2 = 0.5
+    # technical_norm = 50/100 = 0.5
+    # dl_norm = 1.0
+    # final = (0.5*0.3 + 0.5*0.4 + 1.0*0.3) / 1.0 = 0.15 + 0.2 + 0.3 = 0.65
+
+    assert signal['final_score'] == pytest.approx(0.65, abs=0.01)
+
+    # Check individual contributions
+    assert signal['weight_contributions']['sentiment']['contribution'] == pytest.approx(0.15, abs=0.01)
+    assert signal['weight_contributions']['technical']['contribution'] == pytest.approx(0.20, abs=0.01)
+    assert signal['weight_contributions']['dl']['contribution'] == pytest.approx(0.30, abs=0.01)
+
+
+def test_polishes_no_signals_case(fusion):
+    """Test polishes return empty dicts when no signals provided."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment=None,
+        technical_signals=None,
+        dl_prediction=None,
+    )
+
+    # Should have empty polishes
+    assert signal['confidence_per_source'] == {}
+    assert signal['weight_contributions'] == {}
+
+
+def test_polishes_error_case(fusion):
+    """Test polishes are empty in error cases."""
+    signal = fusion.fuse(
+        ticker='AAPL',
+        sentiment='invalid',  # type: ignore
+        technical_signals=None,
+        dl_prediction=None,
+    )
+
+    # Should have empty polishes
+    assert signal['confidence_per_source'] == {}
+    assert signal['weight_contributions'] == {}
+

@@ -152,6 +152,8 @@ class SignalFusion:
             - divergence_magnitude: float (max - min of normalized scores)
             - components: dict with normalized scores for each source
             - sources_used: list of signal types included
+            - confidence_per_source: dict with individual confidence for each source (NEW)
+            - weight_contributions: dict with actual weight contribution per source (NEW)
 
         Example
         -------
@@ -160,25 +162,34 @@ class SignalFusion:
         0.63
         >>> signal['divergence']
         False
+        >>> signal['confidence_per_source']
+        {'sentiment': 0.8, 'technical': 0.9, 'dl': 0.85}
         """
         try:
             # Normalize all signals to [0, 1]
             scores = {}
             sources_used = []
+            confidence_per_source = {}
 
             if sentiment is not None:
                 scores['sentiment'] = self._normalize_sentiment(sentiment)
                 sources_used.append('sentiment')
+                # Individual confidence: how far from neutral (0.5)?
+                confidence_per_source['sentiment'] = abs(scores['sentiment'] - 0.5) * 2.0
                 logger.debug(f"{ticker}: sentiment={sentiment:.3f} → normalized={scores['sentiment']:.3f}")
 
             if technical_signals is not None:
                 scores['technical'] = self._normalize_technical(technical_signals)
                 sources_used.append('technical')
+                # Individual confidence based on distance from neutral
+                confidence_per_source['technical'] = abs(scores['technical'] - 0.5) * 2.0
                 logger.debug(f"{ticker}: technical signals → normalized={scores['technical']:.3f}")
 
             if dl_prediction is not None:
                 scores['dl'] = self._normalize_dl(dl_prediction)
                 sources_used.append('dl')
+                # Individual confidence based on distance from neutral
+                confidence_per_source['dl'] = abs(scores['dl'] - 0.5) * 2.0
                 logger.debug(f"{ticker}: dl_prediction={dl_prediction:.3f} → normalized={scores['dl']:.3f}")
 
             # Handle no signals case
@@ -192,30 +203,56 @@ class SignalFusion:
                     'divergence_magnitude': 0.0,
                     'components': {},
                     'sources_used': [],
+                    'confidence_per_source': {},
+                    'weight_contributions': {},
                 }
 
             # Detect divergence
             has_divergence, divergence_mag = self._detect_divergence(scores)
 
-            # Calculate weighted ensemble
+            # Calculate weighted ensemble and track contributions
             final_score = 0.0
             total_weight = 0.0
+            weight_contributions = {}
 
             if 'sentiment' in scores:
-                final_score += scores['sentiment'] * self.sentiment_weight
+                contribution = scores['sentiment'] * self.sentiment_weight
+                final_score += contribution
                 total_weight += self.sentiment_weight
+                weight_contributions['sentiment'] = {
+                    'raw_weight': self.sentiment_weight,
+                    'normalized_score': scores['sentiment'],
+                    'contribution': contribution,
+                }
 
             if 'technical' in scores:
-                final_score += scores['technical'] * self.technical_weight
+                contribution = scores['technical'] * self.technical_weight
+                final_score += contribution
                 total_weight += self.technical_weight
+                weight_contributions['technical'] = {
+                    'raw_weight': self.technical_weight,
+                    'normalized_score': scores['technical'],
+                    'contribution': contribution,
+                }
 
             if 'dl' in scores:
-                final_score += scores['dl'] * self.dl_weight
+                contribution = scores['dl'] * self.dl_weight
+                final_score += contribution
                 total_weight += self.dl_weight
+                weight_contributions['dl'] = {
+                    'raw_weight': self.dl_weight,
+                    'normalized_score': scores['dl'],
+                    'contribution': contribution,
+                }
 
             # Normalize by actual weights used
             if total_weight > 0:
                 final_score /= total_weight
+                # Normalize weight contributions to show effective weights
+                for source in weight_contributions:
+                    weight_contributions[source]['effective_weight'] = (
+                        weight_contributions[source]['raw_weight'] / total_weight
+                    )
 
             # Calculate confidence (inverse of divergence)
             confidence = 1.0 - divergence_mag
@@ -233,6 +270,16 @@ class SignalFusion:
                 'divergence_magnitude': float(divergence_mag),
                 'components': {k: float(v) for k, v in scores.items()},
                 'sources_used': sources_used,
+                'confidence_per_source': {k: float(v) for k, v in confidence_per_source.items()},
+                'weight_contributions': {
+                    k: {
+                        'raw_weight': float(v['raw_weight']),
+                        'normalized_score': float(v['normalized_score']),
+                        'contribution': float(v['contribution']),
+                        'effective_weight': float(v.get('effective_weight', v['raw_weight'])),
+                    }
+                    for k, v in weight_contributions.items()
+                },
             }
 
         except Exception as e:
@@ -246,6 +293,8 @@ class SignalFusion:
                 'divergence_magnitude': 0.0,
                 'components': {},
                 'sources_used': [],
+                'confidence_per_source': {},
+                'weight_contributions': {},
                 'error': str(e),
             }
 
