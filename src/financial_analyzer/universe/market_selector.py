@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from financial_analyzer.utils.helpers import get_logger
-from financial_analyzer.data.universe import UniverseSelector
+from financial_analyzer.universe.selector import UniverseSelector
 
 logger = get_logger(__name__)
 
