@@ -131,12 +131,12 @@ Configuration :
         # 1. Sélection univers global
         print(f"\n🌍 Sélection univers...")
         eq = Equities()
-        symbols = []
+        all_symbols = []
         
-        fetched_count = 0
+        # Première passe : collecter TOUS les symboles disponibles
         if regions:
             for region in regions:
-                print(f"  • {region}...")
+                print(f"  • Scan {region}...")
                 if sectors == 'all':
                     df = eq.search(country=region)
                 else:
@@ -145,17 +145,10 @@ Configuration :
                 if df is not None and not df.empty:
                     for sym in df.index:
                         if isinstance(sym, str) and '.' not in sym and sym.count('-') <= 1 and len(sym) <= 6:
-                            symbols.append(sym)
-                            fetched_count += 1
-                            if fetched_count % 1000 == 0:
-                                print(f"    ↳ Progress sélection: {fetched_count} symboles (limite {limit})")
-                        if len(symbols) >= limit:
-                            break
-                if len(symbols) >= limit:
-                    break
+                            all_symbols.append(sym)
         else:
             # Global
-            print("  • Toutes régions...")
+            print("  • Scan toutes régions...")
             if sectors == 'all':
                 df = eq.search()
             else:
@@ -164,19 +157,23 @@ Configuration :
             if df is not None and not df.empty:
                 for idx, sym in enumerate(df.index):
                     if isinstance(sym, str) and '.' not in sym and sym.count('-') <= 1 and len(sym) <= 6:
-                        symbols.append(sym)
-                        if (idx + 1) % 2000 == 0:
-                            print(f"    ↳ Progress global: {idx+1} lignes scannées, {len(symbols)} retenus")
-                    if len(symbols) >= limit:
-                        break
+                        all_symbols.append(sym)
+                        if (idx + 1) % 10000 == 0:
+                            print(f"    ↳ Progress scan: {idx+1} lignes scannées, {len(all_symbols)} symboles valides")
         
-        if not symbols:
+        if not all_symbols:
             print("❌ Aucun symbole trouvé")
             return False
         
-        # Shuffle pour supprimer biais alphabétique (seed basée sur la date du jour)
-        symbols = shuffle_universe(symbols, seed=None)
-        print(f"✅ {len(symbols)} symboles sélectionnés (ordre randomisé quotidiennement)")
+        print(f"✅ {len(all_symbols):,} symboles disponibles au total")
+        
+        # Randomiser AVANT de sélectionner (élimine le biais alphabétique)
+        print(f"🎲 Randomisation (seed basée sur date du jour)...")
+        all_symbols = shuffle_universe(all_symbols, seed=None)
+        
+        # Prendre les N premiers après randomisation
+        symbols = all_symbols[:limit]
+        print(f"✅ {len(symbols):,} symboles sélectionnés aléatoirement")
         
         # 2. Filtre Alpaca tradable
         print(f"\n🔍 Filtrage symboles tradables sur Alpaca...")
