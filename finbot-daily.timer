@@ -1,0 +1,10 @@
+[Unit]
+Description=FinBot Daily Portfolio Management Timer
+Requires=finbot-daily.service
+
+[Timer]
+OnCalendar=Mon-Fri 14:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

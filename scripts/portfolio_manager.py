@@ -223,7 +223,7 @@ class PortfolioManager:
         print(f"\n🔴 Vente de {len(decisions['sell'])} positions:")
         for sell in decisions['sell']:
             try:
-                order = self.adapter.place_order(
+                order = self.adapter.submit_order(
                     symbol=sell['symbol'],
                     qty=sell['qty'],
                     side='sell',
@@ -258,7 +258,7 @@ class PortfolioManager:
                 try:
                     # Calculer quantité basée sur cash_per_position
                     # Note: On utilise notional pour investir un montant fixe
-                    order = self.adapter.place_order(
+                    order = self.adapter.submit_order(
                         symbol=buy['symbol'],
                         notional=cash_per_position,
                         side='buy',

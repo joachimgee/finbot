@@ -1,0 +1,14 @@
+[Unit]
+Description=FinBot Daily Portfolio Management
+After=network.target
+
+[Service]
+Type=oneshot
+User=codespace
+WorkingDirectory=/workspaces/finbot
+ExecStart=/workspaces/finbot/scripts/daily_cron_job.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
