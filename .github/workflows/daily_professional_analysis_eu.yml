@@ -1,0 +1,52 @@
+name: Daily Professional Analysis EU
+
+on:
+  schedule:
+    - cron: '45 1 * * *'  # 01:45 UTC
+  workflow_dispatch: {}
+
+jobs:
+  eu-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      APCA_API_BASE_URL: ${{ secrets.https://paper-api.alpaca.markets }}
+      APCA_API_KEY_ID: ${{ secrets.PKAHIX63MNVTJPMD44ILTTJJ22 }}
+      APCA_API_SECRET_KEY: ${{ secrets.3i2C3pAeCKa5YPL7NpSXgBx8mnwCu3uSWf2BwEurbT9P }}
+      FMP_API_KEY: ${{ secrets.jJq5c4prWZALILljWhjgq08u2LV320lE }}
+      ALPHAVANTAGE_API_KEY: ${{ secrets.TGQCY9LANIUPJ4IL }}
+      NEWSAPI_KEY: ${{ secrets.c264bd241a2447bb94c32ba44377eda1 }}
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libffi-dev libatlas-base-dev liblapack-dev gfortran
+          python -m pip install --upgrade pip wheel setuptools
+          pip install -r requirements.txt || true
+          pip install financedatabase financetoolkit pypfopt riskfolio-lib alpaca-trade-api yfinance
+      - name: Run EU analysis
+        run: |
+          python -u scripts/professional_analysis_daemon.py --once \
+            --limit 8000 \
+            --top 150 \
+            --regions eu \
+            --days 365 \
+            --risk-level medium-high \
+            --weighting ic-weighted \
+            --output professional_analysis_eu.csv
+      - name: Upload EU artifact
+        uses: actions/upload-artifact@v4
+        with:
+            name: professional-analysis-eu
+            path: professional_analysis_eu.csv
+            retention-days: 14
+      - name: Summary
+        run: |
+          echo "EU analysis done" >> $GITHUB_STEP_SUMMARY
+          echo "Symbols limit: 8000 | Top: 150" >> $GITHUB_STEP_SUMMARY

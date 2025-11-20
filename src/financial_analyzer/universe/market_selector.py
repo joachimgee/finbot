@@ -153,6 +153,150 @@ class MarketSelector:
         )
         return result
 
+    def select_by_fundamental_criteria(
+        self,
+        n_assets: int = 20,
+        sectors: Optional[List[str]] = None,
+        country: str = "United States"
+    ) -> List[str]:
+        """
+        Select universe using FinanceDatabase with NO market cap restriction.
+        
+        This method integrates FinanceDatabase.Equities() for realistic
+        universe selection with proper sector mapping and fallback.
+        
+        Args:
+            n_assets: Number of assets to return (default: 20 for diversification)
+            sectors: List of sectors to filter (e.g., ['Technology', 'Healthcare'])
+            country: Country filter (default: 'United States')
+        
+        Returns:
+            List of ticker symbols (falls back to curated list if API fails)
+        
+        Example:
+            >>> selector = MarketSelector()
+            >>> tickers = selector.select_by_fundamental_criteria(
+            ...     n_assets=20,
+            ...     sectors=['Technology', 'Healthcare']
+            ... )
+            >>> len(tickers) <= 20
+            True
+        """
+        try:
+            # Import FinanceDatabase
+            from financedatabase import Equities
+            
+            logger.info(f"Fetching {n_assets} equities from FinanceDatabase...")
+            logger.info(f"Sectors: {sectors}, Country: {country}")
+            
+            # Sector mapping (user-friendly -> FinanceDatabase format)
+            sector_mapping = {
+                'Technology': 'Information Technology',
+                'Healthcare': 'Health Care',
+                'Finance': 'Financials',
+                'Consumer': 'Consumer Discretionary',
+                'Industrial': 'Industrials',
+                'Energy': 'Energy',
+                'Materials': 'Materials',
+                'Utilities': 'Utilities',
+                'Real Estate': 'Real Estate',
+                'Communication': 'Communication Services'
+            }
+            
+            # Initialize Equities
+            equities_db = Equities()
+            
+            # Search with filters
+            search_params = {'country': country}
+            
+            # Apply sector filtering
+            if sectors:
+                mapped_sectors = [sector_mapping.get(s, s) for s in sectors]
+                logger.info(f"Mapped sectors: {mapped_sectors}")
+                # Get equities for each sector and combine
+                all_results = pd.DataFrame()
+                for sector in mapped_sectors:
+                    sector_data = equities_db.search(sector=sector, country=country)
+                    if isinstance(sector_data, dict) and sector_data:
+                        all_results = pd.concat([all_results, pd.DataFrame(sector_data).T])
+            else:
+                # No sector filter - get all equities for country
+                result_data = equities_db.search(country=country)
+                if isinstance(result_data, dict) and result_data:
+                    all_results = pd.DataFrame(result_data).T
+                else:
+                    all_results = pd.DataFrame()
+            
+            if not all_results.empty:
+                # Extract tickers from index or 'symbol' column
+                if 'symbol' in all_results.columns:
+                    tickers = all_results['symbol'].dropna().unique().tolist()
+                else:
+                    tickers = all_results.index.tolist()
+                
+                # Limit to n_assets
+                tickers = tickers[:n_assets]
+                
+                logger.info(f"✅ FinanceDatabase returned {len(tickers)} tickers")
+                logger.info(f"Sample: {tickers[:5]}")
+                
+                return tickers
+            else:
+                logger.warning("FinanceDatabase returned empty results, using fallback")
+                return self._get_fallback_tickers(n_assets, sectors)
+        
+        except Exception as e:
+            logger.warning(f"FinanceDatabase error: {e}, using fallback tickers")
+            return self._get_fallback_tickers(n_assets, sectors)
+    
+    def _get_fallback_tickers(
+        self,
+        n_assets: int,
+        sectors: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Fallback ticker list when FinanceDatabase unavailable.
+        
+        Returns curated list of liquid, diversified US equities.
+        
+        Args:
+            n_assets: Number of tickers to return
+            sectors: Sector filter (optional)
+        
+        Returns:
+            List of ticker symbols
+        """
+        fallback_tickers = {
+            'Technology': ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'TSLA', 'AVGO', 'ORCL', 'AMD', 'CRM'],
+            'Healthcare': ['UNH', 'JNJ', 'LLY', 'ABBV', 'MRK', 'TMO', 'ABT', 'DHR', 'PFE', 'BMY'],
+            'Finance': ['BRK.B', 'JPM', 'V', 'MA', 'BAC', 'WFC', 'MS', 'GS', 'BLK', 'C'],
+            'Consumer': ['AMZN', 'TSLA', 'HD', 'MCD', 'NKE', 'SBUX', 'TGT', 'LOW', 'TJX', 'BKNG'],
+            'Industrial': ['UPS', 'HON', 'UNP', 'BA', 'CAT', 'RTX', 'GE', 'LMT', 'MMM', 'DE'],
+            'Energy': ['XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO', 'OXY', 'HAL'],
+            'Materials': ['LIN', 'SHW', 'APD', 'ECL', 'DD', 'NEM', 'FCX', 'CTVA', 'DOW', 'ALB'],
+            'Utilities': ['NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'PCG', 'XEL', 'ED'],
+            'Real Estate': ['PLD', 'AMT', 'CCI', 'EQIX', 'PSA', 'SPG', 'O', 'WELL', 'DLR', 'AVB'],
+            'Communication': ['GOOGL', 'META', 'NFLX', 'DIS', 'CMCSA', 'VZ', 'T', 'TMUS', 'CHTR', 'EA']
+        }
+        
+        if sectors:
+            # Filter by requested sectors
+            result = []
+            for sector in sectors:
+                if sector in fallback_tickers:
+                    result.extend(fallback_tickers[sector])
+            # Remove duplicates and limit
+            result = list(dict.fromkeys(result))[:n_assets]
+        else:
+            # Return mix from all sectors
+            result = []
+            for ticker_list in fallback_tickers.values():
+                result.extend(ticker_list[:2])  # 2 from each sector
+            result = list(dict.fromkeys(result))[:n_assets]
+        
+        logger.info(f"📋 Using fallback tickers: {len(result)} assets")
+        return result
+
     @staticmethod
     def _parse_market_cap(cap_str: Union[str, float, int, None]) -> float:
         """

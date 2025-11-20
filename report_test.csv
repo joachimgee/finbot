@@ -1,0 +1,15 @@
+symbol,momentum_signal,weight,last_price,target_qty,current_qty,delta,side,order_status,order_id,reason
+ASST,0.9994761354814199,0.0,1.12,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+APPN,0.9991342952272575,0.034160341603416036,42.38,80,0,80,buy,pending_new,c4a2f2e4-81d1-400b-a88f-5e20e67ec567,"Momentum=0.999, Weight=0.034, Price=42.38, Qty=80, Delta=80"
+AKAM,0.9503459811351814,0.0,88.41,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+ABTC,0.9246404262528926,0.005480054800548005,5.2,105,0,105,buy,pending_new,eb1472a6-1bf7-4603-a0d8-1a85b69e8e6e,"Momentum=0.925, Weight=0.005, Price=5.20, Qty=105, Delta=105"
+AGYS,0.6838320421690441,0.0,122.71,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+AIP,0.5604343020542567,0.0,13.345,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+AMBA,0.5512799591821009,0.0,84.675,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+AAPL,0.37859051323956094,0.32702327023270233,268.695,121,1,120,buy,risk_rejected,,Concentration limit exceeded: 32.5% > 25.0% (AAPL)
+APH,0.25770411919834074,0.40892408924089246,132.36,308,0,308,buy,risk_rejected,,Concentration limit exceeded: 40.8% > 25.0% (APH)
+AMAT,0.2263445604684078,0.0,225.63,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+AMD,0.1544575153194968,0.22016220162201622,233.83,94,0,94,buy,pending_new,d10c98a7-cd49-4f14-8370-b745e94c6c6d,"Momentum=0.154, Weight=0.220, Price=233.83, Qty=94, Delta=94"
+AIRG,0.07216349826619797,0.004250042500425005,4.18,101,0,101,buy,pending_new,aa8b75b4-186f-4fec-b689-71ef4e95de68,"Momentum=0.072, Weight=0.004, Price=4.18, Qty=101, Delta=101"
+AMKR,0.03895397172572818,0.0,30.91,0,0,0,hold,hold,,"No delta (current=0, target=0)"
+AMPL,0.02030177862926474,0.0,9.87,0,0,0,hold,hold,,"No delta (current=0, target=0)"

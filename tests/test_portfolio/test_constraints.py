@@ -1,3 +1,133 @@
+import math
+from typing import Dict
+
+import numpy as np
+import pandas as pd
+
+from financial_analyzer.portfolio.constraints import (
+    Constraints,
+    GroupConstraint,
+    LeverageConstraint,
+    MaxPositionsConstraint,
+    MaxTurnoverConstraint,
+    RiskBudgetConstraint,
+    WeightBounds,
+)
+
+
+def test_bounds_enforcement_global():
+    w = pd.Series([0.5, 0.6, -0.1], index=['A', 'B', 'C'])
+    cons = Constraints(bounds=WeightBounds(lower=0.0, upper=0.5))
+    w2 = cons.enforce_bounds(w)
+    assert (w2 >= -1e-12).all() and (w2 <= 0.5 + 1e-12).all()
+    assert abs(float(w2.sum()) - 1.0) < 1e-9
+
+
+def test_bounds_enforcement_per_asset():
+    bounds = WeightBounds(lower={'A': 0.1, 'B': 0.0}, upper={'A': 0.2, 'B': 0.8, 'C': 0.5})
+    w = pd.Series([0.05, 0.9, 0.2], index=['A', 'B', 'C'])
+    w2 = Constraints(bounds=bounds).enforce_bounds(w)
+    assert 0.099 <= w2['A'] <= 0.201
+    assert w2['B'] <= 0.801
+    assert w2['C'] <= 0.501
+    assert abs(float(w2.sum()) - 1.0) < 1e-9
+
+
+def test_max_positions_true():
+    cons = Constraints(max_positions=MaxPositionsConstraint(max_positions=2))
+    w = pd.Series([0.5, 0.5, 0.0], index=['A', 'B', 'C'])
+    assert cons.check_max_positions(w)
+
+
+def test_max_positions_false():
+    cons = Constraints(max_positions=MaxPositionsConstraint(max_positions=2))
+    w = pd.Series([0.4, 0.4, 0.2], index=['A', 'B', 'C'])
+    assert not cons.check_max_positions(w)
+
+
+def test_group_bounds_ok():
+    group_map = {'A': 'Tech', 'B': 'Tech', 'C': 'Health'}
+    cons = Constraints(group=GroupConstraint(group_map=group_map, group_max={'Tech': 0.9}))
+    w = pd.Series([0.45, 0.45, 0.10], index=['A', 'B', 'C'])
+    assert cons.check_group_bounds(w)
+
+
+def test_group_bounds_violation():
+    group_map = {'A': 'Tech', 'B': 'Tech', 'C': 'Health'}
+    cons = Constraints(group=GroupConstraint(group_map=group_map, group_max={'Tech': 0.8}))
+    w = pd.Series([0.45, 0.45, 0.10], index=['A', 'B', 'C'])
+    assert not cons.check_group_bounds(w)
+
+
+def test_turnover_ok():
+    prev = {'A': 0.5, 'B': 0.3, 'C': 0.2}
+    cons = Constraints(turnover=MaxTurnoverConstraint(previous_weights=prev, max_turnover=0.6))
+    w = pd.Series([0.4, 0.4, 0.2], index=['A', 'B', 'C'])
+    assert cons.check_turnover(w)
+
+
+def test_turnover_violation():
+    prev = {'A': 0.5, 'B': 0.3, 'C': 0.2}
+    cons = Constraints(turnover=MaxTurnoverConstraint(previous_weights=prev, max_turnover=0.1))
+    w = pd.Series([0.4, 0.4, 0.2], index=['A', 'B', 'C'])
+    assert not cons.check_turnover(w)
+
+
+def test_leverage_ok():
+    cons = Constraints(leverage=LeverageConstraint(max_leverage=1.0))
+    w = pd.Series([0.4, 0.3, 0.3], index=['A', 'B', 'C'])
+    assert cons.check_leverage(w)
+
+
+def test_leverage_violation():
+    cons = Constraints(leverage=LeverageConstraint(max_leverage=0.9))
+    w = pd.Series([0.4, 0.3, 0.3], index=['A', 'B', 'C'])
+    assert not cons.check_leverage(w)
+
+
+def test_risk_budget_ok():
+    cons = Constraints(risk_budget=RiskBudgetConstraint(max_volatility=0.5))
+    w = pd.Series([0.5, 0.5], index=['A', 'B'])
+    cov = pd.DataFrame([[0.04, 0.0], [0.0, 0.04]], index=['A', 'B'], columns=['A', 'B'])
+    assert cons.check_risk_budget(w, cov)
+
+
+def test_risk_budget_violation():
+    cons = Constraints(risk_budget=RiskBudgetConstraint(max_volatility=0.1))
+    w = pd.Series([0.5, 0.5], index=['A', 'B'])
+    cov = pd.DataFrame([[0.04, 0.0], [0.0, 0.04]], index=['A', 'B'], columns=['A', 'B'])
+    assert not cons.check_risk_budget(w, cov)
+
+
+def test_is_feasible_true():
+    prev = {'A': 0.4, 'B': 0.4, 'C': 0.2}
+    cons = Constraints(
+        bounds=WeightBounds(0.0, 0.8),
+        max_positions=MaxPositionsConstraint(3),
+        group=GroupConstraint(group_map={'A': 'G1', 'B': 'G1', 'C': 'G2'}, group_max={'G1': 0.9}),
+        turnover=MaxTurnoverConstraint(previous_weights=prev, max_turnover=0.6),
+        leverage=LeverageConstraint(1.0),
+        risk_budget=RiskBudgetConstraint(max_volatility=0.8),
+    )
+    w = pd.Series([0.4, 0.4, 0.2], index=['A', 'B', 'C'])
+    cov = pd.DataFrame(np.eye(3) * 0.04, index=w.index, columns=w.index)
+    assert cons.is_feasible(w, cov)
+
+
+def test_is_feasible_false_sum():
+    cons = Constraints(bounds=WeightBounds(0.0, 1.0))
+    w = pd.Series([0.4, 0.4, 0.3], index=['A', 'B', 'C'])
+    assert not cons.is_feasible(w)
+
+
+def test_bounds_invalid_raises():
+    cons = Constraints(bounds=WeightBounds(lower={'A': 0.6}, upper={'A': 0.4}))
+    w = pd.Series([0.7, 0.2, 0.1], index=['A', 'B', 'C'])
+    try:
+        _ = cons.enforce_bounds(w)
+        assert False, "Expected ValueError"
+    except ValueError:
+        assert True
 import numpy as np
 import pandas as pd
 import pytest

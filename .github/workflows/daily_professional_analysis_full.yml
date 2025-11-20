@@ -1,0 +1,68 @@
+name: Daily Professional Analysis FULL 30K
+
+on:
+  schedule:
+    # FULL run 30K at 02:00 UTC (to avoid peak load) adjust to your timezone
+    - cron: '0 2 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  full-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 420  # Large universe (30K) may need extra time
+
+    env:
+      APCA_API_BASE_URL: ${{ secrets.https://paper-api.alpaca.markets }}
+      APCA_API_KEY_ID: ${{ secrets.PKAHIX63MNVTJPMD44ILTTJJ22 }}
+      APCA_API_SECRET_KEY: ${{ secrets.3i2C3pAeCKa5YPL7NpSXgBx8mnwCu3uSWf2BwEurbT9P }}
+      FMP_API_KEY: ${{ secrets.jJq5c4prWZALILljWhjgq08u2LV320lE }}
+      ALPHAVANTAGE_API_KEY: ${{ secrets.TGQCY9LANIUPJ4IL }}
+      NEWSAPI_KEY: ${{ secrets.c264bd241a2447bb94c32ba44377eda1 }}
+      PYTHONUNBUFFERED: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies (TA-Lib, etc.)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget curl libffi-dev libatlas-base-dev liblapack-dev gfortran
+          python -m pip install --upgrade pip wheel setuptools
+
+      - name: Install Python dependencies
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install financedatabase financetoolkit pypfopt riskfolio-lib alpaca-trade-api yfinance
+
+      - name: Run FULL professional analysis (30K global)
+        run: |
+          echo "Starting FULL professional global analysis (30K) at $(date -u)"
+          python -u scripts/professional_analysis_daemon.py \
+            --once \
+            --limit 30000 \
+            --top 300 \
+            --regions "global" \
+            --days 365 \
+            --risk-level medium-high \
+            --weighting ic-weighted \
+            --output professional_analysis_full_30k.csv
+
+      - name: Upload results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: professional-analysis-full-30k
+          path: professional_analysis_full_30k.csv
+          retention-days: 14
+
+      - name: Summary
+        run: |
+          echo "Full 30K run completed at $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "Global professional FULL analysis generated: professional_analysis_full_30k.csv" >> $GITHUB_STEP_SUMMARY
+          echo "Top positions: 300 | Universe limit: 30000 | Weighting: IC-weighted" >> $GITHUB_STEP_SUMMARY

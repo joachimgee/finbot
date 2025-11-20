@@ -1,0 +1,70 @@
+{
+  "uid": "finbot-app-performance",
+  "title": "FinBot - Application Performance",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Latency p50/p95/p99 (s)",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(finbot_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(finbot_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(finbot_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request throughput (req/s)",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(finbot_request_duration_seconds_count[1m]))",
+          "legendFormat": "rps",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio (%)",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "(sum(rate(finbot_errors_total[1m])) / clamp_min(sum(rate(finbot_request_duration_seconds_count[1m])),1))",
+          "legendFormat": "error_ratio",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}}
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        }
+      }
+    ]
+  }
+}

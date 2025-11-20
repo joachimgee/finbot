@@ -1,5 +1,22 @@
 from __future__ import annotations
 
+"""Tests d'intégration inter-modules.
+
+Valide la cohérence des échanges entre :
+    - SentimentAggregator / SignalFusion
+    - Indicateurs techniques / Deep Learning / Fusion
+    - Allocation / Optimisation / Exécution / Attribution / Reporting
+
+Approche : Génération de données synthétiques de rendements puis propagation
+des sorties à travers les couches. Chaque test cible une interface critique.
+
+Edge cases couverts :
+    - Allocation égalitaire (fallback interne)
+    - Decomposition de risque
+    - Génération de rapport Markdown
+    - Logging non intrusif
+"""
+
 from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
@@ -66,6 +83,22 @@ def test_allocator_to_riskfolio(returns_df):
     # Risk decomposition should run
     risk_decomp = opt.risk_decomposition(weights)
     assert not risk_decomp.empty and {'mrc', 'rc', 'pct'}.issubset(risk_decomp.columns)
+
+
+def test_low_confidence_filtering(sentiment_scores):
+    """Vérifie qu'un score fusionné très faible produit une allocation nulle potentielle.
+
+    Assumption: Le moteur d'allocation ignore ou attribue une pondération négligeable aux signaux < seuil.
+    """
+    fusion = SignalFusion()
+    signals = {
+        'AAA': fusion.fuse('AAA', sentiment_scores['AAA'], {'rsi': 50, 'macd': 0.0, 'sma_cross': 1, 'bb_position': 0.5}, 0.5),
+        'ZZZ': {'final_score': 0.0, 'confidence': 0.0},  # signal artificiellement nul
+    }
+    alloc = EnsembleAllocator().allocate(signals, total_capital=50_000, risk_model='signal_based')
+    # Pondération sur ZZZ proche de zéro (tolérance)
+    z_weight = alloc.get('ZZZ', 0.0)
+    assert z_weight <= 1e-6
 
 
 def test_riskfolio_to_order_executor():

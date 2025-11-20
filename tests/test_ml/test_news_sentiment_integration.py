@@ -854,12 +854,14 @@ class TestEventStudyAnalyzer:
         )
         
         # Should auto-adjust and warn (not raise)
-        analyzer = EventStudyAnalyzer(
-            prices=short_prices,
-            market_returns=sample_market_returns,
-            event_dates=sample_event_dates,
-            estimation_window=50
-        )
+        import logging
+        with caplog.at_level(logging.WARNING):
+            analyzer = EventStudyAnalyzer(
+                prices=short_prices,
+                market_returns=sample_market_returns,
+                event_dates=sample_event_dates,
+                estimation_window=50
+            )
         
         # Verify estimation_window was auto-adjusted
         assert analyzer.estimation_window == 9  # 10 prices - 1 for pct_change

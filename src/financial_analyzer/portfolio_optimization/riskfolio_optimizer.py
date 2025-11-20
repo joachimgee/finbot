@@ -20,6 +20,8 @@ Tests mock riskfolio objects; no network or heavy compute is performed here.
 from __future__ import annotations
 
 from typing import Dict, Optional
+import sys
+from pathlib import Path
 import logging
 
 import numpy as np
@@ -30,15 +32,38 @@ from financial_analyzer.utils.helpers import get_logger
 
 logger = get_logger(__name__)
 
+def _ensure_vendor_riskfolio_on_path() -> None:
+    """Ensure vendored Riskfolio-Lib is importable.
+
+    Adds `vendor/riskfolio-lib` (or `vendor/Riskfolio-Lib`) to `sys.path` when running
+    from the project workspace so that `import riskfolio` succeeds without pip install.
+    """
+    try:
+        root = Path(__file__).resolve().parents[3]
+        candidates = [
+            root / "vendor" / "riskfolio-lib",
+            root / "vendor" / "Riskfolio-Lib",
+        ]
+        for p in candidates:
+            if p.exists() and str(p) not in sys.path:
+                sys.path.insert(0, str(p))
+    except Exception:
+        # Best-effort only
+        pass
+
+
 try:
-    # Required import path per spec
     from riskfolio import Portfolio, HCPortfolio  # type: ignore
-except Exception as e:  # pragma: no cover - tests will mock these classes
-    Portfolio = None  # type: ignore
-    HCPortfolio = None  # type: ignore
-    logger.warning(
-        "riskfolio-lib not available at import time; tests will mock Portfolio/HCPortfolio"
-    )
+except Exception:
+    _ensure_vendor_riskfolio_on_path()
+    try:
+        from riskfolio import Portfolio, HCPortfolio  # type: ignore
+    except Exception as e:  # pragma: no cover - tests will mock these classes
+        Portfolio = None  # type: ignore
+        HCPortfolio = None  # type: ignore
+        logger.warning(
+            "riskfolio-lib not available; Portfolio/HCPortfolio will be mocked in tests"
+        )
 
 
 class RiskfolioOptimizer:

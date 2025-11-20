@@ -40,6 +40,7 @@ Example:
 """
 
 from typing import Dict, List, Optional
+import logging
 from datetime import datetime, timedelta
 import logging
 
@@ -88,7 +89,8 @@ class SentimentAggregator:
         finbert_engine: Optional[FinBERTEngine] = None,
         news_scraper: Optional[FinancialNewsScraper] = None,
         ema_alpha: float = 0.3,
-        cache_hours: int = 1
+        cache_hours: int = 1,
+        default_method: str = "mean",
     ):
         """
         Initialize sentiment aggregator.
@@ -110,12 +112,20 @@ class SentimentAggregator:
         """
         if not 0 < ema_alpha < 1:
             raise ValueError(f"ema_alpha must be in (0, 1), got {ema_alpha}")
+        if default_method not in {"mean", "median"}:
+            raise ValueError("Méthode d'agrégation invalide: utilisez 'mean' ou 'median'")
         
         self.finbert = finbert_engine or FinBERTEngine()
         self.news_scraper = news_scraper or FinancialNewsScraper()
         self.ema_alpha = ema_alpha
         self.cache_hours = cache_hours
+        self.default_method = default_method
         self.cache: Dict[str, Dict] = {}
+        # Ensure logger propagates to root so pytest caplog can capture
+        try:
+            logger.propagate = True
+        except Exception:
+            pass
         
         logger.info(
             f"SentimentAggregator initialized: "
@@ -272,6 +282,120 @@ class SentimentAggregator:
         )
         
         return result
+
+    # --- API attendue par les tests -------------------------------------------------
+    def _validate_dataframe(self, df: pd.DataFrame) -> None:
+        """
+        Valide que le DataFrame contient les colonnes minimales pour agrégation.
+
+        Exigences minimales:
+          - 'sentiment_score' (pour toutes les agrégations)
+          - 'ticker' pour aggregate_by_ticker
+          - 'source' pour aggregate_by_source et aggregate_weighted
+        """
+        if df is None or df.empty:
+            raise ValueError("DataFrame vide")
+        required = {"sentiment_score"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"Colonnes manquantes: {sorted(missing)}")
+
+    def _agg_func(self, series: pd.Series) -> float:
+        return float(series.mean()) if self.default_method == "mean" else float(series.median())
+
+    def aggregate_by_date(self, df: pd.DataFrame, period: str = "D") -> pd.DataFrame:
+        """
+        Agrège par date en utilisant resample sur l'index Datetime.
+        Retourne un DataFrame avec colonnes: sentiment_score, count.
+        """
+        self._validate_dataframe(df)
+
+        if not isinstance(df.index, pd.DatetimeIndex):
+            # Essayer de convertir une colonne 'date' si présente
+            if 'date' in df.columns:
+                df = df.copy()
+                df.index = pd.to_datetime(df['date'])
+                df.index.name = 'date'
+            else:
+                df = df.copy()
+                df.index = pd.to_datetime(df.index)
+                df.index.name = 'date'
+
+        valid_periods = {"D", "W", "M"}
+        if period not in valid_periods:
+            # Log via module logger and root logger for caplog capture
+            logger.warning(f"Période invalide '{period}', fallback à 'D'")
+            logging.warning(f"Période invalide '{period}', fallback à 'D'")
+            period = "D"
+
+        grouped = df.resample(period)
+        agg_df = pd.DataFrame({
+            "sentiment_score": grouped['sentiment_score'].apply(self._agg_func),
+            "count": grouped['sentiment_score'].count(),
+        })
+        return agg_df
+
+    def aggregate_by_ticker(self, df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Agrège par ticker et retourne un dict[ticker, metrics]."""
+        self._validate_dataframe(df)
+        if 'ticker' not in df.columns:
+            raise ValueError("Colonne 'ticker' manquante")
+
+        grouped = df.groupby('ticker')
+        result: Dict[str, Dict[str, float]] = {}
+        for tkr, g in grouped:
+            result[tkr] = {
+                'sentiment_score': self._agg_func(g['sentiment_score']),
+                'count': int(g['sentiment_score'].count()),
+            }
+        return result
+
+    def aggregate_by_source(self, df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Agrège par source et retourne un dict[source, metrics]."""
+        self._validate_dataframe(df)
+        if 'source' not in df.columns:
+            raise ValueError("Colonne 'source' manquante")
+
+        grouped = df.groupby('source')
+        result: Dict[str, Dict[str, float]] = {}
+        for src, g in grouped:
+            result[src] = {
+                'sentiment_score': self._agg_func(g['sentiment_score']),
+                'count': int(g['sentiment_score'].count()),
+            }
+        return result
+
+    def aggregate_weighted(self, df: pd.DataFrame, weights: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+        """
+        Agrégation pondérée par source. Si weights est None, fallback sur moyenne simple.
+        Retourne {'sentiment_score': float, 'count': int}
+        """
+        self._validate_dataframe(df)
+        if weights is None:
+            logger.warning("Pas de weights fournis, utilisation de la mean simple")
+            logging.warning("Pas de weights fournis, utilisation de la mean simple")
+            return {
+                'sentiment_score': float(df['sentiment_score'].mean()) if not df.empty else 0.0,
+                'count': int(df['sentiment_score'].count()),
+            }
+        if 'source' not in df.columns:
+            raise ValueError("Colonne 'source' manquante pour agrégation pondérée")
+
+        tmp = df.copy()
+        tmp['__w__'] = tmp['source'].map(lambda s: float(weights.get(s, 0.0)))
+        # Si aucune weight positive, fallback mean
+        if tmp['__w__'].sum() <= 0:
+            logger.warning("Weights non valides, fallback mean simple")
+            return {
+                'sentiment_score': float(df['sentiment_score'].mean()) if not df.empty else 0.0,
+                'count': int(df['sentiment_score'].count()),
+            }
+        score = float((tmp['sentiment_score'] * tmp['__w__']).sum() / tmp['__w__'].sum())
+        return {'sentiment_score': score, 'count': int(df['sentiment_score'].count())}
+
+    def get_sentiment_trend(self, df: pd.DataFrame, period: str = 'D') -> pd.DataFrame:
+        """Alias pratique pour aggregate_by_date (trend temporel)."""
+        return self.aggregate_by_date(df, period=period)
     
     def _calculate_recency_weights(self, articles_df: pd.DataFrame) -> np.ndarray:
         """

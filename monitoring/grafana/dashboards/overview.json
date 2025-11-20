@@ -1,0 +1,89 @@
+{
+  "uid": "finbot-overview",
+  "title": "FinBot - Overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Error rate (5m)",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 5},
+      "targets": [
+        {
+          "expr": "(sum(rate(finbot_errors_total[5m])) / clamp_min(sum(rate(finbot_request_duration_seconds_count[5m])),1))",
+          "legendFormat": "error_rate",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "red", "value": 0.05}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency (s)",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 5},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(finbot_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "orange", "value": 1}, {"color": "red", "value": 2}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Requests rps",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 5},
+      "targets": [
+        {
+          "expr": "sum(rate(finbot_request_duration_seconds_count[5m]))",
+          "legendFormat": "rps",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "req/s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "P&L",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 9},
+      "targets": [
+        {
+          "expr": "finbot_pnl",
+          "legendFormat": "pnl",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "currency"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Max Drawdown",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 9},
+      "targets": [
+        {
+          "expr": "finbot_max_drawdown",
+          "legendFormat": "max_dd",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        }
+      }
+    ]
+  }
+}

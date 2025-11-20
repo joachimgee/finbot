@@ -99,6 +99,7 @@ class AlphaFactorEngine:
         """MACD momentum indicator.
 
         Returns a dict with keys: 'MACD', 'Signal', 'Histogram'.
+        Names align with legacy expectations in tests.
         """
         close = self.ohlcv[self._colmap["close"]]
         ema_fast = close.ewm(span=fast, adjust=False).mean()
@@ -108,21 +109,21 @@ class AlphaFactorEngine:
         histogram = macd_line - signal_line
 
         macd_line_res = FactorResult(
-            name="MACD_line",
+            name="MACD",
             values=macd_line,
             description="MACD line",
             category="Momentum",
             valid_data=int(macd_line.notna().sum()),
         )
         signal_line_res = FactorResult(
-            name="MACD_signal",
+            name="Signal",
             values=signal_line,
             description="MACD signal line",
             category="Momentum",
             valid_data=int(signal_line.notna().sum()),
         )
         histogram_res = FactorResult(
-            name="MACD_histogram",
+            name="Histogram",
             values=histogram,
             description="MACD histogram",
             category="Momentum",

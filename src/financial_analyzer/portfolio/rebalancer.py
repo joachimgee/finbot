@@ -38,14 +38,14 @@ class PortfolioRebalancer:
 	def rebalance_periodic(
 		self,
 		target_weights: pd.Series,
-		freq: str = 'M',
+		freq: str = 'ME',
 		transaction_cost: float = 0.0,
 	) -> RebalanceResult:
 		"""Rebalance à une fréquence calendaire.
 
 		Args:
 			target_weights: Poids cibles somme 1.
-			freq: Fréquence pandas (ex: 'M' pour fin de mois).
+			freq: Fréquence pandas (ex: 'ME' pour fin de mois).
 			transaction_cost: Coût de transaction proportionnel par unité de poids transigée.
 
 		Returns:
@@ -54,6 +54,9 @@ class PortfolioRebalancer:
 		dates = self.returns.index
 		target_weights = target_weights.reindex(self.tickers).fillna(0.0)
 		tw = target_weights / target_weights.sum() if target_weights.sum() != 1 else target_weights
+		# Normalise deprecated monthly alias to avoid FutureWarning while keeping BC
+		if freq == 'M':
+			freq = 'ME'
 		rebal_dates = pd.date_range(start=dates.min(), end=dates.max(), freq=freq)
 		rebal_dates = dates.intersection(rebal_dates)
 		return _simulate_rebalancing(self.returns, tw, rebal_dates, transaction_cost)

@@ -1,3 +1,10 @@
+"""Tests E2E du pipeline FinBot.
+
+Valide l'orchestration complète: sélection univers, récupération données,
+feature engineering, fusion de signaux, allocation, optimisation, génération
+d'ordres, analyse performance et reporting. Les stubs simplifient les dépendances
+externes pour conserver déterminisme et vitesse.
+"""
 import os
 from typing import Any, Dict, List
 import pandas as pd
@@ -17,20 +24,19 @@ from financial_analyzer.analytics.report_generator import ReportGenerator
 # Fixtures & Test Doubles
 # -----------------------------
 
-class DummyUniverseSelector(UniverseSelector):
-    def __init__(self) -> None:
-        # Skip heavy init for tests
+class DummyUniverseSelector(UniverseSelector):  # pragma: no cover - stub
+    def __init__(self) -> None:  # pragma: no cover - trivial
         pass
 
-    def get_metadata(self, tickers: List[str], asset_type: str = 'equities') -> pd.DataFrame:
+    def get_metadata(self, tickers: List[str], asset_type: str = 'equities') -> pd.DataFrame:  # pragma: no cover
         return pd.DataFrame({'symbol': tickers})
 
 
-class DummyMarketDataFetcher(MarketDataFetcher):
-    def __init__(self, prices: Dict[str, pd.DataFrame]) -> None:
+class DummyMarketDataFetcher(MarketDataFetcher):  # pragma: no cover - stub
+    def __init__(self, prices: Dict[str, pd.DataFrame]) -> None:  # pragma: no cover
         self._prices = prices
 
-    def get_historical_data(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def get_historical_data(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:  # pragma: no cover
         return self._prices.get(ticker, pd.DataFrame({'Close': []}))
 
 

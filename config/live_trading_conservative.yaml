@@ -1,0 +1,54 @@
+# FinBot Live Trading Configuration - Conservative Strategy
+# 
+# This is a production-ready conservative configuration with:
+# - Lower risk limits
+# - Smaller position sizes
+# - Tighter loss controls
+# - Blue-chip stocks only
+
+broker:
+  paper: true  # ALWAYS test with paper trading first!
+
+# Conservative blue-chip universe
+tickers:
+  - AAPL   # Apple
+  - MSFT   # Microsoft
+  - JNJ    # Johnson & Johnson
+  - JPM    # JPMorgan
+  - PG     # Procter & Gamble
+  - KO     # Coca-Cola
+
+strategy: factor_ensemble
+
+# Conservative Risk Management
+risk:
+  # Lower position sizes
+  max_position_size: 10000.0       # $10k max per position
+  max_position_pct: 0.15           # 15% max concentration
+  
+  # Fewer positions
+  max_total_positions: 8           # Max 8 positions
+  max_leverage: 1.0                # No leverage (1.0x)
+  
+  # Tighter loss controls
+  max_drawdown: -0.08              # 8% max drawdown
+  max_daily_loss: 500.0            # $500 daily loss limit
+  
+  # Circuit breaker enabled
+  enable_circuit_breaker: true
+  circuit_breaker_cooldown: 7200   # 2 hour cooldown
+
+# Weekly rebalancing (less frequent)
+schedule:
+  execution_time: "09:35"
+  frequency: weekly
+  day_of_week: 0                   # Monday
+  enabled: true
+
+data:
+  lookback_days: 90                # More historical data
+  timeframe: "1Day"
+
+logging:
+  level: INFO
+  file: logs/live_trading_conservative.log

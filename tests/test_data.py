@@ -26,6 +26,14 @@ from unittest.mock import patch, MagicMock, call
 # 3. Projet local
 from financial_analyzer.data.market_data import MarketDataFetcher
 from financial_analyzer.data.news_scraper import FinancialNewsScraper
+from financial_analyzer import config
+
+
+# Désactiver le cache pour tous les tests de ce module
+@pytest.fixture(autouse=True)
+def disable_cache(monkeypatch):
+    """Fixture auto: désactive le cache pour tous les tests."""
+    monkeypatch.setattr(config, 'CACHE_ENABLED', False)
 
 
 # ============================================================================
@@ -134,14 +142,16 @@ class TestMarketDataFetcher:
         assert hasattr(fetcher, 'session')
 
     def test_init_invalid_api_key_empty(self) -> None:
-        """Test: ValueError si API key vide."""
-        with pytest.raises(ValueError, match="api_key ne peut pas être vide"):
-            MarketDataFetcher(api_key="")
+        """Test: api_key vide accepté (fallback yfinance)."""
+        fetcher = MarketDataFetcher(api_key="")
+        assert fetcher.use_yfinance is True
+        assert fetcher.api_key is None
 
     def test_init_invalid_api_key_none(self) -> None:
-        """Test: ValueError si API key None."""
-        with pytest.raises(ValueError, match="api_key ne peut pas être vide"):
-            MarketDataFetcher(api_key=None)
+        """Test: api_key None accepté (fallback yfinance)."""
+        fetcher = MarketDataFetcher(api_key=None)
+        assert fetcher.use_yfinance is True
+        assert fetcher.api_key is None
 
     def test_init_invalid_api_key_type(self) -> None:
         """Test: ValueError si API key n'est pas string."""
@@ -239,10 +249,10 @@ class TestMarketDataFetcher:
         assert all(isinstance(df, pd.DataFrame) for df in result.values())
 
     @patch('financial_analyzer.data.market_data.Toolkit')
-    @patch('financial_analyzer.data.market_data.yf.download')
+    @patch('financial_analyzer.data.market_data.yf.Ticker')
     def test_get_historical_data_fallback_yfinance(
         self,
-        mock_yf_download,
+        mock_yf_ticker,
         mock_toolkit_class,
         market_fetcher: MarketDataFetcher,
         sample_prices_df: pd.DataFrame
@@ -253,15 +263,18 @@ class TestMarketDataFetcher:
         mock_toolkit_instance.get_historical_data.side_effect = Exception("API error")
         mock_toolkit_class.return_value = mock_toolkit_instance
 
-        # Setup mock yfinance pour réussir
-        mock_yf_download.return_value = sample_prices_df
+        # Setup mock yfinance.Ticker().history pour réussir
+        mock_ticker_instance = MagicMock()
+        mock_ticker_instance.history.return_value = sample_prices_df
+        mock_yf_ticker.return_value = mock_ticker_instance
 
         # Exécuter
         result = market_fetcher.get_historical_data("AAPL", period="1y")
 
         # Assertions
         assert isinstance(result, pd.DataFrame)
-        mock_yf_download.assert_called_once()
+        mock_yf_ticker.assert_called_once_with("AAPL")
+        mock_ticker_instance.history.assert_called()
 
     def test_get_historical_data_invalid_ticker(
         self,

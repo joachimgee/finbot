@@ -1,0 +1,89 @@
+# FinBot Live Trading Configuration
+# 
+# This file configures the live trading pipeline execution.
+# Copy this to create custom strategies.
+
+# Broker Configuration
+broker:
+  # Use paper trading (set to false for live trading)
+  paper: true
+  
+  # API credentials loaded from environment variables:
+  # - ALPACA_API_KEY
+  # - ALPACA_SECRET_KEY
+
+# Trading Universe
+tickers:
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - TSLA
+  - META
+  - NFLX
+
+# Trading Strategy
+strategy: factor_ensemble  # Options: momentum, mean_reversion, factor_ensemble
+
+# Risk Management Configuration
+risk:
+  # Position Size Limits
+  max_position_size: 25000.0      # Max dollar value per position ($25k)
+  max_position_pct: 0.20           # Max position as % of portfolio (20%)
+  
+  # Portfolio Limits
+  max_total_positions: 12          # Max number of positions
+  max_leverage: 1.5                # Max leverage ratio (1.5x)
+  
+  # Loss Limits
+  max_drawdown: -0.15              # Max drawdown from peak (-15%)
+  max_daily_loss: 2000.0           # Max daily loss ($2k)
+  
+  # Circuit Breaker
+  enable_circuit_breaker: true     # Enable automatic halt on violations
+  circuit_breaker_cooldown: 3600   # Cooldown period in seconds (1 hour)
+
+# Execution Schedule
+schedule:
+  # Execution time (ET timezone)
+  execution_time: "09:35"          # 9:35 AM ET (5 min after market open)
+  
+  # Frequency: daily, weekly, monthly
+  frequency: daily
+  
+  # For weekly: day_of_week (0=Monday, 4=Friday)
+  # day_of_week: 0
+  
+  # For monthly: day_of_month (1-28)
+  # day_of_month: 1
+  
+  # Enable/disable scheduled execution
+  enabled: true
+
+# Data Configuration
+data:
+  # Historical data lookback (days)
+  lookback_days: 60
+  
+  # Bar timeframe for data
+  timeframe: "1Day"
+
+# Logging
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+  
+  # Log file path (relative to project root)
+  file: logs/live_trading.log
+
+# Notifications (future)
+# notifications:
+#   email:
+#     enabled: false
+#     recipients:
+#       - your-email@example.com
+#   
+#   slack:
+#     enabled: false
+#     webhook_url: https://hooks.slack.com/services/YOUR/WEBHOOK/URL

@@ -1,0 +1,53 @@
+version: '3.9'
+
+# Override for main docker-compose.yml
+# Configures app service to send logs to Logstash
+#
+# Usage:
+#   docker-compose \
+#     -f docker-compose.yml \
+#     -f logging/docker-compose.logging.override.yml \
+#     up -d
+
+services:
+  app:
+    # Override environment for structured JSON logging
+    environment:
+      - LOG_TARGET=http://logstash:5000
+      - LOG_FORMAT=json
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    
+    # Keep json-file driver; app sends structured logs to Logstash directly
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+        labels: 'service=finbot-app'
+    depends_on:
+      logstash:
+        condition: service_started
+
+  postgres:
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '2'
+        labels: 'service=postgres'
+
+  redis:
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '5m'
+        max-file: '2'
+        labels: 'service=redis'
+
+  nginx:
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'
+        labels: 'service=nginx'

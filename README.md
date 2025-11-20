@@ -4,11 +4,11 @@ Application d'analyse financière combinant **sentiment analysis**, **machine le
 
 ## 🎯 Fonctionnalités
 
-- 📊 **Analyse de Marché** : Récupération et analyse de 300k+ instruments financiers
+- 📊 **Analyse de Marché** : Récupération et analyse de 300k+ instruments financiers via FinanceDatabase
 - 🧠 **Sentiment Analysis** : Analyse NLP des news financières avec FinBERT
 - 📈 **Machine Learning** : Prédiction de mouvements de prix avec modèles avancés
 - 🔄 **Backtesting** : Test de stratégies sur données historiques
-- 💼 **Optimisation Portfolio** : Allocation optimale avec Riskfolio-Lib & PyPortfolioOpt
+- 💼 **Optimisation Portfolio** : Allocation optimale avec Riskfolio-Lib & PyPortfolioOpt (support 100+ tickers)
 - 🌐 **API REST** : Interface FastAPI pour accès programmatique
 
 ## 🛠️ Technologies
@@ -18,8 +18,8 @@ Ce projet combine les meilleurs outils open-source financiers :
 - **FinanceDatabase** : Base de données de 300k+ symboles
 - **FinanceToolkit** : 150+ ratios et métriques financières
 - **backtesting.py** : Engine de backtesting haute performance
-- **Riskfolio-Lib** : Optimisation quantitative de portefeuille
-- **PyPortfolioOpt** : Efficient frontier et optimisation
+- **Riskfolio-Lib** : Optimisation quantitative de portefeuille (24+ risk measures)
+- **PyPortfolioOpt** : Black-Litterman, Efficient Frontier, Discrete Allocation
 - **FinBERT** : Modèle NLP spécialisé finance
 - **FastAPI** : Framework web moderne
 
@@ -111,6 +111,8 @@ finbot/
 │   │   ├── test_constraints.py   # 11 tests
 │   │   ├── test_rebalancer.py    # 3 tests
 │   │   └── test_metrics.py       # 3 tests
+│   ├── test_portfolio_optimization/  # PyPortfolioOpt Tests (39 tests, 100% passed) ✅
+│   │   └── test_pyportfolioopt_optimizer.py  # 39 comprehensive tests
 │   ├── test_ml/           # ML Tests (19 tests, 100% passed) ✅
 │   │   ├── test_features.py           # 8 tests (factors + edge cases)
 │   │   ├── test_feature_importance.py # 7 tests (validation)
@@ -125,7 +127,10 @@ finbot/
 │   ├── DEPLOYMENT.md          # Production guide
 │   ├── PHASE4_COMPLETION.md   # Portfolio module docs
 │   ├── PHASE4.5_COMPLETION.md # Enhanced tests docs
-│   └── PHASE5.1_COMPLETION.md # ML Alpha Factors docs
+│   ├── PHASE5.1_COMPLETION.md # ML Alpha Factors docs
+│   └── PYPORTFOLIOOPT_INTEGRATION.md  # PyPortfolioOpt backend docs
+├── examples/              # Code examples ✅
+│   └── pyportfolioopt_example.py  # 7 complete examples
 ├── api/                   # REST API (TODO)
 ├── notebooks/             # Jupyter notebooks
 └── README.md              # This file
@@ -140,11 +145,17 @@ pytest tests/ -v
 # Tests portfolio (69 tests)
 pytest tests/test_portfolio/ -v
 
+# Tests PyPortfolioOpt (39 tests)
+pytest tests/test_portfolio_optimization/test_pyportfolioopt_optimizer.py -v
+
 # Tests ML (19 tests)
 pytest tests/test_ml/ -v
 
 # Tests d'intégration (42 E2E tests)
 pytest tests/test_portfolio/test_integration.py -v
+
+# Validation rapide PyPortfolioOpt
+python3 scripts/validate_pyportfolioopt.py
 
 # Avec couverture
 pytest tests/ --cov=financial_analyzer --cov-report=html

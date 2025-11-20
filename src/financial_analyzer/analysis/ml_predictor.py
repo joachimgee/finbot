@@ -27,6 +27,13 @@ try:
 except Exception:  # pragma: no cover
     HAS_XGB = False
 
+# 5. PurgedKFold CV (financial time series)
+try:
+    from financial_analyzer.ml.cross_validation import get_purged_kfold_cv
+    HAS_PURGED_KFOLD = True
+except Exception:  # pragma: no cover
+    HAS_PURGED_KFOLD = False
+
 # 6. Projet local
 from financial_analyzer.utils.helpers import get_logger
 
@@ -284,24 +291,40 @@ class MLPredictor:
         cv_splits: Optional[int] = None,
         scoring: str = "neg_mean_absolute_error",
         verbose: int = 0,
+        use_purged_kfold: bool = False,
+        samples_info_sets: Optional[pd.Series] = None,
+        pct_embargo: float = 0.01,
     ) -> Any:
         """
         Entraîne le modèle avec normalisation des features et CV temporelle.
 
-        - Si param_grid est fourni, utilise GridSearchCV + TimeSeriesSplit.
+        - Si param_grid est fourni, utilise GridSearchCV + TimeSeriesSplit (ou PurgedKFold).
         - Le scaler est ajusté sur X_train uniquement et sauvegardé.
+        - Optionally use PurgedKFold CV to prevent temporal leakage in financial data.
 
         Args:
             X_train: Features d'entraînement (DataFrame)
             y_train: Cible d'entraînement (Series)
             model_type: Type de modèle ('random_forest' | 'xgboost' | 'gradient_boosting' | 'linear')
             param_grid: Grille d'hyperparamètres pour GridSearchCV
-            cv_splits: Nombre de splits TimeSeries (défaut config)
+            cv_splits: Nombre de splits TimeSeries/PurgedKFold (défaut config)
             scoring: Métrique de score pour GridSearchCV
             verbose: Niveau de verbosité GridSearchCV (0=silencieux, 1+=progressif)
+            use_purged_kfold: If True, use PurgedKFold CV instead of TimeSeriesSplit
+            samples_info_sets: Series mapping sample index → label end time (t1), required for PurgedKFold
+            pct_embargo: Embargo size as fraction of n_samples (for PurgedKFold)
 
         Returns:
             Le modèle entraîné
+        
+        Example:
+            >>> # Standard TimeSeriesSplit
+            >>> predictor.train(X, y, model_type='random_forest', cv_splits=5)
+            >>> 
+            >>> # PurgedKFold (prevents temporal leakage)
+            >>> from financial_analyzer.ml.labeling import triple_barrier_labels
+            >>> labels, t1, _ = triple_barrier_labels(prices, pt_sl=[0.02, 0.02])
+            >>> predictor.train(X, y, use_purged_kfold=True, samples_info_sets=t1, pct_embargo=0.01)
         """
         if not isinstance(X_train, pd.DataFrame) or not isinstance(y_train, pd.Series):
             raise ValueError("X_train doit être DataFrame et y_train Series")
@@ -318,7 +341,34 @@ class MLPredictor:
             ("model", base_model),
         ])
 
-        tscv = TimeSeriesSplit(n_splits=cv_splits or self.config.tscv_splits)
+        # Choose CV strategy: PurgedKFold or TimeSeriesSplit
+        if use_purged_kfold:
+            if not HAS_PURGED_KFOLD:
+                self.logger.warning(
+                    "PurgedKFold not available, falling back to TimeSeriesSplit. "
+                    "Ensure financial_analyzer.ml.cross_validation is installed."
+                )
+                tscv = TimeSeriesSplit(n_splits=cv_splits or self.config.tscv_splits)
+            else:
+                if samples_info_sets is None:
+                    self.logger.warning(
+                        "use_purged_kfold=True but samples_info_sets not provided. "
+                        "Falling back to TimeSeriesSplit. Provide t1 from triple_barrier_labels."
+                    )
+                    tscv = TimeSeriesSplit(n_splits=cv_splits or self.config.tscv_splits)
+                else:
+                    # Use PurgedKFold with t1
+                    tscv = get_purged_kfold_cv(
+                        n_splits=cv_splits or self.config.tscv_splits,
+                        samples_info_sets=samples_info_sets,
+                        pct_embargo=pct_embargo
+                    )
+                    self.logger.info(
+                        f"Using PurgedKFold CV with {cv_splits or self.config.tscv_splits} splits, "
+                        f"embargo={pct_embargo*100:.1f}%"
+                    )
+        else:
+            tscv = TimeSeriesSplit(n_splits=cv_splits or self.config.tscv_splits)
 
         if param_grid:
             # Adapter la grille aux hyperparamètres imbriqués du pipeline

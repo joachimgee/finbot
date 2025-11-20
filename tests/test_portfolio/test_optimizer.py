@@ -1,5 +1,151 @@
 import numpy as np
 import pandas as pd
+
+from financial_analyzer.portfolio.optimizer import PortfolioOptimizer
+from financial_analyzer.portfolio.constraints import (
+    Constraints,
+    GroupConstraint,
+    LeverageConstraint,
+    MaxPositionsConstraint,
+    RiskBudgetConstraint,
+    WeightBounds,
+)
+
+
+def make_daily_returns(n_days=252, tickers=('A', 'B', 'C', 'D', 'E'), seed=123) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    rets = {}
+    for t in tickers:
+        rets[t] = rng.normal(loc=0.0005, scale=0.02, size=n_days)
+    df = pd.DataFrame(rets)
+    return df
+
+
+def test_optimize_basic_properties():
+    df = make_daily_returns()
+    opt = PortfolioOptimizer(random_seed=7)
+    res = opt.optimize_max_sharpe(df, constraints=None, n_trials=2000)
+    assert isinstance(res.weights, pd.Series)
+    assert abs(float(res.weights.sum()) - 1.0) < 1e-9
+    assert res.volatility >= 0
+    assert res.sharpe >= 0
+
+
+def test_enforce_bounds_and_positions():
+    df = make_daily_returns()
+    bounds = WeightBounds(0.0, 0.4)
+    cons = Constraints(bounds=bounds, max_positions=MaxPositionsConstraint(3))
+    opt = PortfolioOptimizer(random_seed=10)
+    res = opt.optimize_max_sharpe(df, constraints=cons, n_trials=3000)
+    assert (res.weights <= 0.4000001).all()
+    assert int((res.weights > 1e-12).sum()) <= 3
+
+
+def test_group_constraints_respected():
+    df = make_daily_returns(tickers=('A', 'B', 'C', 'D'))
+    group_map = {'A': 'G1', 'B': 'G1', 'C': 'G2', 'D': 'G2'}
+    cons = Constraints(group=GroupConstraint(group_map=group_map, group_max={'G1': 0.6, 'G2': 1.0}))
+    opt = PortfolioOptimizer(random_seed=2)
+    res = opt.optimize_max_sharpe(df, constraints=cons, n_trials=3000)
+    g1_sum = float(res.weights[['A', 'B']].sum())
+    assert g1_sum <= 0.6000001
+
+
+def test_risk_budget_respected():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    # Forcer corrélations fortes pour hausser la vol potentielle
+    df['B'] = df['A'] * 0.5 + df['B'] * 0.5
+    df['C'] = df['A'] * 0.5 + df['C'] * 0.5
+    cons = Constraints(risk_budget=RiskBudgetConstraint(max_volatility=0.6))
+    opt = PortfolioOptimizer(random_seed=3)
+    res = opt.optimize_max_sharpe(df, constraints=cons, n_trials=3000)
+    assert res.volatility <= 0.6000001
+
+
+def test_leverage_constraint():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    cons = Constraints(leverage=LeverageConstraint(max_leverage=1.0))
+    res = PortfolioOptimizer(random_seed=11).optimize_max_sharpe(df, constraints=cons, n_trials=2000)
+    assert float(res.weights.abs().sum()) <= 1.0000001
+
+
+def test_determinism_with_seed():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    opt1 = PortfolioOptimizer(random_seed=123)
+    opt2 = PortfolioOptimizer(random_seed=123)
+    res1 = opt1.optimize_max_sharpe(df, n_trials=2000)
+    res2 = opt2.optimize_max_sharpe(df, n_trials=2000)
+    pd.testing.assert_series_equal(res1.weights, res2.weights)
+
+
+def test_raises_when_no_feasible():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    # Contraintes impossibles: bounds max 0.1 sur 3 actifs + max_positions=1 et levier=1
+    bounds = WeightBounds(0.0, 0.05)
+    cons = Constraints(bounds=bounds, max_positions=MaxPositionsConstraint(1))
+    opt = PortfolioOptimizer(random_seed=1)
+    try:
+        _ = opt.optimize_max_sharpe(df, constraints=cons, n_trials=500)
+        assert False, "Expected ValueError for infeasible constraints"
+    except ValueError:
+        assert True
+
+
+def test_nan_handling_and_cleaning():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    df.iloc[0, 0] = np.nan
+    df.iloc[5, 2] = np.inf
+    res = PortfolioOptimizer(random_seed=5).optimize_max_sharpe(df, n_trials=1500)
+    assert abs(float(res.weights.sum()) - 1.0) < 1e-9
+
+
+def test_single_asset_edge_case():
+    df = make_daily_returns(tickers=('ONLY',))
+    res = PortfolioOptimizer(random_seed=9).optimize_max_sharpe(df, n_trials=500)
+    assert abs(res.weights['ONLY'] - 1.0) < 1e-9
+
+
+def test_more_assets_than_positions():
+    df = make_daily_returns(tickers=('A', 'B', 'C', 'D', 'E', 'F'))
+    cons = Constraints(max_positions=MaxPositionsConstraint(2))
+    res = PortfolioOptimizer(random_seed=12).optimize_max_sharpe(df, constraints=cons, n_trials=2500)
+    assert int((res.weights > 1e-12).sum()) <= 2
+
+
+def test_bounds_applied_in_optimizer():
+    df = make_daily_returns(tickers=('A', 'B', 'C', 'D'))
+    bounds = WeightBounds(lower={'A': 0.2, 'B': 0.0, 'C': 0.0, 'D': 0.0}, upper=0.7)
+    res = PortfolioOptimizer(random_seed=21).optimize_max_sharpe(df, constraints=Constraints(bounds=bounds), n_trials=2500)
+    assert res.weights['A'] >= 0.199
+    assert (res.weights <= 0.700001).all()
+
+
+def test_group_min_and_max():
+    df = make_daily_returns(tickers=('A', 'B', 'C', 'D'))
+    group_map = {'A': 'G1', 'B': 'G1', 'C': 'G2', 'D': 'G2'}
+    group_min = {'G1': 0.2}
+    group_max = {'G1': 0.7, 'G2': 0.9}
+    cons = Constraints(group=GroupConstraint(group_map=group_map, group_min=group_min, group_max=group_max))
+    res = PortfolioOptimizer(random_seed=33).optimize_max_sharpe(df, constraints=cons, n_trials=3000)
+    g1 = float(res.weights[['A', 'B']].sum())
+    assert 0.2 - 1e-6 <= g1 <= 0.700001
+
+
+def test_risk_budget_tight_but_feasible():
+    df = make_daily_returns(tickers=('A', 'B', 'C'))
+    df['B'] = df['A'] * 0.8 + df['B'] * 0.2
+    df['C'] = df['A'] * 0.7 + df['C'] * 0.3
+    cons = Constraints(risk_budget=RiskBudgetConstraint(max_volatility=0.4))
+    res = PortfolioOptimizer(random_seed=44).optimize_max_sharpe(df, constraints=cons, n_trials=4000)
+    assert res.volatility <= 0.400001
+
+
+def test_performance_quick():
+    df = make_daily_returns(tickers=tuple([f'T{i}' for i in range(10)]))
+    res = PortfolioOptimizer(random_seed=1).optimize_max_sharpe(df, n_trials=1500)
+    assert abs(float(res.weights.sum()) - 1.0) < 1e-9
+import numpy as np
+import pandas as pd
 import pytest
 
 from financial_analyzer.portfolio import (

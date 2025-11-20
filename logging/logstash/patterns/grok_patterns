@@ -1,0 +1,24 @@
+# Custom Grok Patterns for FinBot Logs
+# Patterns for: API calls, Trading events, Stack traces
+
+# API patterns
+API_TIMESTAMP %{TIMESTAMP_ISO8601:api_timestamp}
+API_METHOD (GET|POST|PUT|DELETE|PATCH)
+API_RESPONSE %{INT:http_status}
+API_DURATION %{NUMBER:duration}
+
+# Trading patterns
+TRADE_ACTION (BUY|SELL|SHORT|COVER)
+TRADE_SYMBOL [A-Z0-9]{1,6}
+TRADE_PRICE %{NUMBER:price}
+TRADE_QUANTITY %{INT:quantity}
+
+# Error patterns
+ERROR_TYPE %{WORD:error_type}
+ERROR_LINE line %{INT:error_line}
+ERROR_FILE [A-Za-z0-9_./]+\.py
+PYTHON_TRACEBACK Traceback.*
+
+# Performance patterns
+DURATION_MS %{NUMBER:duration_ms}ms
+MEMORY_MB %{NUMBER:memory_mb}MB

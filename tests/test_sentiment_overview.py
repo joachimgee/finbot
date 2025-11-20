@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock, Mock
 from datetime import datetime, timedelta
 import torch
 
-from financial_analyzer.sentiment.finbert_analyzer import FinancialSentimentAnalyzer
+from financial_analyzer.sentiment.financial_sentiment_analyzer import FinancialSentimentAnalyzer, analyze_sentiment
 from financial_analyzer.sentiment.sentiment_aggregator import SentimentAggregator
 
 # Fixtures
@@ -184,7 +184,9 @@ class TestSentimentAggregator:
 
     def test_aggregate_by_date_invalid_period(self, sentiment_aggregator, sample_news_df, caplog):
         """Période auto-corrigée."""
-        daily = sentiment_aggregator.aggregate_by_date(sample_news_df, period='invalid')
+        import logging
+        with caplog.at_level(logging.WARNING):
+            daily = sentiment_aggregator.aggregate_by_date(sample_news_df, period='invalid')
         assert isinstance(daily, pd.DataFrame)
         assert "Période invalide" in caplog.text or "invalid" in caplog.text.lower()
 
@@ -214,7 +216,9 @@ class TestSentimentAggregator:
 
     def test_aggregate_weighted_no_weights(self, sentiment_aggregator, sample_news_df, caplog):
         """Fallback moyenne simple."""
-        weighted = sentiment_aggregator.aggregate_weighted(sample_news_df, weights=None)
+        import logging
+        with caplog.at_level(logging.WARNING):
+            weighted = sentiment_aggregator.aggregate_weighted(sample_news_df, weights=None)
         assert isinstance(weighted, dict)
         assert "Pas de weights" in caplog.text or "mean simple" in caplog.text.lower()
 

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Tests d'intégration: structures de données réalistes.
+
+Simule des structures proches de yfinance/NewsAPI et divers cas limites:
+dates incohérentes, données intrajournalières, univers large, séries unitaires,
+monnaies différentes. Les assertions se concentrent sur la robustesse d'entrée.
+"""
+
 from typing import Dict, List
 import numpy as np
 import pandas as pd

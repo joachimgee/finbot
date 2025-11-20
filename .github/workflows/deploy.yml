@@ -1,0 +1,162 @@
+# Deploy Workflow
+# ------------------------------------------------------------
+# Deploy to staging (develop) and production (main/releases)
+# Requires CI - Test & Build success
+# ------------------------------------------------------------
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI - Test & Build]
+    types: [completed]
+    branches: [main, develop, release/**]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ==========================================================
+  # Deploy to Staging
+  # ==========================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'develop'
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull latest image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:develop || echo "Image tag develop not found, using latest"
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
+
+      - name: Deploy to staging (SSH)
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          STAGING_KEY: ${{ secrets.STAGING_DEPLOY_KEY }}
+        run: |
+          echo "$STAGING_KEY" > deploy_key
+          chmod 600 deploy_key
+          scp -i deploy_key -o StrictHostKeyChecking=no scripts/deploy.sh ${STAGING_USER}@${STAGING_HOST}:/tmp/deploy.sh
+          ssh -i deploy_key -o StrictHostKeyChecking=no ${STAGING_USER}@${STAGING_HOST} "chmod +x /tmp/deploy.sh && cd /app/finbot && /tmp/deploy.sh staging"
+          rm -f deploy_key
+
+      - name: Smoke tests
+        env:
+          STAGING_URL: https://staging.finbot.local
+        run: |
+          curl -f $STAGING_URL/health || exit 1
+
+      - name: Notify Slack
+        if: ${{ always() && secrets.SLACK_WEBHOOK != '' }}
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {"text": "Staging deployment status: ${{ job.status }}", "channel": "#deployments"}
+
+  # ==========================================================
+  # Manual Approval Gate for Production
+  # ==========================================================
+  approval-production:
+    name: Await Manual Approval
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || startsWith(github.event.workflow_run.head_branch, 'release/'))
+    environment:
+      name: production
+      url: https://finbot.local
+    steps:
+      - name: Approval instructions
+        run: |
+          echo "Production deployment requires manual approval via GitHub Environments UI."
+          echo "Go to repository Settings > Environments > production to approve."
+
+  # ==========================================================
+  # Deploy to Production
+  # ==========================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: approval-production
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || startsWith(github.event.workflow_run.head_branch, 'release/'))
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull production image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main || echo "Image tag main not found, using latest"
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
+
+      - name: Create deployment via API
+        id: deployment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.ref,
+              environment: 'production',
+              required_contexts: [],
+              auto_merge: false
+            });
+            return deployment.data.id;
+
+      - name: Deploy to production (SSH)
+        env:
+          PROD_HOST: ${{ secrets.PRODUCTION_HOST }}
+          PROD_USER: ${{ secrets.PRODUCTION_USER }}
+          PROD_KEY: ${{ secrets.PRODUCTION_DEPLOY_KEY }}
+        run: |
+          echo "$PROD_KEY" > deploy_key
+          chmod 600 deploy_key
+          scp -i deploy_key -o StrictHostKeyChecking=no scripts/deploy.sh ${PROD_USER}@${PROD_HOST}:/tmp/deploy.sh
+          ssh -i deploy_key -o StrictHostKeyChecking=no ${PROD_USER}@${PROD_HOST} "chmod +x /tmp/deploy.sh && cd /app/finbot && /tmp/deploy.sh production"
+          rm -f deploy_key
+
+      - name: Health check loop
+        env:
+          PROD_URL: https://finbot.local
+        run: |
+          for i in {1..30}; do
+            if curl -fsS $PROD_URL/health; then
+              echo "Health check passed"; exit 0; fi
+            echo "Waiting for healthy service ($i/30)"; sleep 10;
+          done
+          echo "Health check failed"; exit 1
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ steps.deployment.outputs.result }},
+              state: '${{ job.status }}'
+            });
+
+      - name: Notify Slack
+        if: ${{ always() && secrets.SLACK_WEBHOOK != '' }}
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {"text": "Production deployment status: ${{ job.status }}", "channel": "#deployments"}

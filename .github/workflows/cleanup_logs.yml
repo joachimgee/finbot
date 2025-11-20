@@ -1,0 +1,18 @@
+name: Cleanup Old Logs
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # 04:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cleanup
+        run: |
+          chmod +x scripts/cleanup_old_logs.sh
+          bash scripts/cleanup_old_logs.sh 7
+      - name: Summary
+        run: echo "Old logs (>7 days) cleaned." >> $GITHUB_STEP_SUMMARY

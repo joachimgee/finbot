@@ -9,9 +9,13 @@ Calcule des indicateurs techniques à partir de données OHLCV :
 - ATR (Average True Range)
 - ROC (Rate of Change)
 
+Convention de nommage: **snake_case strict**
+- Tous les noms de features en minuscules avec underscores
+- Ex: sma_20, ema_12, rsi_14, macd, macd_signal, bollinger_upper
+
 Author: FinBot Team
-Date: 2025-11-06
-Version: 2.0.0
+Date: 2025-11-12
+Version: 2.1.0
 """
 
 from typing import Optional
@@ -24,12 +28,79 @@ from financial_analyzer.utils.helpers import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================================
+# FEATURE NAMES REGISTRY - snake_case standard
+# ============================================================================
+
+FEATURE_NAMES = {
+    # Moving Averages
+    'sma_20': 'sma_20',
+    'sma_50': 'sma_50',
+    'sma_200': 'sma_200',
+    'ema_12': 'ema_12',
+    'ema_20': 'ema_20',
+    'ema_50': 'ema_50',
+    
+    # Momentum
+    'rsi_14': 'rsi_14',
+    'rsi_28': 'rsi_28',
+    'roc_12': 'roc_12',
+    
+    # MACD
+    'macd': 'macd',
+    'macd_signal': 'macd_signal',
+    'macd_histogram': 'macd_histogram',
+    
+    # Bollinger Bands
+    'bollinger_upper': 'bollinger_upper',
+    'bollinger_middle': 'bollinger_middle',
+    'bollinger_lower': 'bollinger_lower',
+    'bollinger_width': 'bollinger_width',
+    
+    # Volatility
+    'atr_14': 'atr_14',
+    
+    # Volume
+    'volume_sma_20': 'volume_sma_20',
+    
+    # Returns
+    'returns': 'returns',
+}
+"""Registry des noms de features standardisés en snake_case."""
+
+
+def validate_feature_columns(df: pd.DataFrame, required_features: list) -> bool:
+    """
+    Valide que le DataFrame contient les features attendues.
+    
+    Args:
+        df: DataFrame à valider
+        required_features: Liste des noms de features requis (snake_case)
+    
+    Returns:
+        True si toutes les features présentes
+    
+    Raises:
+        ValueError: Si des features manquantes
+    
+    Example:
+        >>> validate_feature_columns(df, ['rsi_14', 'macd', 'sma_20'])
+        True
+    """
+    missing = [f for f in required_features if f not in df.columns]
+    if missing:
+        raise ValueError(f"Features manquantes: {missing}")
+    return True
+
+
 class TechnicalFeatureEngine:
     """
-    Moteur de calcul des features techniques.
+    Moteur de calcul des features techniques (snake_case strict).
     
     Calcule des indicateurs techniques (SMA, RSI, MACD, Bollinger, etc.)
     à partir de données OHLCV. Tous les calculs sont vectorisés avec pandas/numpy.
+    
+    Convention: **Tous les noms de colonnes en snake_case** (minuscules + underscores)
     
     Attributes:
         df: DataFrame OHLCV avec colonnes ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -37,7 +108,7 @@ class TechnicalFeatureEngine:
     
     Example:
         >>> from financial_analyzer.data.market_data import MarketDataFetcher
-        >>> from financial_analyzer.features.technical import TechnicalFeatureEngine
+        >>> from financial_analyzer.features.technical import TechnicalFeatureEngine, FEATURE_NAMES
         >>> 
         >>> # Récupérer données OHLCV
         >>> fetcher = MarketDataFetcher()
@@ -49,8 +120,12 @@ class TechnicalFeatureEngine:
         >>> 
         >>> print(features.shape)
         (1008, 25)  # 1008 jours × 25 features
-        >>> print(features.columns[:10])
-        Index(['Open', 'High', 'Low', 'Close', 'Volume', 'SMA_20', 'EMA_20', 'RSI_14', 'MACD', 'Signal'], dtype='object')
+        >>> print(list(features.columns[:10]))
+        ['Open', 'High', 'Low', 'Close', 'Volume', 'sma_20', 'ema_20', 'rsi_14', 'macd', 'macd_signal']
+        >>> 
+        >>> # Utiliser le registry
+        >>> assert FEATURE_NAMES['rsi_14'] in features.columns
+        >>> assert FEATURE_NAMES['macd_signal'] in features.columns
     """
     
     def __init__(self, ohlcv: pd.DataFrame):
@@ -466,21 +541,21 @@ class TechnicalFeatureEngine:
     
     def calculate_all_features(self) -> pd.DataFrame:
         """
-        Calcule TOUTES les features techniques.
+        Calcule TOUTES les features techniques en snake_case.
         
         Features calculées :
         - OHLCV (colonnes originales)
-        - SMA (20, 50, 200)
-        - EMA (12, 20, 50)
-        - RSI (14)
-        - MACD (12, 26, 9)
-        - Bollinger Bands (20, 2σ)
-        - ATR (14)
-        - ROC (12)
-        - Volume SMA (20)
+        - SMA (20, 50, 200) → sma_20, sma_50, sma_200
+        - EMA (12, 20, 50) → ema_12, ema_20, ema_50
+        - RSI (14) → rsi_14
+        - MACD (12, 26, 9) → macd, macd_signal, macd_histogram
+        - Bollinger Bands (20, 2σ) → bollinger_upper, bollinger_middle, bollinger_lower
+        - ATR (14) → atr_14
+        - ROC (12) → roc_12
+        - Volume SMA (20) → volume_sma_20
         
         Returns:
-            DataFrame avec toutes les features
+            DataFrame avec toutes les features (colonnes en snake_case)
             Colonnes : OHLCV + ~20 features techniques
             Index : DatetimeIndex (mêmes dates que OHLCV)
         
@@ -493,21 +568,18 @@ class TechnicalFeatureEngine:
             >>> 
             >>> print(features.columns.tolist())
             ['Open', 'High', 'Low', 'Close', 'Volume',
-             'SMA_20', 'SMA_50', 'SMA_200',
-             'EMA_12', 'EMA_20', 'EMA_50',
-             'RSI_14',
-             'MACD', 'Signal', 'Histogram',
-             'BB_Upper', 'BB_Middle', 'BB_Lower',
-             'ATR_14',
-             'ROC_12',
-             'Volume_SMA_20']
+             'sma_20', 'sma_50', 'sma_200',
+             'ema_12', 'ema_20', 'ema_50',
+             'rsi_14',
+             'macd', 'macd_signal', 'macd_histogram',
+             'bollinger_upper', 'bollinger_middle', 'bollinger_lower',
+             'atr_14',
+             'roc_12',
+             'volume_sma_20']
             >>> 
-            >>> # Vérifier valeurs non-NaN
-            >>> print(features.notna().sum())
-            Open              1008
-            Close             1008
-            SMA_200            809  # NaN pour premières 199 barres
-            RSI_14             994  # NaN pour premières 14 barres
+            >>> # Utiliser le registry pour accès
+            >>> from financial_analyzer.features.technical import FEATURE_NAMES
+            >>> assert FEATURE_NAMES['rsi_14'] in features.columns
         """
         logger.info(f"Calcul de toutes les features techniques pour {len(self.df)} barres")
         
@@ -515,50 +587,89 @@ class TechnicalFeatureEngine:
         result = self.df.copy()
         
         try:
-            # Moving Averages
-            result['SMA_20'] = self.calculate_sma(period=20)
-            result['SMA_50'] = self.calculate_sma(period=50)
-            result['SMA_200'] = self.calculate_sma(period=200)
+            # Moving Averages (snake_case)
+            result[FEATURE_NAMES['sma_20']] = self.calculate_sma(period=20)
+            result[FEATURE_NAMES['sma_50']] = self.calculate_sma(period=50)
+            result[FEATURE_NAMES['sma_200']] = self.calculate_sma(period=200)
             
-            result['EMA_12'] = self.calculate_ema(period=12)
-            result['EMA_20'] = self.calculate_ema(period=20)
-            result['EMA_50'] = self.calculate_ema(period=50)
+            result[FEATURE_NAMES['ema_12']] = self.calculate_ema(period=12)
+            result[FEATURE_NAMES['ema_20']] = self.calculate_ema(period=20)
+            result[FEATURE_NAMES['ema_50']] = self.calculate_ema(period=50)
             
             # RSI
-            result['RSI_14'] = self.calculate_rsi(period=14)
+            result[FEATURE_NAMES['rsi_14']] = self.calculate_rsi(period=14)
             
-            # MACD
+            # MACD (snake_case)
             macd = self.calculate_macd()
-            result['MACD'] = macd['MACD']
-            result['MACD_Signal'] = macd['Signal']
-            result['MACD_Histogram'] = macd['Histogram']
+            result[FEATURE_NAMES['macd']] = macd['MACD']
+            result[FEATURE_NAMES['macd_signal']] = macd['Signal']
+            result[FEATURE_NAMES['macd_histogram']] = macd['Histogram']
             
-            # Bollinger Bands
+            # Bollinger Bands (snake_case)
             bb = self.calculate_bollinger_bands()
-            result['BB_Upper'] = bb['Upper']
-            result['BB_Middle'] = bb['Middle']
-            result['BB_Lower'] = bb['Lower']
+            result[FEATURE_NAMES['bollinger_upper']] = bb['Upper']
+            result[FEATURE_NAMES['bollinger_middle']] = bb['Middle']
+            result[FEATURE_NAMES['bollinger_lower']] = bb['Lower']
             
             # ATR
-            result['ATR_14'] = self.calculate_atr(period=14)
+            result[FEATURE_NAMES['atr_14']] = self.calculate_atr(period=14)
             
             # ROC
-            result['ROC_12'] = self.calculate_roc(period=12)
+            result[FEATURE_NAMES['roc_12']] = self.calculate_roc(period=12)
             
-            # Volume SMA
-            result['Volume_SMA_20'] = self.df['Volume'].rolling(window=20, min_periods=20).mean()
+            # Volume SMA (snake_case)
+            result[FEATURE_NAMES['volume_sma_20']] = self.df['Volume'].rolling(window=20, min_periods=20).mean()
             
-            # Calcul ratio Bollinger Band Width
-            result['BB_Width'] = (bb['Upper'] - bb['Lower']) / bb['Middle']
+            # Calcul ratio Bollinger Band Width (snake_case)
+            result[FEATURE_NAMES['bollinger_width']] = (bb['Upper'] - bb['Lower']) / bb['Middle']
             
-            # Returns
-            result['Returns'] = self.df['Close'].pct_change()
+            # Returns (snake_case)
+            result[FEATURE_NAMES['returns']] = self.df['Close'].pct_change()
             
             logger.info(
                 f"Features calculées : {len(result.columns)} colonnes, "
                 f"{result.notna().all(axis=1).sum()} barres complètes (sans NaN)"
             )
             
+            # Backwards-compatibility aliases (legacy uppercase / mixed-case names)
+            # Certains tests et consommateurs historiques utilisent encore des noms
+            # comme 'SMA_20' ou 'MACD' — on crée des alias non-destructifs.
+            legacy_map = {
+                # SMA / EMA
+                'SMA_20': FEATURE_NAMES['sma_20'],
+                'SMA_50': FEATURE_NAMES['sma_50'],
+                'SMA_200': FEATURE_NAMES['sma_200'],
+                'EMA_12': FEATURE_NAMES['ema_12'],
+                'EMA_20': FEATURE_NAMES['ema_20'],
+                'EMA_50': FEATURE_NAMES['ema_50'],
+                # RSI
+                'RSI_14': FEATURE_NAMES['rsi_14'],
+                'RSI_28': FEATURE_NAMES.get('rsi_28', FEATURE_NAMES['rsi_14']),
+                # MACD (mixed-case legacy)
+                'MACD': FEATURE_NAMES['macd'],
+                'Signal': FEATURE_NAMES['macd_signal'],
+                'Histogram': FEATURE_NAMES['macd_histogram'],
+                # Bollinger
+                'Upper': FEATURE_NAMES['bollinger_upper'],
+                'Middle': FEATURE_NAMES['bollinger_middle'],
+                'Lower': FEATURE_NAMES['bollinger_lower'],
+                # ATR / ROC / Volume
+                'ATR_14': FEATURE_NAMES['atr_14'],
+                'ROC_12': FEATURE_NAMES['roc_12'],
+                'VOLUME_SMA_20': FEATURE_NAMES['volume_sma_20'],
+                # Returns
+                'RETURNS': FEATURE_NAMES['returns'],
+            }
+
+            for legacy_name, snake_name in legacy_map.items():
+                try:
+                    if legacy_name not in result.columns and snake_name in result.columns:
+                        # create alias column pointing to same Series (copy to avoid view issues)
+                        result[legacy_name] = result[snake_name]
+                except Exception:
+                    # defensive: skip any aliasing errors
+                    continue
+
             return result
         
         except Exception as e:

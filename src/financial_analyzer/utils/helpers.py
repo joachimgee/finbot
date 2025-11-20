@@ -104,7 +104,16 @@ def cache_result(cache_key: str = "", expiry_hours: Optional[int] = None, ttl: O
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args, **kwargs) -> Any:
-            if not CACHE_ENABLED:
+            # Évalue dynamiquement CACHE_ENABLED depuis le module de config
+            try:
+                from financial_analyzer import config as _config  # import local pour refléter monkeypatch
+                cache_enabled = getattr(_config, 'CACHE_ENABLED', True)
+                cache_dir = getattr(_config, 'CACHE_DIR', CACHE_DIR)
+            except Exception:
+                cache_enabled = True
+                cache_dir = CACHE_DIR
+
+            if not cache_enabled:
                 return func(*args, **kwargs)
             
             logger = get_logger(func.__module__)
@@ -116,7 +125,7 @@ def cache_result(cache_key: str = "", expiry_hours: Optional[int] = None, ttl: O
                 logger.warning(f"Cache key format error: {e}. Skipping cache.")
                 return func(*args, **kwargs)
             
-            cache_file = CACHE_DIR / f"{formatted_key}.pkl"
+            cache_file = cache_dir / f"{formatted_key}.pkl"
             
             # Vérifier si le cache existe et est valide
             if cache_file.exists():

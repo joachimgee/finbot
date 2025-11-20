@@ -409,23 +409,25 @@ class TestCalculateAllFeatures:
     
     @pytest.mark.unit
     def test_all_features_columns(self, mock_ohlcv_data):
-        """Test que toutes les colonnes attendues sont présentes."""
+        """Test que toutes les colonnes attendues sont présentes (snake_case)."""
+        from financial_analyzer.features.technical import FEATURE_NAMES
+        
         engine = TechnicalFeatureEngine(mock_ohlcv_data)
         features = engine.calculate_all_features()
         
-        # Vérifier présence colonnes clés
+        # Vérifier présence colonnes clés (snake_case)
         expected_cols = [
             'Open', 'High', 'Low', 'Close', 'Volume',
-            'SMA_20', 'SMA_50', 'SMA_200',
-            'EMA_12', 'EMA_20', 'EMA_50',
-            'RSI_14',
-            'MACD', 'MACD_Signal', 'MACD_Histogram',
-            'BB_Upper', 'BB_Middle', 'BB_Lower',
-            'ATR_14',
-            'ROC_12',
-            'Volume_SMA_20',
-            'BB_Width',
-            'Returns',
+            FEATURE_NAMES['sma_20'], FEATURE_NAMES['sma_50'], FEATURE_NAMES['sma_200'],
+            FEATURE_NAMES['ema_12'], FEATURE_NAMES['ema_20'], FEATURE_NAMES['ema_50'],
+            FEATURE_NAMES['rsi_14'],
+            FEATURE_NAMES['macd'], FEATURE_NAMES['macd_signal'], FEATURE_NAMES['macd_histogram'],
+            FEATURE_NAMES['bollinger_upper'], FEATURE_NAMES['bollinger_middle'], FEATURE_NAMES['bollinger_lower'],
+            FEATURE_NAMES['atr_14'],
+            FEATURE_NAMES['roc_12'],
+            FEATURE_NAMES['volume_sma_20'],
+            FEATURE_NAMES['bollinger_width'],
+            FEATURE_NAMES['returns'],
         ]
         
         for col in expected_cols:

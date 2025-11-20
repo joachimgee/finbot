@@ -16,6 +16,12 @@ import pandas as pd
 from backtesting import Backtest, Strategy
 
 from financial_analyzer.utils.helpers import get_logger
+from financial_analyzer.backtest.ic_reporting import (
+    compute_cross_sectional_ic,
+    ic_summary,
+    compute_ic_decay,
+    generate_ic_report_html,
+)
 
 logger = get_logger(__name__)
 
@@ -493,3 +499,37 @@ class BacktestRunner:
         logger.debug(f"Stats convertis en dict: {len(stats_dict)} clés")
         
         return stats_dict
+
+    # ---------------- IC Reporting Convenience ----------------
+    def generate_ic_report(
+        self,
+        factor_scores: pd.DataFrame,
+        forward_returns: pd.DataFrame,
+        max_horizon: int = 5,
+        out_html_path: Optional[str] = None,
+        method: str = "spearman",
+    ) -> Dict[str, Any]:
+        """
+        Génère un rapport IC (cross-section par date) et un tableau IC(h) d'horizon.
+
+        Args:
+            factor_scores: DataFrame (dates x actifs) des scores factorielles
+            forward_returns: DataFrame (dates x actifs) des rendements futurs alignés
+            max_horizon: horizon max pour IC decay
+            out_html_path: si fourni, écrit un mini rapport HTML
+            method: 'spearman' ou 'pearson'
+
+        Returns:
+            Dict avec 'ic_series', 'summary', 'decay', 'html' (optionnel)
+        """
+        ic_series = compute_cross_sectional_ic(factor_scores, forward_returns, method=method)  # type: ignore[arg-type]
+        summary = ic_summary(ic_series)
+        decay = compute_ic_decay(factor_scores, forward_returns, max_horizon=max_horizon, method=method)  # type: ignore[arg-type]
+        html = generate_ic_report_html(ic_series, decay)
+        if out_html_path:
+            try:
+                with open(out_html_path, "w", encoding="utf-8") as f:
+                    f.write(html)
+            except Exception:
+                pass
+        return {"ic_series": ic_series, "summary": summary, "decay": decay, "html": html}

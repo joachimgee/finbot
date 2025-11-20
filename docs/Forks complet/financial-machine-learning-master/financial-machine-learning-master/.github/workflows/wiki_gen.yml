@@ -1,0 +1,57 @@
+name: Wiki-Generator
+
+# generate wiki page on every push
+on: push
+
+jobs:
+  # Set the job key. The key is displayed as the job name
+  update-repo-status:
+    # Name the Job
+    name: Update repo status for all saved repo
+    # Set the type of machine to run on
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.7
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+#      - name: execute status update script # run the run.py to get the latest data
+#        run: |
+#          python git_search.py
+#        env:
+#          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+
+      - name: execute wiki generation script # run the wiki_gen
+        run: |
+          python wiki_gen.py
+
+      - name: Upload Documentation to Wiki
+        uses: SwiftDocOrg/github-wiki-publish-action@v1
+        with:
+          path: "generated_wiki"
+        env:
+          GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GIT_TOKEN }}
+
+#      - name: Check out master first
+#        uses: actions/checkout@master
+#        with:
+#          persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
+#          fetch-depth: 0 # otherwise, you will failed to push refs to dest repo
+
+      - name: Commit & Push changes
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GIT_TOKEN }}
+          branch: 'master'
