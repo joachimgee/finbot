@@ -256,15 +256,30 @@ class PortfolioManager:
             
             for buy in decisions['buy']:
                 try:
+                    # Récupérer le prix actuel
+                    last_trade = self.adapter.get_last_trade(buy['symbol'])
+                    if not last_trade or 'price' not in last_trade:
+                        print(f"  ❌ BUY {buy['symbol']}: No price data available")
+                        executed['errors'].append(f"No price for {buy['symbol']}")
+                        continue
+                    
+                    current_price = float(last_trade['price'])
+                    
                     # Calculer quantité basée sur cash_per_position
-                    # Note: On utilise notional pour investir un montant fixe
+                    qty = int(cash_per_position / current_price)
+                    
+                    if qty < 1:
+                        print(f"  ⚠️  BUY {buy['symbol']}: Not enough cash (${cash_per_position:.2f} / ${current_price:.2f})")
+                        continue
+                    
+                    # Submit order
                     order = self.adapter.submit_order(
                         symbol=buy['symbol'],
-                        notional=cash_per_position,
+                        qty=qty,
                         side='buy',
                         order_type='market'
                     )
-                    print(f"  ✅ BUY {buy['symbol']}: ${cash_per_position:.2f} (score={buy['score']:.3f})")
+                    print(f"  ✅ BUY {buy['symbol']}: {qty} shares @ ${current_price:.2f} (score={buy['score']:.3f})")
                     executed['bought'] += 1
                 except Exception as e:
                     error_msg = f"Failed to buy {buy['symbol']}: {e}"
