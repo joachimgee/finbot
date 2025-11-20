@@ -256,14 +256,30 @@ class PortfolioManager:
             
             for buy in decisions['buy']:
                 try:
-                    # Récupérer le prix actuel
-                    last_trade = self.adapter.get_last_trade(buy['symbol'])
-                    if not last_trade or 'price' not in last_trade:
-                        print(f"  ❌ BUY {buy['symbol']}: No price data available")
-                        executed['errors'].append(f"No price for {buy['symbol']}")
-                        continue
+                    from datetime import datetime, timedelta
                     
-                    current_price = float(last_trade['price'])
+                    # Récupérer le dernier prix via get_bars
+                    end = datetime.now()
+                    start = end - timedelta(days=1)
+                    
+                    try:
+                        bars = self.adapter.get_bars(
+                            symbol=buy['symbol'],
+                            start=start,
+                            end=end,
+                            timeframe='1Min'
+                        )
+                        
+                        if bars.empty:
+                            print(f"  ❌ BUY {buy['symbol']}: No price data available")
+                            executed['errors'].append(f"No price for {buy['symbol']}")
+                            continue
+                        
+                        current_price = float(bars['close'].iloc[-1])
+                    except Exception as e:
+                        print(f"  ❌ BUY {buy['symbol']}: Failed to get price - {e}")
+                        executed['errors'].append(f"No price for {buy['symbol']}: {e}")
+                        continue
                     
                     # Calculer quantité basée sur cash_per_position
                     qty = int(cash_per_position / current_price)
