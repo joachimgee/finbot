@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.portfolio_manager import PortfolioManager
 from src.financial_analyzer.portfolio.rebalancer import PortfolioRebalancer
 from src.financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
+from src.financial_analyzer.learning.portfolio_learner import PortfolioLearner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +52,123 @@ class DailyPortfolioWorkflow:
         self.analysis_csv = Path('professional_daily_global.csv')
         self.log_dir = Path('logs')
         self.log_dir.mkdir(exist_ok=True)
+        
+        # Learning component
+        self.learner = PortfolioLearner(
+            mode=mode,
+            lookback_days=30,
+            learning_rate=0.1
+        )
+        
+    def step0_morning_learning(self) -> tuple:
+        """
+        Étape 0: Apprentissage matinal (AVANT analyse).
+        
+        Analyse :
+        - Portfolio actuel vs hier
+        - Performance attribution
+        - Détection erreurs systématiques
+        - Ajustement paramètres
+        
+        Returns:
+            (should_proceed, learning_result)
+        """
+        print(f"\n{'='*80}")
+        print(f"🧠 ÉTAPE 0: APPRENTISSAGE MATINAL (PRÉ-ANALYSE)")
+        print(f"{'='*80}\n")
+        
+        try:
+            result = self.learner.analyze_morning_pre_analysis()
+            
+            # Afficher snapshot
+            print(f"📊 PORTFOLIO ACTUEL:")
+            print(f"  • Equity: ${result.portfolio_snapshot.equity:,.2f}")
+            print(f"  • Cash: ${result.portfolio_snapshot.cash:,.2f}")
+            print(f"  • Positions: {result.portfolio_snapshot.positions_count}")
+            print(f"  • P&L jour: ${result.portfolio_snapshot.day_pnl:+,.2f}")
+            print(f"  • P&L total: ${result.portfolio_snapshot.total_pnl:+,.2f}")
+            
+            # Afficher métriques professionnelles
+            if result.performance_metrics:
+                print(f"\n📈 MÉTRIQUES PROFESSIONNELLES:")
+                metrics = result.performance_metrics
+                
+                if 'sharpe_ratio' in metrics:
+                    print(f"  • Sharpe Ratio: {metrics['sharpe_ratio']:.3f}")
+                if 'sortino_ratio' in metrics:
+                    print(f"  • Sortino Ratio: {metrics['sortino_ratio']:.3f}")
+                if 'calmar_ratio' in metrics:
+                    print(f"  • Calmar Ratio: {metrics['calmar_ratio']:.3f}")
+                if 'max_drawdown_pct' in metrics:
+                    print(f"  • Max Drawdown: {metrics['max_drawdown_pct']:.2f}%")
+                if 'annualized_return_pct' in metrics:
+                    print(f"  • Rendement annualisé: {metrics['annualized_return_pct']:+.2f}%")
+            
+            # Afficher insights
+            if result.insights:
+                print(f"\n💡 INSIGHTS ({len(result.insights)}):")
+                
+                # Grouper par priorité
+                high_priority = [i for i in result.insights if i.priority == 'high']
+                medium_priority = [i for i in result.insights if i.priority == 'medium']
+                low_priority = [i for i in result.insights if i.priority == 'low']
+                
+                if high_priority:
+                    print(f"\n  🔴 HIGH PRIORITY ({len(high_priority)}):")
+                    for insight in high_priority[:3]:  # Top 3
+                        print(f"    • {insight.description}")
+                        print(f"      → Action: {insight.action_recommended[:80]}...")
+                
+                if medium_priority:
+                    print(f"\n  🟡 MEDIUM PRIORITY ({len(medium_priority)}):")
+                    for insight in medium_priority[:2]:  # Top 2
+                        print(f"    • {insight.description}")
+                
+                if low_priority:
+                    print(f"\n  🟢 SUCCESS ({len(low_priority)}):")
+                    for insight in low_priority[:1]:  # Top 1
+                        print(f"    • {insight.description}")
+            
+            # Afficher ajustements recommandés
+            if result.parameter_adjustments:
+                print(f"\n⚙️  AJUSTEMENTS RECOMMANDÉS:")
+                for param, value in result.parameter_adjustments.items():
+                    print(f"  • {param}: {value:.2f}")
+                    
+                # Appliquer les ajustements
+                if 'max_positions' in result.parameter_adjustments:
+                    new_val = int(result.parameter_adjustments['max_positions'])
+                    print(f"    → Appliqué: max_positions = {new_val}")
+                    self.max_positions = new_val
+                
+                if 'hold_threshold' in result.parameter_adjustments:
+                    new_val = result.parameter_adjustments['hold_threshold']
+                    print(f"    → Appliqué: hold_threshold = {new_val:.2f}")
+                    self.hold_threshold_score = new_val
+                
+                if 'max_investment' in result.parameter_adjustments:
+                    new_val = result.parameter_adjustments['max_investment']
+                    print(f"    → Appliqué: max_investment = ${new_val:.2f}")
+                    self.max_investment_per_position = new_val
+            
+            # Warnings
+            if result.warning_messages:
+                print(f"\n⚠️  WARNINGS:")
+                for warning in result.warning_messages:
+                    print(f"  • {warning}")
+            
+            # Décision
+            if result.should_proceed:
+                print(f"\n✅ Apprentissage terminé, procéder avec analyse")
+            else:
+                print(f"\n🛑 STOP: Conditions critiques détectées")
+            
+            return result.should_proceed, result
+            
+        except Exception as e:
+            logger.error(f"Learning error: {e}", exc_info=True)
+            print(f"⚠️  Apprentissage échoué, procéder quand même: {e}")
+            return True, None  # Safe default: toujours procéder si erreur
         
     def step1_run_analysis(self, limit: int = 12000, regions: str = "global",
                           days: int = 365, skip_if_exists: bool = False) -> bool:
@@ -240,6 +358,13 @@ class DailyPortfolioWorkflow:
         print(f"{'#'*80}\n")
         
         success = True
+        
+        # Étape 0: Apprentissage matinal
+        should_proceed, learning_result = self.step0_morning_learning()
+        
+        if not should_proceed:
+            print(f"\n🛑 Workflow arrêté: Conditions critiques détectées par learner")
+            return False
         
         # Étape 1: Analyse
         if not self.step1_run_analysis(skip_if_exists=skip_analysis):
