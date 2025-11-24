@@ -5,13 +5,15 @@ Analyse chaque matin AVANT l'analyse :
 1. Récupère les trades de la veille
 2. Calcule performance attribution (facteurs de succès/échec)
 3. Identifie les erreurs systématiques
-4. Ajuste les paramètres du portfolio manager
+4. Ajuste les paramètres du portfolio manager (BIDIRECTIONNEL: reduce OU increase)
 5. Stocke les insights dans historique
 
 Utilise les modules existants :
 - analytics/performance_analyzer.py : Calcul métriques professionnelles
 - integration/performance_attribution.py : Attribution factorielle
 - portfolio/metrics.py : Ratios de risque
+- trading/bet_sizing.py : Kelly Criterion optimal allocation (AFML Chapter 10)
+- risk/risk_metrics.py : EVaR, RLVaR advanced measures
 
 Ratios professionnels calculés (sources académiques) :
 - Sharpe Ratio : (R_p - R_f) / σ_p (Sharpe 1966)
@@ -22,12 +24,19 @@ Ratios professionnels calculés (sources académiques) :
 - M² : Risk-adjusted return vs benchmark (Modigliani 1997)
 - Treynor Ratio : (R_p - R_f) / β (Treynor 1965)
 - Alpha / Beta : Jensen's Alpha (Jensen 1968)
+- Kelly Criterion : f* = (p*b - q) / b (Kelly 1956, López de Prado 2018)
+
+AJUSTEMENT BIDIRECTIONNEL:
+- REDUCE exposure quand: Sharpe < 1.0, Max DD > 15%, VaR > 3%
+- INCREASE exposure quand: Sharpe > 2.0, Kelly > current, Max DD < 10%, Win Rate > 55%
 
 Références :
 - Sharpe, W. F. (1966). "Mutual Fund Performance". Journal of Business.
 - Sortino, F. & Price, L. (1994). "Performance Measurement in a Downside Risk Framework"
 - Young, T. (1991). "Calmar Ratio: A Smoother Tool". Futures Magazine.
 - Keating, C. & Shadwick, W. (2002). "A Universal Performance Measure". Finance Dev Centre.
+- Kelly, J. (1956). "A New Interpretation of Information Rate". Bell System Technical Journal.
+- López de Prado, M. (2018). "Advances in Financial Machine Learning" (Chapter 10: Bet Sizing).
 """
 
 from __future__ import annotations
@@ -49,6 +58,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from financial_analyzer.analytics.performance_analyzer import PerformanceAnalyzer
 from financial_analyzer.integration.performance_attribution import PerformanceAttributor
+from financial_analyzer.trading.bet_sizing import kelly_criterion
+from financial_analyzer.risk.risk_metrics import calculate_evar, calculate_rlvar
+from financial_analyzer.risk.risk_budgeting import RiskBudgeter
+from financial_analyzer.analysis.ml_predictor import MLPredictor
 from financial_analyzer.portfolio.metrics import (
     calculate_portfolio_return,
     calculate_portfolio_volatility,
@@ -492,11 +505,68 @@ class PortfolioLearner:
         metrics['var_95_pct'] = var_95 * 100
         metrics['cvar_95_pct'] = cvar_95 * 100
         
-        # === 10. Trade statistics (si disponibles) ===
+        # === 10. Advanced risk metrics (EVaR, RLVaR) ===
+        # EVaR (Entropic VaR) - More sensitive to extreme losses (Ahmadi-Javid 2012)
+        try:
+            evar_95 = calculate_evar(returns, confidence=0.95)
+            metrics['evar_95_pct'] = evar_95 * 100
+        except Exception as e:
+            logger.warning(f"EVaR calculation failed: {e}")
+            metrics['evar_95_pct'] = metrics['var_95_pct']  # Fallback to VaR
+        
+        # RLVaR (Relativistic VaR) - Hyperbolic tail risk (Huang et al. 2021)
+        try:
+            rlvar_95 = calculate_rlvar(returns, confidence=0.95, kappa=0.3)
+            metrics['rlvar_95_pct'] = rlvar_95 * 100
+        except Exception as e:
+            logger.warning(f"RLVaR calculation failed: {e}")
+            metrics['rlvar_95_pct'] = metrics['cvar_95_pct']  # Fallback to CVaR
+        
+        # === 11. Trade statistics (si disponibles) ===
         # Note: Nécessite trade history, pas dans returns
         # À implémenter via adapter.get_activities()
+        # Calculer win_rate et profit_factor si données disponibles
         
-        logger.debug(f"Calculated {len(metrics)} professional metrics")
+        # Pour Kelly Criterion, on a besoin de win_rate et profit_factor
+        # Si pas disponible, utiliser proxy basé sur returns
+        positive_returns = returns[returns > 0]
+        negative_returns = returns[returns < 0]
+        
+        if len(positive_returns) > 0 and len(negative_returns) > 0:
+            win_rate = len(positive_returns) / len(returns)
+            avg_win = positive_returns.mean()
+            avg_loss = abs(negative_returns.mean())
+            
+            profit_factor = (len(positive_returns) * avg_win) / (len(negative_returns) * avg_loss) if avg_loss > 0 else 1.0
+            win_loss_ratio = avg_win / avg_loss if avg_loss > 0 else 1.0
+            
+            metrics['win_rate'] = win_rate
+            metrics['profit_factor'] = profit_factor
+            metrics['win_loss_ratio'] = win_loss_ratio
+            
+            # === 12. Kelly Criterion Optimal Allocation (López de Prado 2018, AFML Chapter 10) ===
+            # f* = (p*b - q) / b where p=win_prob, b=win/loss ratio, q=1-p
+            # Using quarter Kelly (0.25) as conservative approach per AFML research
+            try:
+                kelly_optimal = kelly_criterion(
+                    win_prob=win_rate,
+                    win_loss_ratio=win_loss_ratio,
+                    max_leverage=1.0,
+                    kelly_fraction=0.25  # Quarter Kelly (conservative, per AFML)
+                )
+                metrics['kelly_optimal_allocation_pct'] = kelly_optimal * 100  # As percentage
+                logger.info(f"Kelly Criterion: {kelly_optimal*100:.1f}% optimal allocation (quarter Kelly)")
+            except Exception as e:
+                logger.warning(f"Kelly Criterion calculation failed: {e}")
+                metrics['kelly_optimal_allocation_pct'] = 0.0
+        else:
+            # Pas assez de données pour Kelly
+            metrics['win_rate'] = 0.5  # Neutral
+            metrics['profit_factor'] = 1.0  # Break-even
+            metrics['win_loss_ratio'] = 1.0
+            metrics['kelly_optimal_allocation_pct'] = 0.0
+        
+        logger.debug(f"Calculated {len(metrics)} professional metrics (including Kelly)")
         return metrics
     
     def _detect_patterns_and_insights(
@@ -655,16 +725,109 @@ class PortfolioLearner:
                     priority='high'
                 ))
         
-        # === 8. Success patterns ===
-        if sharpe > 2.0:
+        # === 8. Success patterns (FAVORABLE CONDITIONS) ===
+        # Conditions pour AUGMENTER exposition (pas seulement réduire)
+        
+        # Success 1: Excellent Sharpe + Low Drawdown
+        max_dd = metrics.get('max_drawdown_pct', 100)
+        if sharpe > 2.0 and max_dd < 10.0:
+            insights.append(PerformanceInsight(
+                date=now,
+                insight_type='success',
+                category='allocation',
+                description=f"Performance excellente: Sharpe {sharpe:.2f} (>{self.thresholds['sharpe_min']*2}), DD {max_dd:.1f}% (<10%)",
+                metric_value=sharpe,
+                threshold=self.thresholds['sharpe_min'] * 2,
+                action_recommended="🟢 CONDITIONS FAVORABLES. Considérer AUGMENTATION exposition: "
+                                    "(1) Augmenter max_positions de 20% (cap 300), "
+                                    "(2) Augmenter max_investment de 15% (cap $2000), "
+                                    "(3) Environnement risque-ajusté excellent",
+                priority='high'
+            ))
+        
+        # Success 2: Kelly Criterion suggests higher allocation
+        kelly_optimal_pct = metrics.get('kelly_optimal_allocation_pct', 0)
+        if kelly_optimal_pct > 0:
+            # Calculer current allocation (equity / initial capital $100K)
+            current_allocation_pct = (snapshot.equity / 100000) * 100  # En %
+            
+            if kelly_optimal_pct > current_allocation_pct * 1.2:  # Kelly suggère 20%+ de plus
+                increase_pct = ((kelly_optimal_pct / current_allocation_pct) - 1) * 100
+                insights.append(PerformanceInsight(
+                    date=now,
+                    insight_type='recommendation',
+                    category='allocation',
+                    description=f"Kelly Criterion: {kelly_optimal_pct:.1f}% optimal vs {current_allocation_pct:.1f}% actuel (+{increase_pct:.0f}%)",
+                    metric_value=kelly_optimal_pct,
+                    threshold=current_allocation_pct,
+                    action_recommended=f"🟢 Kelly suggère AUGMENTER allocation de {increase_pct:.0f}%. "
+                                        f"Action: (1) Augmenter max_positions, (2) Augmenter max_investment. "
+                                        f"Note: Quarter Kelly (conservative 25% per AFML research)",
+                    priority='medium'
+                ))
+        
+        # Success 3: High win rate + High profit factor
+        win_rate = metrics.get('win_rate', 0)
+        profit_factor = metrics.get('profit_factor', 0)
+        if win_rate > 0.55 and profit_factor > 2.0:
+            insights.append(PerformanceInsight(
+                date=now,
+                insight_type='success',
+                category='selection',
+                description=f"Stratégie gagnante: Win Rate {win_rate*100:.1f}% (>55%), Profit Factor {profit_factor:.2f} (>2.0)",
+                metric_value=win_rate,
+                threshold=0.55,
+                action_recommended="🟢 Sélection de qualité. Considérer AUGMENTATION taille positions ou nombre positions. "
+                                    "Edge positif confirmé statistiquement.",
+                priority='medium'
+            ))
+        
+        # Success 4: Excellent Sortino + Low VaR
+        sortino = metrics.get('sortino_ratio', 0)
+        var_95 = metrics.get('var_95_pct', 100)
+        if sortino > 2.5 and var_95 < 2.0:
             insights.append(PerformanceInsight(
                 date=now,
                 insight_type='success',
                 category='risk',
-                description=f"Excellent Sharpe Ratio ({sharpe:.2f})",
+                description=f"Downside risk optimal: Sortino {sortino:.2f} (>2.5), VaR(95%) {var_95:.1f}% (<2%)",
+                metric_value=sortino,
+                threshold=2.5,
+                action_recommended="🟢 Contrôle downside exceptionnel. Environnement favorable pour AUGMENTER exposition. "
+                                    "Risque de perte journalière minimal.",
+                priority='medium'
+            ))
+        
+        # Success 6: Risk Budgeting Analysis (if sufficient history)
+        # Calcule allocation optimale via risk budgeting pour confirmer capacité
+        if len(history_df) >= 20 and snapshot.positions:  # Min 20 jours pour covariance
+            try:
+                # Extraire returns par position (si disponible dans history)
+                # Pour l'instant, juste identifier que risk budgeting est disponible
+                insights.append(PerformanceInsight(
+                    date=now,
+                    insight_type='recommendation',
+                    category='allocation',
+                    description=f"Risk budgeting: {len(snapshot.positions)} positions, données suffisantes pour optimisation",
+                    metric_value=len(snapshot.positions),
+                    threshold=20,
+                    action_recommended="🔍 Risk budgeting: Allocation actuelle peut être optimisée via RiskBudgeter. "
+                                        "Considérer rebalancing basé sur contribution marginale au risque.",
+                    priority='low'
+                ))
+            except Exception as e:
+                logger.warning(f"Risk budgeting analysis failed: {e}")
+        
+        # Success 5: Standard success (just good, not excellent)
+        elif sharpe > 1.5 and sharpe <= 2.0:
+            insights.append(PerformanceInsight(
+                date=now,
+                insight_type='success',
+                category='risk',
+                description=f"Bon Sharpe Ratio ({sharpe:.2f} entre 1.5-2.0)",
                 metric_value=sharpe,
                 threshold=self.thresholds['sharpe_min'],
-                action_recommended="Stratégie performante. Maintenir paramètres actuels.",
+                action_recommended="✅ Stratégie performante. Maintenir paramètres actuels (ni augmenter ni réduire).",
                 priority='low'
             ))
         
@@ -676,13 +839,17 @@ class PortfolioLearner:
         metrics: Dict[str, float]
     ) -> Dict[str, float]:
         """
-        Recommande ajustements paramètres basés sur insights.
+        Recommande ajustements paramètres basés sur insights (BIDIRECTIONNEL).
         
         Paramètres ajustables :
-        - max_positions : [50, 200]
+        - max_positions : [50, 300]
         - hold_threshold : [0.0, 0.5]
         - max_investment : [100, 2000]
         - rebalance_threshold : [0.05, 0.25]
+        
+        BIDIRECTIONNEL:
+        - REDUCE quand: Sharpe < 1.0, Max DD > 15%, VaR > 3%
+        - INCREASE quand: Sharpe > 2.0, Kelly > current, Win Rate > 55%, Max DD < 10%
         
         Learning rate appliqué : adjustment = current + learning_rate * delta
         
@@ -691,7 +858,7 @@ class PortfolioLearner:
             metrics: Métriques performance
         
         Returns:
-            Dict avec ajustements recommandés
+            Dict avec ajustements recommandés (vide si aucun changement)
         """
         adjustments = {}
         
@@ -703,7 +870,7 @@ class PortfolioLearner:
             'rebalance_threshold': 0.15
         }
         
-        # Analyser insights high priority
+        # === PHASE 1: Analyser insights HIGH PRIORITY ERRORS → REDUCE ===
         high_priority_errors = [i for i in insights if i.priority == 'high' and i.insight_type == 'error']
         
         if high_priority_errors:
@@ -712,26 +879,93 @@ class PortfolioLearner:
             # Réduire positions si max DD élevé
             if any('Drawdown' in i.description for i in high_priority_errors):
                 new_max_pos = int(current_params['max_positions'] * 0.5)  # Réduire 50%
-                adjustments['max_positions'] = new_max_pos
-                logger.info(f"Recommending max_positions: 200 → {new_max_pos} (Max DD critical)")
+                adjustments['max_positions'] = max(50, new_max_pos)  # Min 50
+                logger.info(f"⬇️ REDUCE max_positions: 200 → {adjustments['max_positions']} (Max DD critical)")
             
             # Augmenter hold_threshold si Sharpe/Sortino faibles
             if any('Sharpe' in i.description or 'Sortino' in i.description for i in high_priority_errors):
                 new_threshold = current_params['hold_threshold'] + 0.2  # +0.2
                 adjustments['hold_threshold'] = min(0.5, new_threshold)  # Cap à 0.5
-                logger.info(f"Recommending hold_threshold: 0.0 → {adjustments['hold_threshold']:.2f} (Low Sharpe/Sortino)")
+                logger.info(f"⬇️ REDUCE (filter): hold_threshold: 0.0 → {adjustments['hold_threshold']:.2f} (Low Sharpe/Sortino)")
             
             # Réduire investment si VaR élevé
             if any('VaR' in i.description for i in high_priority_errors):
                 new_investment = int(current_params['max_investment'] * 0.7)  # Réduire 30%
                 adjustments['max_investment'] = max(100, new_investment)  # Min $100
-                logger.info(f"Recommending max_investment: 1000 → {adjustments['max_investment']} (High VaR)")
+                logger.info(f"⬇️ REDUCE max_investment: 1000 → {adjustments['max_investment']} (High VaR)")
         
-        # Learning rate smoothing
+        # === PHASE 2: Analyser SUCCESS INSIGHTS → INCREASE (si pas d'erreurs critiques) ===
+        success_insights = [i for i in insights if i.insight_type in ('success', 'recommendation')]
+        
+        if success_insights and not high_priority_errors:
+            # AUGMENTATION prudente si conditions favorables ET pas d'erreurs
+            
+            # Compter nombre de signaux favorables (pour augmentation cumulative)
+            favorable_signals = 0
+            
+            # INCREASE 1: Excellent Sharpe + Low DD → Augmenter positions
+            if any('Performance excellente' in i.description for i in success_insights):
+                favorable_signals += 1
+                new_max_pos = int(current_params['max_positions'] * 1.2)  # +20%
+                adjustments['max_positions'] = min(300, new_max_pos)  # Cap à 300
+                logger.info(f"⬆️ INCREASE max_positions: 200 → {adjustments['max_positions']} (Excellent Sharpe + Low DD)")
+            
+            # INCREASE 2: Kelly suggests higher allocation → Augmenter investment
+            if any('Kelly suggère AUGMENTER' in i.action_recommended for i in success_insights):
+                favorable_signals += 1
+                new_investment = int(current_params['max_investment'] * 1.15)  # +15%
+                adjustments['max_investment'] = min(2000, new_investment)  # Cap $2000
+                logger.info(f"⬆️ INCREASE max_investment: 1000 → {adjustments['max_investment']} (Kelly Criterion)")
+            
+            # INCREASE 3: High win rate + profit factor → Augmenter investment
+            if any('Stratégie gagnante' in i.description for i in success_insights):
+                favorable_signals += 1
+                # Augmenter investment car edge positif confirmé
+                if 'max_investment' not in adjustments:  # Si pas déjà ajusté
+                    new_investment = int(current_params['max_investment'] * 1.10)  # +10%
+                    adjustments['max_investment'] = min(2000, new_investment)
+                    logger.info(f"⬆️ INCREASE max_investment: 1000 → {adjustments['max_investment']} (High Win Rate)")
+            
+            # INCREASE 4: Excellent Sortino + Low VaR → Réduire hold_threshold (accept plus)
+            if any('Downside risk optimal' in i.description for i in success_insights):
+                favorable_signals += 1
+                # Réduire hold_threshold = accepter plus de symboles (car contrôle risque excellent)
+                new_threshold = max(0.0, current_params['hold_threshold'] - 0.1)  # -0.1
+                adjustments['hold_threshold'] = new_threshold
+                logger.info(f"⬆️ INCREASE (accept more): hold_threshold: 0.0 → {adjustments['hold_threshold']:.2f} (Low downside risk)")
+            
+            # INCREASE 5: Cumulative favorable conditions → Aggressive increase
+            # Si 3+ signaux favorables, augmentation plus agressive
+            if favorable_signals >= 3:
+                logger.info(f"🚀 STRONG FAVORABLE CONDITIONS: {favorable_signals} positive signals detected")
+                
+                # Si pas déjà ajusté max_positions, l'augmenter
+                if 'max_positions' not in adjustments:
+                    new_max_pos = int(current_params['max_positions'] * 1.25)  # +25% (plus agressif)
+                    adjustments['max_positions'] = min(300, new_max_pos)
+                    logger.info(f"⬆️⬆️ AGGRESSIVE INCREASE max_positions: 200 → {adjustments['max_positions']} (3+ favorable signals)")
+                
+                # Si pas déjà ajusté max_investment, l'augmenter
+                if 'max_investment' not in adjustments:
+                    new_investment = int(current_params['max_investment'] * 1.20)  # +20% (plus agressif)
+                    adjustments['max_investment'] = min(2000, new_investment)
+                    logger.info(f"⬆️⬆️ AGGRESSIVE INCREASE max_investment: 1000 → {adjustments['max_investment']} (3+ favorable signals)")
+        
+        # === PHASE 3: Learning rate smoothing ===
+        # Appliquer learning rate pour éviter changements brusques
         for param, new_value in adjustments.items():
             current_value = current_params[param]
-            smoothed = current_value + self.learning_rate * (new_value - current_value)
+            delta = new_value - current_value
+            smoothed = current_value + self.learning_rate * delta
             adjustments[param] = smoothed
+            logger.debug(f"Smoothed {param}: {current_value:.2f} → {new_value:.2f} (with LR {self.learning_rate}) = {smoothed:.2f}")
+        
+        # === PHASE 4: Summary ===
+        if adjustments:
+            direction = "⬆️ INCREASE" if any('max_positions' in k and adjustments[k] > current_params[k] for k in adjustments) else "⬇️ REDUCE"
+            logger.info(f"{direction} exposure: {len(adjustments)} parameters adjusted")
+        else:
+            logger.info("✅ No adjustments needed - maintaining current parameters")
         
         return adjustments
     
