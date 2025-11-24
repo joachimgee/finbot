@@ -9,7 +9,7 @@ import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from datetime import datetime
 import logging
 
@@ -17,6 +17,8 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
+from src.financial_analyzer.trading.account_monitor import AccountMonitor
+from src.financial_analyzer.trading.risk_guard import RiskGuard, RiskLimitExceeded, CircuitBreakerTriggered, InvalidOrderError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -188,7 +190,7 @@ class PortfolioManager:
         
         return decisions
     
-    def execute_decisions(self, decisions: Dict[str, List], max_investment: float = 1000.0):
+    def execute_decisions(self, decisions: Dict[str, List], max_investment: float = 1000.0, initial_capital: float = 100000.0) -> Dict[str, Any]:
         """
         Exécute les décisions de trading.
         
@@ -199,13 +201,31 @@ class PortfolioManager:
         print(f"\n⚡ EXÉCUTION DES ORDRES")
         print(f"{'='*80}")
         
-        executed = {
+        executed: Dict[str, Any] = {
             'cancelled': 0,
             'sold': 0,
             'bought': 0,
             'held': 0,
-            'errors': []
+            'errors': [],
+            'risk_score_before': None,
+            'risk_score_after': None,
+            'circuit_breakers': []
         }
+
+        # Initialize monitoring & risk guard
+        monitor = AccountMonitor(self.adapter, initial_capital=initial_capital)
+        monitor.update()
+        risk_guard = RiskGuard(
+            account_monitor=monitor,
+            max_position_size=initial_capital * 0.05,  # 5% capital per position
+            max_position_pct=0.20,
+            max_total_positions=self.max_positions,
+            max_drawdown=-0.25,
+            max_daily_loss=initial_capital * 0.05,
+            max_leverage=2.0,
+            enable_circuit_breaker=True
+        )
+        executed['risk_score_before'] = risk_guard.get_risk_score()
         
         # 1. ANNULER ordres obsolètes
         print(f"\n🚫 Annulation de {len(decisions['cancel'])} ordres:")
@@ -223,9 +243,21 @@ class PortfolioManager:
         print(f"\n🔴 Vente de {len(decisions['sell'])} positions:")
         for sell in decisions['sell']:
             try:
+                # Risk validation (position reducing still validated for drawdown/daily loss)
+                monitor.update()
+                try:
+                    risk_guard.validate_order(sell['symbol'], qty=int(sell['qty']), side='sell', price=sell.get('market_value', 0) / max(int(sell['qty']), 1))
+                except CircuitBreakerTriggered as cb:
+                    executed['circuit_breakers'].append(str(cb))
+                    print(f"  🚨 Circuit breaker triggered during SELL {sell['symbol']}: {cb}")
+                    break
+                except (RiskLimitExceeded, InvalidOrderError) as re:
+                    print(f"  ❌ SELL {sell['symbol']} blocked by risk guard: {re}")
+                    executed['errors'].append(str(re))
+                    continue
                 order = self.adapter.submit_order(
                     symbol=sell['symbol'],
-                    qty=sell['qty'],
+                    qty=int(sell['qty']),
                     side='sell',
                     order_type='market'
                 )
@@ -257,11 +289,8 @@ class PortfolioManager:
             for buy in decisions['buy']:
                 try:
                     from datetime import datetime, timedelta
-                    
-                    # Récupérer le dernier prix via get_bars
                     end = datetime.now()
                     start = end - timedelta(days=1)
-                    
                     try:
                         bars = self.adapter.get_bars(
                             symbol=buy['symbol'],
@@ -269,26 +298,31 @@ class PortfolioManager:
                             end=end,
                             timeframe='1Min'
                         )
-                        
                         if bars.empty:
                             print(f"  ❌ BUY {buy['symbol']}: No price data available")
                             executed['errors'].append(f"No price for {buy['symbol']}")
                             continue
-                        
                         current_price = float(bars['close'].iloc[-1])
                     except Exception as e:
                         print(f"  ❌ BUY {buy['symbol']}: Failed to get price - {e}")
                         executed['errors'].append(f"No price for {buy['symbol']}: {e}")
                         continue
-                    
-                    # Calculer quantité basée sur cash_per_position
                     qty = int(cash_per_position / current_price)
-                    
                     if qty < 1:
                         print(f"  ⚠️  BUY {buy['symbol']}: Not enough cash (${cash_per_position:.2f} / ${current_price:.2f})")
                         continue
-                    
-                    # Submit order
+                    # Risk validation
+                    monitor.update()
+                    try:
+                        risk_guard.validate_order(buy['symbol'], qty=qty, side='buy', price=current_price)
+                    except CircuitBreakerTriggered as cb:
+                        executed['circuit_breakers'].append(str(cb))
+                        print(f"  🚨 Circuit breaker triggered during BUY {buy['symbol']}: {cb}")
+                        break
+                    except (RiskLimitExceeded, InvalidOrderError) as re:
+                        print(f"  ❌ BUY {buy['symbol']} blocked by risk guard: {re}")
+                        executed['errors'].append(str(re))
+                        continue
                     order = self.adapter.submit_order(
                         symbol=buy['symbol'],
                         qty=qty,
@@ -303,18 +337,22 @@ class PortfolioManager:
                     executed['errors'].append(error_msg)
         
         # Résumé
+        monitor.update()
+        executed['risk_score_after'] = risk_guard.get_risk_score()
         print(f"\n📊 RÉSUMÉ EXÉCUTION:")
         print(f"  • Ordres annulés: {executed['cancelled']}")
         print(f"  • Positions vendues: {executed['sold']}")
         print(f"  • Positions conservées: {executed['held']}")
         print(f"  • Nouvelles positions: {executed['bought']}")
         print(f"  • Erreurs: {len(executed['errors'])}")
+        print(f"  • Circuit breakers: {len(executed['circuit_breakers'])}")
+        print(f"  • Risk score avant: {executed['risk_score_before']:.1f}")
+        print(f"  • Risk score après: {executed['risk_score_after']:.1f}")
         
         if executed['errors']:
             print(f"\n⚠️  ERREURS:")
             for error in executed['errors']:
                 print(f"  • {error}")
-        
         return executed
     
     def run_full_cycle(self, analysis_csv: str, execute: bool = False, 
@@ -353,6 +391,10 @@ class PortfolioManager:
         if execute:
             print(f"\n⚠️  MODE EXÉCUTION RÉEL")
             executed = self.execute_decisions(decisions, max_investment)
+            print(f"\n🛡️  RISK SUMMARY POST-EXECUTION:")
+            print(f"  • Risk score: {executed.get('risk_score_after')}")
+            if executed.get('circuit_breakers'):
+                print(f"  • Circuit breakers: {executed['circuit_breakers']}")
         else:
             print(f"\n🔍 MODE DRY-RUN (pas d'exécution réelle)")
             print(f"\n📋 RÉSUMÉ DES DÉCISIONS:")

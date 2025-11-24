@@ -83,12 +83,15 @@ def run_professional_analysis(
     output: str = None
 ) -> bool:
     """
-    Exécute professional_analysis.py.
+    Exécute professional_analysis.py + pré-analyse (drift + options) + optimisation portefeuille.
     
     Returns:
         True si succès, False sinon
     """
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
+    from financial_analyzer.analysis.master_orchestrator import MasterOrchestrator
+    from financial_analyzer.preanalysis.daily_preanalysis import run_daily_preanalysis
+    from financial_analyzer.integration.signal_fusion_engine import SignalFusionEngine
     from financedatabase import Equities
     import pandas as pd
     import numpy as np
@@ -230,36 +233,130 @@ Configuration :
         
         print(f"✅ DataFrame prix: {prices.shape[0]} jours × {prices.shape[1]} symboles")
         
-        # 5. Calcul scores professionnels (300+ facteurs)
+        # 5. Pré-analyse portefeuille (drift + options) pour GLOBAL
+        print(f"\n🔎 Pré-analyse (drift + options)...")
+        try:
+            pre = run_daily_preanalysis(
+                symbols=prices.columns.tolist()[: min(50, len(prices.columns))],  # limiter coût
+                start_date=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
+                end_date=datetime.now().strftime('%Y-%m-%d'),
+                check_drift=True,
+                analyze_options=True,
+                risk_free_rate=0.05,
+            )
+            drift_flag = pre.get('drift_check', {}).get('drift_detected', False)
+            print(f"   Drift détecté: {drift_flag}")
+            print(f"   Options analysées: {len(pre.get('options_analysis', {}))}")
+        except Exception as e:
+            print(f"   ⚠️ Échec pré-analyse: {e}")
+            drift_flag = False
+
+        # 6. Calcul scores professionnels (300+ facteurs) + FUSION MULTI-SOURCES
         print(f"\n🧠 Calcul scores professionnels (~300+ facteurs par symbole)...")
+        print(f"🔗 Fusion signaux multi-sources: Technical + Fundamental + Sentiment + ML + RL")
+        
+        # Initialize fusion engine
+        fusion_engine = SignalFusionEngine(
+            source_weights={
+                'technical': 0.20,
+                'fundamental': 0.25,
+                'sentiment': 0.15,
+                'ml_lstm': 0.20,
+                'ml_factor': 0.10,
+                'rl': 0.10,
+            },
+            min_sources=2,  # Au moins 2 sources requises
+            fallback_mode=True  # Continue même si certaines sources échouent
+        )
+        
+        # Générer signaux fusionnés (en batch pour performance)
+        print(f"  Génération signaux fusionnés (batch)...")
+        fused_signals_df = fusion_engine.generate_signals_batch(
+            symbols=prices.columns.tolist(),
+            price_data_dict=bars_dict,
+            progress_callback=lambda idx, total: print(f"    Progress fusion: {idx}/{total}") if idx % 100 == 0 else None
+        )
+        
+        # Collecter stats fusion engine
+        fusion_stats = fusion_engine.get_stats()
+        print(f"  ✅ Sources actives: {', '.join(fusion_stats['active_sources'])}")
+        print(f"  ✅ Signaux fusionnés: {len(fused_signals_df)}")
+        
+        # Calcul scores professionnels originaux (backup/enrichment)
         signals = []
         
         for idx, symbol in enumerate(prices.columns):
             if idx % 50 == 0 and idx > 0:
-                print(f"  Progress: {idx}/{len(prices.columns)}")
+                print(f"  Progress scores pro: {idx}/{len(prices.columns)}")
             
             signal_data = compute_professional_score(
                 symbol=symbol,
                 bars=bars_dict.get(symbol, pd.DataFrame()),
                 weighting_method=weighting
             )
+            
+            # Merger avec signal fusionné si disponible
+            if symbol in fused_signals_df['symbol'].values:
+                fused_row = fused_signals_df[fused_signals_df['symbol'] == symbol].iloc[0]
+                signal_data['fused_score'] = fused_row['composite_score']
+                signal_data['fused_confidence'] = fused_row['confidence']
+                # Copier sous-scores des sources
+                for source in ['technical', 'fundamental', 'sentiment', 'ml_lstm', 'ml_factor', 'rl']:
+                    if f'{source}_score' in fused_row:
+                        signal_data[f'{source}_score'] = fused_row[f'{source}_score']
+                    if f'{source}_confidence' in fused_row:
+                        signal_data[f'{source}_confidence'] = fused_row[f'{source}_confidence']
+                
+                # Combiner composite_score original avec fused_score (70% fused, 30% original)
+                original_score = signal_data.get('composite_score', 0.5)
+                fused_score = signal_data.get('fused_score', 0.5)
+                signal_data['composite_score'] = 0.7 * fused_score + 0.3 * original_score
+            
             signals.append(signal_data)
         
         signals_df = pd.DataFrame(signals)
         print(f"✅ Scores calculés pour {len(signals_df)} symboles")
         print(f"   Facteurs moyens/symbole: {signals_df['num_factors_computed'].mean():.0f}")
         print(f"   Confiance moyenne: {signals_df['confidence'].mean():.2f}")
+        if 'fused_score' in signals_df.columns:
+            print(f"   Fused score moyen: {signals_df['fused_score'].mean():.3f}")
+            print(f"   Fused confidence moyenne: {signals_df['fused_confidence'].mean():.3f}")
         
-        # 6. Sélection top
+        # 7. Sélection top
         top_syms = signals_df.nlargest(top, 'composite_score')['symbol'].tolist()
         print(f"\n🎯 Top {len(top_syms)} sélectionnés")
         
-        # 7. Export results
+        # 8. Optimisation portefeuille basique via MasterOrchestrator (subset pour perf)
+        # ACTIVER TOUS LES MODULES (ML, sentiment, RL)
+        print(f"\n📐 Optimisation portefeuille (subset top 50) - TOUS MODULES ACTIVÉS...")
+        try:
+            subset_syms = top_syms[: min(50, len(top_syms))]
+            orchestrator = MasterOrchestrator(symbols=subset_syms, mode='paper')
+            orchestration_result = orchestrator.run_complete_analysis(
+                start_date=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
+                end_date=datetime.now().strftime('%Y-%m-%d'),
+                skip_if_no_drift=False,
+                use_rl_signals=True,    # ✅ ACTIVÉ
+                use_ml_signals=True,    # ✅ ACTIVÉ
+                use_sentiment=True,     # ✅ ACTIVÉ
+                optimization_method='mean_variance',
+                enable_options_hedge=True,
+                dry_run=True,
+            )
+            if orchestration_result.portfolio_construction:
+                print(f"   Sharpe attendu: {orchestration_result.portfolio_construction.expected_sharpe:.2f}")
+                print(f"   Modules utilisés: RL={orchestration_result.portfolio_construction.used_rl_signals}, "
+                      f"ML={orchestration_result.portfolio_construction.used_ml_signals}, "
+                      f"Sentiment={orchestration_result.portfolio_construction.used_sentiment}")
+        except Exception as e:
+            print(f"   ⚠️ Optimisation portefeuille échouée: {e}")
+
+        # 9. Export results
         output_file = output or f'professional_analysis_daemon_{datetime.now().strftime("%Y%m%d_%H%M")}.csv'
         signals_df.to_csv(output_file, index=False)
         print(f"💾 Résultats exportés: {output_file}")
         
-        # 8. Apply to Alpaca Paper Trading (simplified for daemon)
+        # 10. Application simple au compte Alpaca Paper Trading
         print(f"\n📤 Application au compte Alpaca Paper Trading...")
         
         # Simple equal weight portfolio for daemon mode
@@ -314,6 +411,8 @@ Configuration :
                 print(f"  ❌ {symbol}: {e}")
         
         print(f"\n✅ Ordres soumis: {orders_submitted}, Échecs: {orders_failed}")
+        if drift_flag:
+            print("⚠️  DRIFT MODEL SIGNALÉ PAR PRÉ-ANALYSE - RETRAIN RECOMMANDÉ")
         
         adapter.disconnect()
         return True

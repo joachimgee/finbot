@@ -11,6 +11,13 @@ Version: 2.0.0
 """
 
 from financial_analyzer.backtest.backtester import BacktestRunner, CustomStrategy
+from financial_analyzer.backtest.adaptive_walk_forward import (
+    AdaptiveWalkForward,
+    DriftDetector,
+    ModelRetrainer,
+    PerformanceMetrics,
+    RetrainEvent,
+)
 from financial_analyzer.backtest.metrics import (
     calculate_sharpe_ratio,
     calculate_sortino_ratio,
@@ -46,6 +53,12 @@ __all__ = [
     # Backtester
     'BacktestRunner',
     'CustomStrategy',
+    # Adaptive Walk-Forward (Priority 4)
+    'AdaptiveWalkForward',
+    'DriftDetector',
+    'ModelRetrainer',
+    'PerformanceMetrics',
+    'RetrainEvent',
     # Metrics
     'calculate_sharpe_ratio',
     'calculate_sortino_ratio',

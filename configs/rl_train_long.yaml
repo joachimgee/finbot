@@ -1,0 +1,32 @@
+# RL long training configuration
+# Adjust parameters for full production runs (100k - 1M timesteps)
+train:
+  agent_type: ppo
+  total_timesteps: 1000000  # default for full run, can be overridden via CLI
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  learning_rate: 3e-4
+  eval_freq: 10000
+  n_eval_episodes: 10
+
+environment:
+  symbols: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
+  start_date: '2015-01-01'
+  end_date: '2024-12-31'
+  initial_capital: 100000
+  use_technical_indicators: true
+  use_sentiment: false
+  use_risk_metrics: true
+  random_start: true
+
+paths:
+  models_dir: './models/rl_long'
+  logs_dir: './logs/rl_long'
+  results_file: './models/rl_long/rl_long_results.json'
+
+notes: |
+  - This config is intended for full production runs. Start with a smoke test by
+    overriding `total_timesteps` via CLI to a small number (e.g., 2_000) before
+    launching a long training job.
+  - Ensure sufficient GPU/CPU and disk space for checkpoints and tensorboard logs.

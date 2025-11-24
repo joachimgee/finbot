@@ -1,0 +1,75 @@
+name: Daily Portfolio Workflow
+
+on:
+  schedule:
+    - cron: '30 14 * * 1-5'  # 09:30 ET (US market open) Monday-Friday
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Daily Portfolio Management Run
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          APCA_API_BASE_URL: ${{ secrets.APCA_API_BASE_URL }}
+        run: |
+          echo "Starting daily portfolio workflow at $(date -u)" 
+          python scripts/run_daily_portfolio_management.py \
+            --limit 12000 \
+            --regions global \
+            --max-positions 200 \
+            --max-investment 1000 \
+            --hold-threshold 0.0 \
+            --mode paper \
+            --execute || echo "Daily run encountered errors (non-blocking artifact upload)"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-logs
+          path: logs/
+          retention-days: 7
+
+      - name: Risk Summary (Optional Dry-Run Orchestrator)
+        if: always()
+        run: |
+          python - <<'PY'
+          from financial_analyzer.analysis.master_orchestrator import MasterOrchestrator
+          syms = ['AAPL','MSFT','GOOGL','AMZN','TSLA']
+          orc = MasterOrchestrator(symbols=syms, mode='paper', analysis_csv_path='professional_daily_global.csv')
+          res = orc.run_complete_analysis(start_date='2025-01-01', end_date='2025-11-21', dry_run=True)
+          print('Status:', res.status)
+          print('Drift:', res.pre_analysis.drift_detected)
+          if res.execution:
+              print('Risk Score:', res.execution.risk_score)
+          PY

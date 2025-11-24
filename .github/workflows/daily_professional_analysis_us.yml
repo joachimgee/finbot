@@ -2,7 +2,8 @@ name: Daily Professional Analysis US
 
 on:
   schedule:
-    - cron: '30 1 * * *'  # 01:30 UTC
+    - cron: '30 13 * * *'  # 09:30 AM ET (US market open) during DST (EDT = UTC-4)
+    - cron: '30 14 * * *'  # 09:30 AM ET (US market open) during Standard Time (EST = UTC-5)
   workflow_dispatch: {}
 
 jobs:

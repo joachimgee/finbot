@@ -264,11 +264,18 @@ class DailyPortfolioWorkflow:
             )
             
             # Run full cycle
-            manager.run_full_cycle(
+            result = manager.run_full_cycle(
                 analysis_csv=str(self.analysis_csv),
                 execute=execute,
                 max_investment=self.max_investment_per_position
             )
+            # Si exécution réelle, result contient risk metrics
+            if isinstance(result, dict) and 'risk_score_after' in result:
+                print("\n🛡️  RISK SUMMARY (PortfolioManager):")
+                print(f"  • Risk score avant: {result.get('risk_score_before')}")
+                print(f"  • Risk score après: {result.get('risk_score_after')}")
+                if result.get('circuit_breakers'):
+                    print(f"  • Circuit breakers: {result['circuit_breakers']}")
             
             print(f"✅ Gestion portefeuille terminée")
             return True
@@ -375,6 +382,8 @@ class DailyPortfolioWorkflow:
         if not self.step2_manage_portfolio(execute=execute):
             print(f"\n❌ Workflow arrêté: Gestion portefeuille échouée")
             success = False
+        else:
+            print("\n✅ Gestion portefeuille + validation risque terminées")
         
         # Étape 3: Status final
         self.step3_check_status()

@@ -4,6 +4,7 @@ Sentiment Analysis Module.
 Provides FinBERT-based sentiment analysis for financial news:
 - FinBERTEngine: ProsusAI/finbert model inference
 - SentimentAggregator: Multi-source sentiment aggregation
+- RealtimeSentimentPipeline: Real-time multi-source sentiment (Twitter, Reddit, NewsAPI)
 
 Example:
     >>> from financial_analyzer.sentiment import FinBERTEngine, SentimentAggregator
@@ -20,5 +21,6 @@ Example:
 
 from financial_analyzer.sentiment.finbert_engine import FinBERTEngine
 from financial_analyzer.sentiment.sentiment_aggregator import SentimentAggregator
+from financial_analyzer.sentiment.realtime_pipeline import RealtimeSentimentPipeline
 
-__all__ = ['FinBERTEngine', 'SentimentAggregator']
+__all__ = ['FinBERTEngine', 'SentimentAggregator', 'RealtimeSentimentPipeline']

@@ -1,0 +1,22 @@
+{
+  "agent_type": "ppo",
+  "train_period": [
+    "2015-01-01",
+    "2021-12-31"
+  ],
+  "val_period": [
+    "2021-12-31",
+    "2023-07-01"
+  ],
+  "test_period": [
+    "2023-07-01",
+    "2024-12-31"
+  ],
+  "test_metrics": {
+    "mean_reward": -0.003951170957786392,
+    "std_reward": 0.036095007886192035,
+    "mean_length": 265.1,
+    "std_length": 51.856436437533965
+  },
+  "model_path": "models/rl_long/best/ppo/best_model.zip"
+}

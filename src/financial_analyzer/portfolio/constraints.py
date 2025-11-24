@@ -446,3 +446,140 @@ def add_sector_constraint(constraints: PortfolioConstraints, *args, **kwargs) ->
 def add_concentration_limit(constraints: PortfolioConstraints, *args, **kwargs) -> PortfolioConstraints:
     constraints.add_concentration_limit(*args, **kwargs)
     return constraints
+
+# ---------------------------------------------------------------------------
+# Compatibility Layer (ConstraintSet & ConstraintViolation)
+# ---------------------------------------------------------------------------
+
+class ConstraintViolation(Exception):
+    """Raised when a constraint set validation fails.
+
+    Example:
+        >>> try:
+        ...     raise ConstraintViolation("Max leverage exceeded")
+        ... except ConstraintViolation as e:
+        ...     assert "leverage" in str(e)
+    """
+
+    pass
+
+
+@dataclass
+class ConstraintSet:
+    """Simple constraint set used by daily master run script.
+
+    This provides a lightweight interface expected by higher-level orchestration
+    code. It intentionally does not duplicate the full flexibility of
+    `PortfolioConstraints` above, but offers cardinality, per-weight clamping,
+    and leverage control. A normalization step preserves the simplex (sum=1).
+
+    Args:
+        max_weight: Upper bound applied to each individual weight (>0). If None, no cap.
+        min_weight: Lower bound applied to each individual weight (>=0). Defaults to 0.
+        max_leverage: Maximum sum of absolute weights. Defaults to 1 (standard long-only portfolio).
+        max_positions: Maximum number of non-zero positions retained after enforcement.
+
+    Methods:
+        enforce_cardinality: Applies max_positions by zeroing out the smallest weights beyond the limit.
+        apply: Applies all constraints (bounds, leverage, cardinality) and renormalizes to sum to 1 if possible.
+        validate: Raises ConstraintViolation if constraints breached post-application.
+
+    Example:
+        >>> import pandas as pd
+        >>> weights = pd.Series([0.3, 0.25, 0.2, 0.15, 0.1], index=list("ABCDE"))
+        >>> cs = ConstraintSet(max_weight=0.25, max_positions=3)
+        >>> adjusted = cs.apply(weights)
+        >>> round(float(adjusted.sum()), 8) == 1.0
+        True
+        >>> len(adjusted[adjusted > 1e-12]) <= 3
+        True
+    """
+
+    max_weight: Optional[float] = None
+    min_weight: float = 0.0
+    max_leverage: float = 1.0
+    max_positions: Optional[int] = None
+
+    def enforce_cardinality(self, weights: pd.Series) -> pd.Series:
+        if self.max_positions is None:
+            return weights
+        if self.max_positions <= 0:
+            raise ConstraintViolation("max_positions must be > 0")
+        w = weights.copy()
+        non_zero = w[w > 1e-12]
+        if len(non_zero) <= self.max_positions:
+            return w
+        # Keep largest absolute weights
+        largest = non_zero.abs().sort_values(ascending=False).iloc[: self.max_positions]
+        keep_index = set(largest.index)
+        for idx in w.index:
+            if idx not in keep_index:
+                w[idx] = 0.0
+        return w
+
+    def _clamp_bounds(self, weights: pd.Series) -> pd.Series:
+        w = weights.copy()
+        for idx in w.index:
+            if self.max_weight is not None and w[idx] > self.max_weight:
+                w[idx] = float(self.max_weight)
+            if w[idx] < self.min_weight:
+                w[idx] = float(self.min_weight)
+        return w
+
+    def _enforce_leverage(self, weights: pd.Series) -> pd.Series:
+        if self.max_leverage <= 0:
+            raise ConstraintViolation("max_leverage must be > 0")
+        w = weights.copy()
+        lev = float(w.abs().sum())
+        if lev <= self.max_leverage + 1e-12:
+            return w
+        # Scale down proportionally
+        scale = self.max_leverage / lev
+        return w * scale
+
+    def apply(self, weights: pd.Series) -> pd.Series:
+        if weights.empty:
+            return weights
+        w = self._clamp_bounds(weights)
+        w = self.enforce_cardinality(w)
+        w = self._enforce_leverage(w)
+        total = float(w.sum())
+        if total <= 0:
+            raise ConstraintViolation("Sum of weights after constraints is non-positive")
+        # Normalize to sum=1
+        w = w / total
+        return w
+
+    def validate(self, weights: pd.Series) -> None:
+        # Cardinality
+        if self.max_positions is not None:
+            non_zero = int((weights > 1e-12).sum())
+            if non_zero > self.max_positions + 1e-9:
+                raise ConstraintViolation("Cardinality constraint violated")
+        # Bounds
+        if self.max_weight is not None and float(weights.max()) > self.max_weight + 1e-9:
+            raise ConstraintViolation("Max weight constraint violated")
+        if float(weights.min()) < self.min_weight - 1e-9:
+            raise ConstraintViolation("Min weight constraint violated")
+        # Leverage
+        lev = float(weights.abs().sum())
+        if lev > self.max_leverage + 1e-9:
+            raise ConstraintViolation("Leverage constraint violated")
+
+
+# Maintain backward compatible exported names if module-level wildcards used elsewhere
+__all__ = [
+    "WeightBounds",
+    "MaxPositionsConstraint",
+    "GroupConstraint",
+    "MaxTurnoverConstraint",
+    "LeverageConstraint",
+    "RiskBudgetConstraint",
+    "Constraints",
+    "PortfolioConstraints",
+    "ConstraintSet",
+    "ConstraintViolation",
+    "add_allocation_limits",
+    "add_sector_constraint",
+    "add_concentration_limit",
+]
