@@ -214,7 +214,40 @@ Configuration :
         portfolio_decisions = {}  # symbol -> 'SELL' / 'HOLD' / 'BUY_MORE'
         
         if current_positions:
-            print(f"\n  🔍 Analyse de chaque position actuelle...")
+            print(f"\n  🔍 Analyse de {len(current_positions)} positions...")
+            
+            # OPTIMISATION: Récupérer TOUTES les bars en une seule requête batch
+            symbols_to_analyze = [pos['symbol'] for pos in current_positions]
+            start_date = datetime.now() - timedelta(days=90)
+            end_date = datetime.now()
+            
+            # Batch get_bars pour tous les symboles en parallèle
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            bars_cache = {}
+            
+            def fetch_bars(symbol):
+                try:
+                    bars = adapter.get_bars(
+                        symbol=symbol,
+                        start=start_date,
+                        end=end_date,
+                        timeframe='1Day'
+                    )
+                    return symbol, bars
+                except Exception as e:
+                    return symbol, None
+            
+            print(f"    📥 Récupération parallèle des données pour {len(symbols_to_analyze)} symboles...")
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(fetch_bars, sym): sym for sym in symbols_to_analyze}
+                for future in as_completed(futures):
+                    sym, bars = future.result()
+                    if bars is not None:
+                        bars_cache[sym] = bars
+            
+            print(f"    ✅ Données récupérées pour {len(bars_cache)}/{len(symbols_to_analyze)} symboles")
+            
+            # Analyser chaque position avec les bars en cache
             for pos in current_positions:
                 sym = pos['symbol']
                 qty = float(pos['qty'])
@@ -226,13 +259,8 @@ Configuration :
                 
                 # Décision basée sur P&L et analyse technique rapide
                 try:
-                    # Récupérer données historiques (90 jours)
-                    bars = adapter.get_bars(
-                        symbol=sym,
-                        start=datetime.now() - timedelta(days=90),
-                        end=datetime.now(),
-                        timeframe='1Day'
-                    )
+                    # Utiliser bars du cache
+                    bars = bars_cache.get(sym)
                     
                     if bars is not None and len(bars) >= 20:
                         closes = bars['close'].values
