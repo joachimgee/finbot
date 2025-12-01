@@ -873,19 +873,16 @@ Configuration :
         # Filtrer top_syms pour exclure les positions existantes (sauf BUY_MORE)
         new_candidates = [sym for sym in top_syms if sym not in existing_symbols or sym in buy_more_symbols]
         
-        # IMPORTANT: Prendre seulement les MEILLEURS (top 10-20) parmi les 200 candidats
-        # On analyse 200 pour avoir un bon choix, mais on achète seulement les meilleurs
-        max_positions_to_buy = min(15, len(new_candidates))  # Maximum 15 nouvelles positions
-        best_candidates = new_candidates[:max_positions_to_buy]
+        # PAS DE LIMITE : Acheter TOUS les candidats qui passent l'analyse
+        best_candidates = new_candidates
         
         print(f"    • Equity totale: ${equity:,.2f}")
         print(f"    • Positions HOLD à garder: {len(hold_symbols)}")
         print(f"    • Positions BUY_MORE: {len(buy_more_symbols)}")
-        print(f"    • Candidats analysés: {len(new_candidates)}")
-        print(f"    • 🎯 MEILLEURS sélectionnés: {max_positions_to_buy} (top parmi {len(new_candidates)})")
+        print(f"    • 🎯 Candidats à acheter: {len(best_candidates)} positions")
         
-        # ÉTAPE 3: Soumettre ordres BUY pour les MEILLEURS nouvelles positions
-        print(f"\n  🟢 SOUMISSION ORDRES BUY (TOP {max_positions_to_buy} MEILLEURS)...")
+        # ÉTAPE 3: Soumettre ordres BUY pour TOUS les candidats
+        print(f"\n  🟢 SOUMISSION ORDRES BUY ({len(best_candidates)} positions)...")
         
         weight_per_position = 1.0 / len(best_candidates) if best_candidates else 0
         cash_per_position = equity * weight_per_position
