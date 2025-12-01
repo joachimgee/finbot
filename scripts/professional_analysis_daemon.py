@@ -167,6 +167,10 @@ def run_professional_analysis(
     
     risk_profile = RISK_PROFILES[risk_level]
     
+    # Variables globales pour tracking
+    portfolio_decisions = {}
+    drift_flag = False
+    
     # Banner
     region_txt = ', '.join(regions) if regions else 'GLOBAL (toutes régions)'
     print(f"""
@@ -194,7 +198,110 @@ Configuration :
             print(format_audit(audit_results))
         except Exception as e:
             print(f"  ⚠️ Audit modules échoué: {e}")
-        # 1. Sélection univers global
+        
+        # 0. ANALYSE DU PORTFOLIO ACTUEL (AVANT analyse 12K)
+        print(f"\n💼 ANALYSE DU PORTFOLIO ACTUEL...")
+        adapter = AlpacaAdapter.from_env(mode='paper')
+        adapter.connect()
+        
+        current_positions = adapter.get_positions()
+        account = adapter.get_account()
+        portfolio_equity = float(account.get('equity', 0))
+        
+        print(f"  💰 Equity totale: ${portfolio_equity:,.2f}")
+        print(f"  📊 Positions actuelles: {len(current_positions)}")
+        
+        portfolio_decisions = {}  # symbol -> 'SELL' / 'HOLD' / 'BUY_MORE'
+        
+        if current_positions:
+            print(f"\n  🔍 Analyse de chaque position actuelle...")
+            for pos in current_positions:
+                sym = pos['symbol']
+                qty = float(pos['qty'])
+                market_value = float(pos['market_value'])
+                unrealized_pl = float(pos.get('unrealized_pl', 0))
+                unrealized_plpc = float(pos.get('unrealized_plpc', 0))
+                
+                print(f"    • {sym}: {qty:.2f} shares, ${market_value:,.2f} ({unrealized_plpc:+.2%})")
+                
+                # Décision basée sur P&L et analyse technique rapide
+                try:
+                    # Récupérer données historiques (90 jours)
+                    bars = adapter.get_bars(
+                        symbol=sym,
+                        start=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
+                        end=datetime.now().strftime('%Y-%m-%d'),
+                        timeframe='1Day'
+                    )
+                    
+                    if bars is not None and len(bars) >= 20:
+                        closes = bars['close'].values
+                        current_price = closes[-1]
+                        sma_20 = closes[-20:].mean()
+                        sma_50 = closes[-50:].mean() if len(closes) >= 50 else sma_20
+                        
+                        # Critères de décision
+                        decision = 'HOLD'
+                        reasons = []
+                        
+                        # SELL si perte > 10% ET prix sous SMA20
+                        if unrealized_plpc < -0.10 and current_price < sma_20:
+                            decision = 'SELL'
+                            reasons.append(f"Perte {unrealized_plpc:.1%} + prix sous SMA20")
+                        
+                        # SELL si perte > 15% (stop loss)
+                        elif unrealized_plpc < -0.15:
+                            decision = 'SELL'
+                            reasons.append(f"Stop loss {unrealized_plpc:.1%}")
+                        
+                        # BUY_MORE si gain > 5% ET tendance haussière (SMA20 > SMA50)
+                        elif unrealized_plpc > 0.05 and sma_20 > sma_50 and current_price > sma_20:
+                            decision = 'BUY_MORE'
+                            reasons.append(f"Gain {unrealized_plpc:.1%} + tendance haussière")
+                        
+                        # HOLD sinon
+                        else:
+                            if abs(unrealized_plpc) < 0.05:
+                                reasons.append("Position stable")
+                            else:
+                                reasons.append(f"P&L {unrealized_plpc:+.1%}")
+                        
+                        portfolio_decisions[sym] = {
+                            'decision': decision,
+                            'reasons': reasons,
+                            'unrealized_plpc': unrealized_plpc,
+                            'market_value': market_value,
+                            'current_price': current_price,
+                            'sma_20': sma_20,
+                            'sma_50': sma_50
+                        }
+                        
+                        emoji = '🔴' if decision == 'SELL' else '🟢' if decision == 'BUY_MORE' else '🟡'
+                        print(f"      {emoji} {decision}: {', '.join(reasons)}")
+                    
+                    else:
+                        portfolio_decisions[sym] = {'decision': 'HOLD', 'reasons': ['Pas assez de données']}
+                        print(f"      🟡 HOLD: Pas assez de données")
+                
+                except Exception as e:
+                    portfolio_decisions[sym] = {'decision': 'HOLD', 'reasons': [f'Erreur: {e}']}
+                    print(f"      ⚠️ Erreur analyse: {e}")
+            
+            # Résumé des décisions
+            sell_count = sum(1 for d in portfolio_decisions.values() if d['decision'] == 'SELL')
+            hold_count = sum(1 for d in portfolio_decisions.values() if d['decision'] == 'HOLD')
+            buy_more_count = sum(1 for d in portfolio_decisions.values() if d['decision'] == 'BUY_MORE')
+            
+            print(f"\n  📋 DÉCISIONS PORTFOLIO:")
+            print(f"    🔴 SELL: {sell_count} positions")
+            print(f"    🟡 HOLD: {hold_count} positions")
+            print(f"    🟢 BUY_MORE: {buy_more_count} positions")
+        else:
+            print(f"  ℹ️  Portfolio vide - démarrage nouvelle allocation")
+        
+        adapter.disconnect()
+        
+        # 1. Sélection univers global (12K tickers)
         print(f"\n🌍 Sélection univers...")
         eq = Equities()
         all_symbols = []
@@ -623,24 +730,66 @@ Configuration :
         signals_df.to_csv(output_file, index=False)
         print(f"💾 Résultats exportés: {output_file}")
         
-        # 10. Application simple au compte Alpaca Paper Trading
-        print(f"\n📤 Application au compte Alpaca Paper Trading...")
+        # 10. Application au compte Alpaca Paper Trading
+        print(f"\n📤 APPLICATION AU COMPTE ALPACA PAPER TRADING...")
         
-        # Simple equal weight portfolio for daemon mode
-        # (can be enhanced with optimization later)
-        weight_per_position = 1.0 / len(top_syms)
+        adapter = AlpacaAdapter.from_env(mode='paper')
+        adapter.connect()
+        
+        # ÉTAPE 1: Exécuter les ordres SELL pour positions à liquider
+        if portfolio_decisions:
+            sell_positions = [sym for sym, dec in portfolio_decisions.items() if dec['decision'] == 'SELL']
+            
+            if sell_positions:
+                print(f"\n  🔴 EXÉCUTION ORDRES SELL ({len(sell_positions)} positions)...")
+                for sym in sell_positions:
+                    try:
+                        pos = adapter.api.get_position(sym)
+                        qty = float(pos.qty)
+                        order = adapter.submit_order(
+                            symbol=sym,
+                            qty=qty,
+                            side='sell',
+                            order_type='market'
+                        )
+                        print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('id', 'N/A')})")
+                        print(f"       Raison: {', '.join(portfolio_decisions[sym]['reasons'])}")
+                    except Exception as e:
+                        print(f"    ❌ SELL {sym} échoué: {e}")
+            else:
+                print(f"\n  ℹ️  Aucune position à vendre")
+        
+        # ÉTAPE 2: Calculer nouvelles allocations (excluant positions HOLD et BUY_MORE)
+        print(f"\n  🔄 CALCUL NOUVELLES ALLOCATIONS...")
         
         account = adapter.get_account()
-        equity = account['equity']
+        equity = float(account.get('equity', 0))
+        
+        # Exclure symboles déjà en HOLD ou BUY_MORE (on ne veut pas les racheter)
+        existing_symbols = set(portfolio_decisions.keys())
+        hold_symbols = {sym for sym, dec in portfolio_decisions.items() if dec['decision'] == 'HOLD'}
+        buy_more_symbols = {sym for sym, dec in portfolio_decisions.items() if dec['decision'] == 'BUY_MORE'}
+        
+        # Filtrer top_syms pour exclure les positions existantes (sauf BUY_MORE)
+        new_candidates = [sym for sym in top_syms if sym not in existing_symbols or sym in buy_more_symbols]
+        
+        print(f"    • Equity totale: ${equity:,.2f}")
+        print(f"    • Positions HOLD à garder: {len(hold_symbols)}")
+        print(f"    • Positions BUY_MORE: {len(buy_more_symbols)}")
+        print(f"    • Nouveaux candidats: {len(new_candidates)}")
+        
+        # ÉTAPE 3: Soumettre ordres BUY pour nouvelles positions
+        print(f"\n  🟢 SOUMISSION ORDRES BUY...")
+        
+        weight_per_position = 1.0 / len(new_candidates) if new_candidates else 0
         cash_per_position = equity * weight_per_position
         
-        print(f"  Portfolio equity: ${equity:,.2f}")
-        print(f"  Cash per position: ${cash_per_position:,.2f}")
+        print(f"    • Cash par position: ${cash_per_position:,.2f}")
         
         orders_submitted = 0
         orders_failed = 0
         
-        for symbol in top_syms:
+        for symbol in new_candidates[:top]:  # Limiter au top N configuré
             try:
                 # Get current price
                 last_bars = adapter.get_bars(symbol, datetime.now() - timedelta(days=5), datetime.now(), timeframe='1Day')
@@ -697,10 +846,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    parser.add_argument('--limit', type=int, default=5000,
-                        help='Nombre max de symboles (défaut: 5000)')
-    parser.add_argument('--top', type=int, default=100,
-                        help='Top N positions (défaut: 100)')
+    parser.add_argument('--limit', type=int, default=12000,
+                        help='Nombre max de symboles (défaut: 12000)')
+    parser.add_argument('--top', type=int, default=200,
+                        help='Top N positions (défaut: 200)')
     parser.add_argument('--days', type=int, default=365,
                         help='Historique en jours (défaut: 365)')
     parser.add_argument('--risk-level', type=str, default='medium-high',
