@@ -1,9 +1,18 @@
-name: Daily Portfolio Workflow
+name: Daily Portfolio Workflow (Complete)
 
 on:
   schedule:
-    - cron: '30 14 * * 1-5'  # 09:30 ET (US market open) Monday-Friday
-  workflow_dispatch: {}
+    - cron: '35 14 * * 1-5'  # 09:35 ET (US market open) Monday-Friday
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of symbols'
+        required: false
+        default: '12000'
+      mode:
+        description: 'Trading mode (paper/live)'
+        required: false
+        default: 'paper'
 
 permissions:
   contents: read
@@ -36,21 +45,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Daily Portfolio Management Run
+      - name: Daily Portfolio Management Run (ALL MODULES)
         env:
           APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           APCA_API_BASE_URL: ${{ secrets.APCA_API_BASE_URL }}
+          FINANCIAL_MODELING_PREP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: |
-          echo "Starting daily portfolio workflow at $(date -u)" 
-          python scripts/run_daily_portfolio_management.py \
-            --limit 12000 \
+          echo "🚀 Starting complete daily workflow at $(date -u)" 
+          echo "📊 Analyzing ${{ github.event.inputs.limit || '12000' }} symbols globally"
+          python scripts/professional_analysis_daemon.py \
+            --once \
+            --limit ${{ github.event.inputs.limit || '12000' }} \
             --regions global \
-            --max-positions 200 \
-            --max-investment 1000 \
-            --hold-threshold 0.0 \
-            --mode paper \
-            --execute || echo "Daily run encountered errors (non-blocking artifact upload)"
+            --top 200 \
+            --days 365 \
+            --risk-level medium-high \
+            --weighting ic-weighted \
+            --output daily_complete_analysis.csv || echo "⚠️ Analysis completed with warnings"
 
       - name: Upload logs
         if: always()

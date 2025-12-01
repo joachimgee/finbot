@@ -2,10 +2,19 @@ name: Daily Professional Analysis Global 12K
 
 on:
   schedule:
-    # 09:30 ET (DST) = 13:30 UTC | 09:30 ET (Standard) = 14:30 UTC
-    - cron: '30 13 * * 1-5'  # US market open - DST
-    - cron: '30 14 * * 1-5'  # US market open - Standard Time
-  workflow_dispatch: {}
+    # 09:35 ET (DST) = 13:35 UTC | 09:35 ET (Standard) = 14:35 UTC
+    - cron: '35 13 * * 1-5'  # US market open - DST (March-November)
+    - cron: '35 14 * * 1-5'  # US market open - Standard Time (November-March)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Number of symbols to analyze'
+        required: false
+        default: '12000'
+      regions:
+        description: 'Regions to analyze (global, us, eu, asia, americas)'
+        required: false
+        default: 'global'
 
 jobs:
   analyze:
@@ -43,11 +52,16 @@ jobs:
           NEWS_API_KEY=${{ secrets.NEWSAPI_KEY }}
           EOF
           
-      - name: Run Daily Master Orchestrated Analysis (12K Global)
+      - name: Run Professional Analysis Daemon (12K Global - ALL MODULES)
         run: |
-          python -u scripts/daily_master_run.py \
-            --limit 12000 \
-            --regions global \
+          python -u scripts/professional_analysis_daemon.py \
+            --once \
+            --limit ${{ github.event.inputs.limit || '12000' }} \
+            --regions ${{ github.event.inputs.regions || 'global' }} \
+            --top 200 \
+            --days 365 \
+            --risk-level medium-high \
+            --weighting ic-weighted \
             --output daily_master_result_global_12k.csv
           
       - name: Display results summary

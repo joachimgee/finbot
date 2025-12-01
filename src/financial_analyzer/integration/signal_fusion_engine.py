@@ -106,6 +106,8 @@ class SignalFusionEngine:
         min_sources: int = 2,
         fallback_mode: bool = True,
         cache_ttl_minutes: int = 15,
+        weighting_history: Optional[pd.DataFrame] = None,
+        auto_reweight: bool = True,
     ):
         """
         Initialize fusion engine.
@@ -115,6 +117,8 @@ class SignalFusionEngine:
             min_sources: Minimum sources required for valid signal
             fallback_mode: Continue if some sources fail
             cache_ttl_minutes: Cache lifetime
+            weighting_history: Historique des retours par source pour réallocation evidence-based
+            auto_reweight: Si True et history fourni, recalcule les poids
         """
         self.source_weights = source_weights or self.DEFAULT_WEIGHTS.copy()
         # Normaliser poids
@@ -135,7 +139,50 @@ class SignalFusionEngine:
         self._ml_factor_engine = None
         self._rl_pipeline = None
         
+        # Evidence-based reweighting si historique fourni
+        if auto_reweight and weighting_history is not None and not weighting_history.empty:
+            try:
+                from financial_analyzer.integration.weighting_engine import WeightingEngine
+                we = WeightingEngine()
+                result = we.compute_weights(weighting_history)
+                if result.weights:
+                    # Mapper seulement sur sources existantes
+                    for src, w in result.weights.items():
+                        if src in self.source_weights:
+                            self.source_weights[src] = w
+                    logger.info(f"✅ Reweighting evidence-based appliqué: {self.source_weights}")
+            except Exception as e:
+                logger.warning(f"⚠️ Reweighting échoué, utilisation des poids par défaut: {e}")
         logger.info(f"SignalFusionEngine initialized: weights={self.source_weights}, min_sources={self.min_sources}")
+
+    def update_weights_from_history(self, history: pd.DataFrame, min_change: float = 0.02) -> Dict[str, float]:
+        """Met à jour dynamiquement les poids à partir d'un nouvel historique.
+
+        Args:
+            history: DataFrame retours par source.
+            min_change: Seuil de changement relatif pour appliquer update (évite churn).
+
+        Returns:
+            Nouveau dictionnaire de poids.
+        """
+        if history is None or history.empty:
+            return self.source_weights
+        try:
+            from financial_analyzer.integration.weighting_engine import WeightingEngine
+            result = WeightingEngine().compute_weights(history)
+            if not result.weights:
+                return self.source_weights
+            # Appliquer seulement si changement significatif global
+            delta = sum(abs(result.weights.get(k, 0) - self.source_weights.get(k, 0)) for k in self.source_weights)
+            if delta < min_change:
+                logger.debug("Changement de poids < seuil, pas d'update")
+                return self.source_weights
+            self.source_weights.update({k: v for k, v in result.weights.items() if k in self.source_weights})
+            logger.info(f"🔄 Poids mis à jour dynamiquement: {self.source_weights}")
+            return self.source_weights
+        except Exception as e:
+            logger.warning(f"⚠️ update_weights_from_history échoué: {e}")
+            return self.source_weights
     
     def _init_technical_engine(self):
         """Lazy init TechnicalFeatureEngine."""
