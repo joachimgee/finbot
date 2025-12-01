@@ -229,8 +229,8 @@ Configuration :
                     # Récupérer données historiques (90 jours)
                     bars = adapter.get_bars(
                         symbol=sym,
-                        start=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
-                        end=datetime.now().strftime('%Y-%m-%d'),
+                        start=datetime.now() - timedelta(days=90),
+                        end=datetime.now(),
                         timeframe='1Day'
                     )
                     
@@ -240,19 +240,24 @@ Configuration :
                         sma_20 = closes[-20:].mean()
                         sma_50 = closes[-50:].mean() if len(closes) >= 50 else sma_20
                         
-                        # Critères de décision
+                        # Critères de décision - SÉVÈRES
                         decision = 'HOLD'
                         reasons = []
                         
-                        # SELL si perte > 10% ET prix sous SMA20
-                        if unrealized_plpc < -0.10 and current_price < sma_20:
-                            decision = 'SELL'
-                            reasons.append(f"Perte {unrealized_plpc:.1%} + prix sous SMA20")
-                        
-                        # SELL si perte > 15% (stop loss)
-                        elif unrealized_plpc < -0.15:
+                        # SELL AGRESSIF : toute perte > 8%
+                        if unrealized_plpc < -0.08:
                             decision = 'SELL'
                             reasons.append(f"Stop loss {unrealized_plpc:.1%}")
+                        
+                        # SELL si perte > 5% ET prix sous SMA20 (tendance baissière)
+                        elif unrealized_plpc < -0.05 and current_price < sma_20:
+                            decision = 'SELL'
+                            reasons.append(f"Perte {unrealized_plpc:.1%} + tendance baissière (prix < SMA20)")
+                        
+                        # SELL si perte > 3% ET prix sous SMA50 (tendance très baissière)
+                        elif unrealized_plpc < -0.03 and current_price < sma_50:
+                            decision = 'SELL'
+                            reasons.append(f"Perte {unrealized_plpc:.1%} + fort signal baissier (prix < SMA50)")
                         
                         # BUY_MORE si gain > 5% ET tendance haussière (SMA20 > SMA50)
                         elif unrealized_plpc > 0.05 and sma_20 > sma_50 and current_price > sma_20:
@@ -417,55 +422,83 @@ Configuration :
         except Exception as e:
             print(f"     ⚠️ Portfolio Learning échoué: {e}")
         
-        # 5.2 Universe Selection
+        # 5.2 Universe Selection - OBLIGATOIRE
         try:
-            if modules_status['universe']:
-                print(f"  🌍 Universe Selection...")
-                selector = EnhancedUniverseSelector()
-                universe_result = selector.select(
-                    limit=len(prices.columns),
-                    regions=['us']
-                )
-                print(f"     ✅ Universe sélectionné: {len(universe_result)} symbols")
-            else:
-                print(f"  ⚠️ Universe selector non disponible ({modules_errors.get('universe', 'unknown')})")
+            if not modules_status['universe']:
+                raise Exception(f"Module universe OBLIGATOIRE manquant: {modules_errors.get('universe')}")
+            
+            print(f"  🌍 Universe Selection...")
+            selector = EnhancedUniverseSelector()
+            universe_result = selector.select(
+                limit=len(prices.columns),
+                regions=['us']
+            )
+            print(f"     ✅ Universe sélectionné: {len(universe_result)} symbols")
+            
+            if len(universe_result) == 0:
+                raise Exception("Universe selection a retourné 0 symboles - ÉCHEC CRITIQUE")
         except Exception as e:
-            print(f"     ⚠️ Universe selection échouée: {e}")
+            print(f"     ❌ Universe selection ÉCHEC CRITIQUE: {e}")
+            raise  # FORCER l'arrêt
         
-        # 5.3 Daily Preanalysis (Drift + Options)
+        # 5.3 Daily Preanalysis (Drift + Options) - EXÉCUTION FORCÉE
         try:
             print(f"  🔬 Daily Preanalysis (Drift + Options)...")
-            # run_daily_preanalysis charge ses propres données via PITDataLoader
-            # qui retourne un format différent de notre DataFrame prices
-            # Pour éviter les erreurs, on skip et on valide juste l'import
             from financial_analyzer.preanalysis.daily_preanalysis import run_daily_preanalysis
-            print(f"     ✅ Module daily_preanalysis disponible")
-            # Note: run_daily_preanalysis utilise PITDataLoader qui a un format différent
-            # Ne pas exécuter ici pour éviter incompatibilités de format
+            
+            # EXÉCUTER RÉELLEMENT avec subset de symboles
+            preanalysis_syms = prices.columns.tolist()[:min(50, len(prices.columns))]
+            preanalysis_result = run_daily_preanalysis(
+                symbols=preanalysis_syms,
+                start_date=(datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
+                end_date=datetime.now().strftime('%Y-%m-%d'),
+                check_drift=True,
+                analyze_options=False,  # Options peut échouer
+                risk_free_rate=0.05
+            )
+            
+            # Extraire drift flag
+            if 'drift_check' in preanalysis_result:
+                drift_flag = preanalysis_result['drift_check'].get('drift_detected', False)
+                print(f"     ✅ Drift détecté: {drift_flag}")
+            
+            if 'recommendations' in preanalysis_result:
+                print(f"     ✅ Recommandations: {len(preanalysis_result['recommendations'])}")
+            
+            print(f"     ✅ Daily preanalysis EXECUTÉE avec {len(preanalysis_syms)} symboles")
         except Exception as e:
-            print(f"     ⚠️ Daily preanalysis module: {e}")
+            print(f"     ⚠️ Daily preanalysis échouée: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # 5.4 Risk Analysis (ACTIF)
+        # 5.4 Risk Analysis - OBLIGATOIRE
         try:
-            if modules_status['risk']:
-                print(f"  ⚠️  Risk Analysis...")
-                adapter_risk = AlpacaAdapter.from_env(mode='paper')
-                adapter_risk.connect()
-                monitor = AccountMonitor(adapter_risk, initial_capital=100000)
-                monitor.update()
-                risk_guard = RiskGuard(
-                    account_monitor=monitor,
-                    max_position_size=5000,
-                    max_position_pct=0.20,
-                    max_total_positions=200,
-                )
-                risk_summary = risk_guard.get_risk_summary()
-                print(f"     ✅ Risk score: {risk_guard.get_risk_score():.1f}")
-                adapter_risk.disconnect()
-            else:
-                print(f"  ⚠️ Risk modules non disponibles")
+            if not modules_status['risk']:
+                raise Exception(f"Module risk OBLIGATOIRE manquant: {modules_errors.get('risk')}")
+            
+            print(f"  ⚠️  Risk Analysis...")
+            adapter_risk = AlpacaAdapter.from_env(mode='paper')
+            adapter_risk.connect()
+            monitor = AccountMonitor(adapter_risk, initial_capital=100000)
+            monitor.update()
+            risk_guard = RiskGuard(
+                account_monitor=monitor,
+                max_position_size=5000,
+                max_position_pct=0.20,
+                max_total_positions=200,
+            )
+            risk_summary = risk_guard.get_risk_summary()
+            risk_score = risk_guard.get_risk_score()
+            print(f"     ✅ Risk score: {risk_score:.1f}")
+            
+            # Valider que le risk score est dans les limites acceptables
+            if risk_score > 80:
+                print(f"     ⚠️  ATTENTION: Risk score élevé ({risk_score:.1f}) - Portefeuille très risqué")
+            
+            adapter_risk.disconnect()
         except Exception as e:
-            print(f"     ⚠️ Risk analysis échouée: {e}")
+            print(f"     ❌ Risk analysis ÉCHEC CRITIQUE: {e}")
+            raise  # FORCER l'arrêt
         
         print(f"  ✅ Pré-analyse complète terminée")
 
@@ -583,20 +616,55 @@ Configuration :
             import traceback
             traceback.print_exc()
         
-        # 8.2 Performance Attribution (ACTIF)
+        # 8.2 Performance Attribution (ACTIF) - EXÉCUTION FORCÉE
         try:
-            if modules_status['perf_attr'] and orchestration_result:
-                print(f"  📊 Performance Attribution...")
-                attributor = PerformanceAttributor()
-                # Attribution nécessite des returns - calculer avec portfolio
-                if orchestration_result.portfolio_construction:
-                    print(f"     ✅ Performance Attribution avec {len(orchestration_result.portfolio_construction.target_weights)} positions")
-                else:
-                    print(f"     ✅ Performance Attribution disponible (PerformanceAttributor)")
+            if not modules_status['perf_attr']:
+                raise Exception(f"Module perf_attr OBLIGATOIRE manquant: {modules_errors.get('perf_attr')}")
+            
+            print(f"  📊 Performance Attribution...")
+            attributor = PerformanceAttributor()
+            
+            # Calculer attribution sur portfolio réel
+            attr_syms = top_syms[:min(10, len(top_syms))]
+            returns_attr = prices[attr_syms].pct_change().dropna()
+            
+            if len(returns_attr) >= 20 and orchestration_result and orchestration_result.portfolio_construction:
+                # Utiliser weights du portfolio
+                target_weights = orchestration_result.portfolio_construction.target_weights
+                
+                # Calculer returns pondérés
+                portfolio_returns = (returns_attr * pd.Series(target_weights)).sum(axis=1)
+                
+                # Attribution par facteur (simplified - juste par position)
+                attribution_by_position = {}
+                for sym in attr_syms:
+                    if sym in target_weights:
+                        sym_return = returns_attr[sym].mean() * 252  # Annualisé
+                        weight = target_weights[sym]
+                        contribution = sym_return * weight
+                        attribution_by_position[sym] = {
+                            'weight': weight,
+                            'return': sym_return,
+                            'contribution': contribution
+                        }
+                
+                total_contrib = sum(a['contribution'] for a in attribution_by_position.values())
+                print(f"     ✅ Attribution calculée: {len(attribution_by_position)} positions")
+                print(f"     ✅ Contribution totale annualisée: {total_contrib:.2%}")
+                
+                # Top 3 contributeurs
+                top_contributors = sorted(attribution_by_position.items(), 
+                                        key=lambda x: x[1]['contribution'], 
+                                        reverse=True)[:3]
+                for sym, attr in top_contributors:
+                    print(f"        • {sym}: {attr['contribution']:+.2%} (weight {attr['weight']:.1%}, return {attr['return']:+.2%})")
             else:
-                print(f"  ⚠️ Performance Attribution non disponible ({modules_errors.get('perf_attr', 'unknown')})")
+                print(f"     ⚠️ Pas assez de données pour attribution (besoin 20+ jours)")
         except Exception as e:
-            print(f"     ⚠️ Performance Attribution échouée: {e}")
+            print(f"     ❌ Performance Attribution ÉCHEC CRITIQUE: {e}")
+            import traceback
+            traceback.print_exc()
+            raise  # FORCER l'arrêt si module obligatoire échoue
         
         # 8.3 Portfolio Rebalancer (ACTIF)
         try:

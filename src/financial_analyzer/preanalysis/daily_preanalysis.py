@@ -204,9 +204,15 @@ def run_daily_preanalysis(
         Dict with preanalysis results including drift status and options analysis
     """
     loader = PITDataLoader()
-    prices = loader.load_prices(symbols, start_date, end_date)
+    prices_dict = loader.load_prices(symbols, start_date, end_date)
     metadata = loader.load_metadata(symbols)
     rewards = list(list_rewards().keys())
+    
+    # Convert dict of DataFrames to single DataFrame with symbols as columns
+    if isinstance(prices_dict, dict):
+        prices = pd.DataFrame({sym: df['close'] for sym, df in prices_dict.items()})
+    else:
+        prices = prices_dict
     
     result = {
         "prices": prices,
