@@ -666,130 +666,134 @@ Configuration :
             traceback.print_exc()
             raise  # FORCER l'arrêt si module obligatoire échoue
         
-        # 8.3 Portfolio Rebalancer (ACTIF)
+        # 8.3 Portfolio Rebalancer (OBLIGATOIRE)
         try:
-            if modules_status['rebalancer']:
-                print(f"  ⚖️  Portfolio Rebalancer...")
-                # Calculer returns pour top symbols
-                rebal_syms = top_syms[:min(10, len(top_syms))]
-                returns_rebal = prices[rebal_syms].pct_change().dropna()
-                if len(returns_rebal) >= 20:
-                    rebalancer = PortfolioRebalancer(returns=returns_rebal)
-                    # Créer target weights (pandas Series)
-                    target_w = pd.Series(1.0/len(rebal_syms), index=rebal_syms)
-                    rebal_result = rebalancer.rebalance_periodic(
-                        target_weights=target_w,
-                        freq='ME',
-                        transaction_cost=0.001
-                    )
-                    # rebal_result a .weights (DataFrame) et .trades (DataFrame)
-                    print(f"     ✅ Rebalance: {len(rebal_result.weights)} périodes, {rebal_result.trades.sum().sum():.3f} trades totaux")
-                else:
-                    print(f"     ⚠️ Pas assez de données pour rebalancing")
-            else:
-                print(f"  ⚠️ Rebalancer non disponible ({modules_errors.get('rebalancer', 'unknown')})")
+            if not modules_status['rebalancer']:
+                raise Exception(f"Module rebalancer OBLIGATOIRE manquant: {modules_errors.get('rebalancer')}")
+            
+            print(f"  ⚖️  Portfolio Rebalancer...")
+            # Calculer returns pour top symbols
+            rebal_syms = top_syms[:min(10, len(top_syms))]
+            returns_rebal = prices[rebal_syms].pct_change().dropna()
+            if len(returns_rebal) < 20:
+                raise Exception(f"Pas assez de données pour rebalancing: {len(returns_rebal)} périodes")
+            
+            rebalancer = PortfolioRebalancer(returns=returns_rebal)
+            # Créer target weights (pandas Series)
+            target_w = pd.Series(1.0/len(rebal_syms), index=rebal_syms)
+            rebal_result = rebalancer.rebalance_periodic(
+                target_weights=target_w,
+                freq='ME',
+                transaction_cost=0.001
+            )
+            # rebal_result a .weights (DataFrame) et .trades (DataFrame)
+            print(f"     ✅ Rebalance: {len(rebal_result.weights)} périodes, {rebal_result.trades.sum().sum():.3f} trades totaux")
         except Exception as e:
-            print(f"     ⚠️ Rebalancer échoué: {e}")
+            print(f"     ❌ Rebalancer ÉCHEC CRITIQUE: {e}")
+            raise
         
-        # 8.4 Analytics Engine (ACTIF)
+        # 8.4 Analytics Engine (OBLIGATOIRE)
         try:
-            if modules_status['analytics']:
-                print(f"  📈 Analytics Engine...")
-                analyzer = PerformanceAnalyzer()
-                # Analyser returns du portfolio
-                analytics_syms = top_syms[:min(10, len(top_syms))]
-                returns_analytics = prices[analytics_syms].pct_change().dropna()
-                if len(returns_analytics) >= 30:
-                    # Portfolio returns (equal weight)
-                    portfolio_returns = returns_analytics.mean(axis=1)
-                    analytics_result = analyzer.analyze_returns(
-                        portfolio_returns=portfolio_returns,
-                        benchmark_returns=None,
-                        trades=None
-                    )
-                    print(f"     ✅ Sharpe: {analytics_result.get('ratios', {}).get('sharpe_ratio', 0):.2f}")
-                    print(f"     ✅ Max Drawdown: {analytics_result.get('risk', {}).get('max_drawdown', 0):.2%}")
-                    print(f"     ✅ Annual Return: {analytics_result.get('returns', {}).get('annualized', 0):.2%}")
-                else:
-                    print(f"     ⚠️ Pas assez de données pour analytics")
-            else:
-                print(f"  ⚠️ Analytics non disponible ({modules_errors.get('analytics', 'unknown')})")
+            if not modules_status['analytics']:
+                raise Exception(f"Module analytics OBLIGATOIRE manquant: {modules_errors.get('analytics')}")
+            
+            print(f"  📈 Analytics Engine...")
+            analyzer = PerformanceAnalyzer()
+            # Analyser returns du portfolio
+            analytics_syms = top_syms[:min(10, len(top_syms))]
+            returns_analytics = prices[analytics_syms].pct_change().dropna()
+            if len(returns_analytics) < 30:
+                raise Exception(f"Pas assez de données pour analytics: {len(returns_analytics)} périodes")
+            
+            # Portfolio returns (equal weight)
+            portfolio_returns = returns_analytics.mean(axis=1)
+            analytics_result = analyzer.analyze_returns(
+                portfolio_returns=portfolio_returns,
+                benchmark_returns=None,
+                trades=None
+            )
+            print(f"     ✅ Sharpe: {analytics_result.get('ratios', {}).get('sharpe_ratio', 0):.2f}")
+            print(f"     ✅ Max Drawdown: {analytics_result.get('risk', {}).get('max_drawdown', 0):.2%}")
+            print(f"     ✅ Annual Return: {analytics_result.get('returns', {}).get('annualized', 0):.2%}")
         except Exception as e:
-            print(f"     ⚠️ Analytics échouée: {e}")
+            print(f"     ❌ Analytics ÉCHEC CRITIQUE: {e}")
+            raise
         
-        # 8.5 Report Generator (ACTIF)
+        # 8.5 Report Generator (OBLIGATOIRE)
         try:
-            if modules_status['reports']:
-                print(f"  📄 Report Generator (Tearsheet)...")
-                # Générer tearsheet pour portfolio
-                tearsheet_syms = top_syms[:min(5, len(top_syms))]
-                returns_tearsheet = prices[tearsheet_syms].pct_change().dropna()
-                if len(returns_tearsheet) >= 30:
-                    portfolio_rets_ts = returns_tearsheet.mean(axis=1)
-                    # Calculer portfolio values
-                    portfolio_values = (1 + portfolio_rets_ts).cumprod().tolist()
-                    tearsheet_path = generate_tearsheet(
-                        portfolio_values=portfolio_values,
-                        returns=portfolio_rets_ts.tolist(),
-                        metrics=None,
-                        output_path=f'/tmp/finbot_tearsheet_{datetime.now().strftime("%Y%m%d")}.html'
-                    )
-                    print(f"     ✅ Tearsheet généré: {tearsheet_path}")
-                else:
-                    print(f"     ⚠️ Pas assez de données pour tearsheet")
-            else:
-                print(f"  ⚠️ Reports non disponible ({modules_errors.get('reports', 'unknown')})")
+            if not modules_status['reports']:
+                raise Exception(f"Module reports OBLIGATOIRE manquant: {modules_errors.get('reports')}")
+            
+            print(f"  📄 Report Generator (Tearsheet)...")
+            # Générer tearsheet pour portfolio
+            tearsheet_syms = top_syms[:min(5, len(top_syms))]
+            returns_tearsheet = prices[tearsheet_syms].pct_change().dropna()
+            if len(returns_tearsheet) < 30:
+                raise Exception(f"Pas assez de données pour tearsheet: {len(returns_tearsheet)} périodes")
+            
+            portfolio_rets_ts = returns_tearsheet.mean(axis=1)
+            # Calculer portfolio values
+            portfolio_values = (1 + portfolio_rets_ts).cumprod().tolist()
+            tearsheet_path = generate_tearsheet(
+                portfolio_values=portfolio_values,
+                returns=portfolio_rets_ts.tolist(),
+                metrics=None,
+                output_path=f'/tmp/finbot_tearsheet_{datetime.now().strftime("%Y%m%d")}.html'
+            )
+            print(f"     ✅ Tearsheet généré: {tearsheet_path}")
         except Exception as e:
-            print(f"     ⚠️ Report échoué: {e}")
+            print(f"     ❌ Report ÉCHEC CRITIQUE: {e}")
+            raise
         
-        # 8.6 Backtesting (ACTIF)
+        # 8.6 Backtesting (OBLIGATOIRE)
         try:
-            if modules_status['backtest']:
-                print(f"  🔙 Backtesting (FinBotStrategy)...")
-                from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester
-                # Run backtest sur subset
-                backtest_syms = top_syms[:min(5, len(top_syms))]
-                if len(prices) >= 60:
-                    # Préparer data dict avec OHLCV (simuler avec Close uniquement)
-                    data_dict = {}
-                    for sym in backtest_syms:
-                        if sym in prices.columns:
-                            # Extraire close prices et créer OHLCV
-                            # IMPORTANT: FinBotBacktester attend colonnes avec Capital: Close, Open, High, Low, Volume
-                            close_series = prices[sym].dropna()
-                            df = pd.DataFrame({
-                                'Close': close_series,
-                                'Open': close_series,
-                                'High': close_series * 1.01,
-                                'Low': close_series * 0.99,
-                                'Volume': 1000000
-                            }, index=close_series.index)
-                            data_dict[sym] = df
-                    
-                    if len(data_dict) > 0:
-                        backtester = FinBotBacktester(
-                            data=data_dict,
-                            initial_cash=100000,
-                            universe=backtest_syms,
-                            lookback_days=60
-                        )
-                        # Utiliser init() et next() pour simuler
-                        backtester.init()
-                        num_periods = len(list(data_dict.values())[0])
-                        for i in range(num_periods):
-                            backtester.next(i)
-                        
-                        final_equity = backtester.equity_curve[-1] if backtester.equity_curve else 1.0
-                        total_return = (final_equity - 1.0) * 100
-                        print(f"     ✅ Backtest: {num_periods} périodes, Return: {total_return:.2f}%, Equity final: {final_equity:.3f}")
-                    else:
-                        print(f"     ⚠️ Aucune donnée backtest préparée")
-                else:
-                    print(f"     ⚠️ Pas assez de données pour backtest")
-            else:
-                print(f"  ⚠️ Backtest non disponible ({modules_errors.get('backtest', 'unknown')})")
+            if not modules_status['backtest']:
+                raise Exception(f"Module backtest OBLIGATOIRE manquant: {modules_errors.get('backtest')}")
+            
+            print(f"  🔙 Backtesting (FinBotStrategy)...")
+            from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester
+            # Run backtest sur subset
+            backtest_syms = top_syms[:min(5, len(top_syms))]
+            if len(prices) < 60:
+                raise Exception(f"Pas assez de données pour backtest: {len(prices)} périodes")
+            
+            # Préparer data dict avec OHLCV (simuler avec Close uniquement)
+            data_dict = {}
+            for sym in backtest_syms:
+                if sym in prices.columns:
+                    # Extraire close prices et créer OHLCV
+                    # IMPORTANT: FinBotBacktester attend colonnes avec Capital: Close, Open, High, Low, Volume
+                    close_series = prices[sym].dropna()
+                    df = pd.DataFrame({
+                        'Close': close_series,
+                        'Open': close_series,
+                        'High': close_series * 1.01,
+                        'Low': close_series * 0.99,
+                        'Volume': 1000000
+                    }, index=close_series.index)
+                    data_dict[sym] = df
+            
+            if len(data_dict) == 0:
+                raise Exception("Aucune donnée backtest préparée")
+            
+            backtester = FinBotBacktester(
+                data=data_dict,
+                initial_cash=100000,
+                universe=backtest_syms,
+                lookback_days=60
+            )
+            # Utiliser init() et next() pour simuler
+            backtester.init()
+            num_periods = len(list(data_dict.values())[0])
+            for i in range(num_periods):
+                backtester.next(i)
+            
+            final_equity = backtester.equity_curve[-1] if backtester.equity_curve else backtester.initial_cash
+            total_return = (final_equity / backtester.initial_cash - 1.0) * 100
+            print(f"     ✅ Backtest: {num_periods} périodes, Return: {total_return:.2f}%, Equity final: ${final_equity:,.0f}")
         except Exception as e:
-            print(f"     ⚠️ Backtest échoué: {e}")
+            print(f"     ❌ Backtest ÉCHEC CRITIQUE: {e}")
+            raise
         
         print(f"  ✅ Tous les modules complémentaires exécutés")
 
