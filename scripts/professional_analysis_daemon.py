@@ -381,22 +381,48 @@ Configuration :
         symbols = all_symbols[:limit]
         print(f"✅ {len(symbols):,} symboles sélectionnés aléatoirement")
         
-        # 2. Filtre Alpaca tradable
+        # 2. Filtre Alpaca tradable (robuste, batch + timeout)
         print(f"\n🔍 Filtrage symboles tradables sur Alpaca...")
         adapter = AlpacaAdapter.from_env(mode='paper')
         adapter.connect()
-        
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        candidate_syms = symbols[:min(len(symbols), limit)]
         tradable = []
-        for idx, sym in enumerate(symbols[:min(len(symbols), limit)]):
+        checked = 0
+        lock = threading.Lock()
+
+        def check_asset(sym: str):
             try:
                 asset = adapter.api.get_asset(sym)
-                if asset.tradable and asset.status == 'active':
-                    tradable.append(sym)
+                return sym if getattr(asset, 'tradable', False) and getattr(asset, 'status', '') == 'active' else None
             except Exception:
-                pass
-            if (idx + 1) % 1000 == 0:
-                print(f"  ↳ Filtrage Alpaca: {idx+1} examinés, {len(tradable)} tradables")
-        
+                return None
+
+        # Bounded concurrency to avoid rate limits; per-call timeout
+        max_workers = 8
+        progress_every = 500
+        futures = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for sym in candidate_syms:
+                futures.append(executor.submit(check_asset, sym))
+            for i, fut in enumerate(as_completed(futures)):
+                try:
+                    res = fut.result(timeout=5)
+                    with lock:
+                        checked += 1
+                        if res:
+                            tradable.append(res)
+                        if checked % progress_every == 0:
+                            print(f"  ↳ Filtrage Alpaca: {checked} examinés, {len(tradable)} tradables")
+                except Exception:
+                    with lock:
+                        checked += 1
+                        if checked % progress_every == 0:
+                            print(f"  ↳ Filtrage Alpaca: {checked} examinés, {len(tradable)} tradables")
+
         print(f"✅ {len(tradable)} symboles tradables")
         tickers = tradable[:limit]
         
@@ -873,13 +899,84 @@ Configuration :
         # Filtrer top_syms pour exclure les positions existantes (sauf BUY_MORE)
         new_candidates = [sym for sym in top_syms if sym not in existing_symbols or sym in buy_more_symbols]
         
-        # PAS DE LIMITE : Acheter TOUS les candidats qui passent l'analyse
-        best_candidates = new_candidates
+        # ALLOCATION ADAPTATIVE BASÉE SUR LE RISQUE ET LA QUALITÉ
+        print(f"\n  📊 CALCUL ALLOCATION ADAPTATIVE...")
+        
+        # Facteurs pour déterminer le nombre optimal de positions
+        current_positions = len(hold_symbols) + len(buy_more_symbols)
+        
+        # 1. Risk Score basé (inversement proportionnel au risque)
+        if risk_score < 40:
+            risk_factor = 1.5  # Faible risque actuel -> plus de positions
+        elif risk_score < 60:
+            risk_factor = 1.2
+        elif risk_score < 75:
+            risk_factor = 1.0
+        else:
+            risk_factor = 0.7  # Risque élevé -> moins de positions
+        
+        # 2. Equity Factor (plus d'equity = plus de diversification possible)
+        if equity < 1000:
+            equity_factor = 0.5
+        elif equity < 5000:
+            equity_factor = 0.8
+        elif equity < 10000:
+            equity_factor = 1.0
+        else:
+            equity_factor = 1.2
+        
+        # 3. Confiance moyenne des signaux
+        avg_confidence = signals_df.nlargest(50, 'composite_score')['confidence'].mean()
+        if avg_confidence > 0.4:
+            confidence_factor = 1.3
+        elif avg_confidence > 0.3:
+            confidence_factor = 1.0
+        else:
+            confidence_factor = 0.8
+        
+        # 4. Calcul nombre optimal de nouvelles positions
+        # Base: 25-40 positions selon le profil de risque
+        base_target = {
+            'low': 40,
+            'medium': 30,
+            'medium-high': 25,
+            'high': 20
+        }.get(risk_level, 30)
+        
+        # Appliquer les facteurs
+        optimal_total_positions = int(base_target * risk_factor * equity_factor * confidence_factor)
+        
+        # Limiter entre 15 et 60 positions
+        optimal_total_positions = max(15, min(60, optimal_total_positions))
+        
+        # Nombre de nouvelles positions à ajouter
+        new_positions_needed = max(0, optimal_total_positions - current_positions)
+        
+        # Sélectionner les meilleurs candidats par score composite ET confiance
+        candidates_with_scores = []
+        for sym in new_candidates:
+            sym_data = signals_df[signals_df['symbol'] == sym]
+            if not sym_data.empty:
+                score = sym_data.iloc[0]['composite_score']
+                conf = sym_data.iloc[0]['confidence']
+                # Score combiné: 70% composite, 30% confiance
+                combined = score * 0.7 + conf * 0.3
+                candidates_with_scores.append((sym, combined, score, conf))
+        
+        # Trier par score combiné
+        candidates_with_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Prendre le top N
+        best_candidates = [c[0] for c in candidates_with_scores[:new_positions_needed]]
         
         print(f"    • Equity totale: ${equity:,.2f}")
+        print(f"    • Risk score: {risk_score:.1f}")
+        print(f"    • Confiance moyenne top 50: {avg_confidence:.2f}")
+        print(f"    • Positions actuelles: {current_positions}")
         print(f"    • Positions HOLD à garder: {len(hold_symbols)}")
         print(f"    • Positions BUY_MORE: {len(buy_more_symbols)}")
-        print(f"    • 🎯 Candidats à acheter: {len(best_candidates)} positions")
+        print(f"    • Target optimal: {optimal_total_positions} positions (risk_factor={risk_factor:.1f}, equity_factor={equity_factor:.1f}, conf_factor={confidence_factor:.1f})")
+        print(f"    • 🎯 Nouvelles positions à acheter: {len(best_candidates)} / {len(new_candidates)} candidats disponibles")
         
         # ÉTAPE 3: Soumettre ordres BUY pour TOUS les candidats
         print(f"\n  🟢 SOUMISSION ORDRES BUY ({len(best_candidates)} positions)...")

@@ -35,17 +35,30 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          # Disable cache to save disk space
+          
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo apt-get clean
+          df -h
           
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
           
-      - name: Install Python dependencies
+      - name: Install Python dependencies (optimized)
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          # Install critical dependencies only, no build cache
+          pip install --no-cache-dir numpy pandas scikit-learn
+          pip install --no-cache-dir alpaca-py yfinance financedatabase
+          pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir transformers sentence-transformers
+          pip install --no-cache-dir -r requirements.txt --no-cache-dir || true
           
       - name: Create .env file
         run: |
