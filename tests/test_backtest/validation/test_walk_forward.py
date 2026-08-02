@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from src.financial_analyzer.backtest_advanced.walk_forward import WalkForwardAnalyzer, walk_forward_optimize
+from src.financial_analyzer.backtest.validation.walk_forward import WalkForwardAnalyzer, walk_forward_optimize
 
 @pytest.fixture
 def simple_data():

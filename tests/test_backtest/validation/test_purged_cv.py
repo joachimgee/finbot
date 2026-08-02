@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from src.financial_analyzer.backtest_advanced.purged_cv import PurgedKFold, purged_kfold_split
+from src.financial_analyzer.backtest.validation.purged_cv import PurgedKFold, purged_kfold_split
 
 @pytest.fixture
 def simple_X():

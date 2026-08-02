@@ -9,7 +9,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from financial_analyzer.backtesting.finbot_strategy import (
+from financial_analyzer.backtest.finbot_strategy import (
     FinBotBacktester,
     RiskConfig,
 )

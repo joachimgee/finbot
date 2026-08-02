@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from src.financial_analyzer.backtest_advanced.meta_labeling import MetaLabeler, create_meta_labels
+from src.financial_analyzer.backtest.validation.meta_labeling import MetaLabeler, create_meta_labels
 
 @pytest.fixture
 def simple_data():

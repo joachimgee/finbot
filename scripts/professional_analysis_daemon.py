@@ -145,7 +145,7 @@ def run_professional_analysis(
         modules_errors['risk'] = str(e)
     
     try:
-        from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester
+        from financial_analyzer.backtest.finbot_strategy import FinBotBacktester
         modules_status['backtest'] = True
     except Exception as e:
         modules_status['backtest'] = False
@@ -805,7 +805,7 @@ Configuration :
                 raise Exception(f"Module backtest OBLIGATOIRE manquant: {modules_errors.get('backtest')}")
             
             print(f"  🔙 Backtesting (FinBotStrategy)...")
-            from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester
+            from financial_analyzer.backtest.finbot_strategy import FinBotBacktester
             # Run backtest sur subset
             backtest_syms = top_syms[:min(5, len(top_syms))]
             if len(prices) < 60:

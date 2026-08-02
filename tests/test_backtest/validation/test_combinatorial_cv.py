@@ -3,7 +3,7 @@
 import pytest
 import numpy as np
 import pandas as pd
-from src.financial_analyzer.backtest_advanced.combinatorial_cv import CombinatorialPurgedCV, generate_backtest_paths
+from src.financial_analyzer.backtest.validation.combinatorial_cv import CombinatorialPurgedCV, generate_backtest_paths
 
 @pytest.fixture
 def simple_X():

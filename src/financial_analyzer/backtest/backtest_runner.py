@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester, RiskConfig
+from financial_analyzer.backtest.finbot_strategy import FinBotBacktester, RiskConfig
 from financial_analyzer.caching.cache_manager import CacheManager
 from financial_analyzer.utils.helpers import get_logger
 

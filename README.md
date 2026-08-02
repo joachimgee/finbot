@@ -93,7 +93,8 @@ finbot/
 ├── src/financial_analyzer/    # Package principal (installé via pip install -e .)
 │   ├── data/                  # Data Layer (Universe, Market Data, Fundamentals)
 │   ├── features/              # Feature Engineering (Technical, Fundamental)
-│   ├── backtest/              # Backtesting Engine (metrics, signals, walk-forward)
+│   ├── backtest/              # Backtesting : engine, stratégie FinBot, metrics, signals
+│   │   └── validation/        # Purged/combinatorial CV, meta-labeling, walk-forward
 │   ├── portfolio/             # Optimisation Mean-Variance, contraintes, rebalancing
 │   ├── portfolio_optimization/# Backends PyPortfolioOpt, Riskfolio-Lib, Black-Litterman
 │   ├── risk/                  # Risk metrics, VaR backtest, stress tests, drawdowns

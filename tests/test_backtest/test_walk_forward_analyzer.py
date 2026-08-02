@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from financial_analyzer.backtesting.walk_forward_analyzer import (
+from financial_analyzer.backtest.walk_forward_analyzer import (
     WalkForwardAnalyzer,
     WFAWindow,
     WFAResult,

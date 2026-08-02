@@ -8,19 +8,19 @@ Modules avancés pour backtesting robuste :
 - Meta-labeling (ML on signals, bet sizing)
 """
 
-from financial_analyzer.backtest_advanced.walk_forward import (
+from financial_analyzer.backtest.validation.walk_forward import (
     WalkForwardAnalyzer,
     walk_forward_optimize
 )
-from financial_analyzer.backtest_advanced.purged_cv import (
+from financial_analyzer.backtest.validation.purged_cv import (
     PurgedKFold,
     purged_kfold_split
 )
-from financial_analyzer.backtest_advanced.combinatorial_cv import (
+from financial_analyzer.backtest.validation.combinatorial_cv import (
     CombinatorialPurgedCV,
     generate_backtest_paths
 )
-from financial_analyzer.backtest_advanced.meta_labeling import (
+from financial_analyzer.backtest.validation.meta_labeling import (
     MetaLabeler,
     create_meta_labels
 )

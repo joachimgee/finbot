@@ -60,7 +60,7 @@ Low param_stability:
 
 Example
 -------
-    >>> from financial_analyzer.backtesting import WalkForwardAnalyzer
+    >>> from financial_analyzer.backtest.walk_forward_analyzer import WalkForwardAnalyzer
     >>>
     >>> wfa = WalkForwardAnalyzer(
     ...     data=price_data,
@@ -87,8 +87,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester, RiskConfig
-from financial_analyzer.backtesting.backtest_runner import run as run_backtest, _compute_metrics
+from financial_analyzer.backtest.finbot_strategy import FinBotBacktester, RiskConfig
+from financial_analyzer.backtest.backtest_runner import run as run_backtest, _compute_metrics
 # run_backtest signature: run(data: Dict[str, DataFrame], **kwargs) -> BacktestResult
 # where BacktestResult.metrics = {'sharpe': float, 'return': float, 'vol': float, 'max_dd': float}
 from financial_analyzer.utils.helpers import get_logger

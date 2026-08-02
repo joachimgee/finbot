@@ -26,7 +26,7 @@ from sklearn.ensemble import RandomForestClassifier
 
 from financial_analyzer.data.market_data import MarketDataFetcher
 from financial_analyzer.features.technical import TechnicalFeatureEngine
-from financial_analyzer.backtest_advanced import (
+from financial_analyzer.backtest.validation import (
     WalkForwardAnalyzer,
     PurgedKFold,
     MetaLabeler,
