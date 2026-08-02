@@ -9,7 +9,7 @@
 financedatabase>=2.2.0
 financetoolkit>=1.8.0
 yfinance>=0.2.30
-pandas>=2.0.0
+pandas>=2.0.0,<3.0  # cap: codebase écrit pour pandas 2.x, voir meta_labeling fix
 numpy>=1.24.0
 scipy>=1.11.0
 
