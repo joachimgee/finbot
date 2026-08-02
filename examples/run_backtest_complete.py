@@ -11,7 +11,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from financial_analyzer.backtesting.backtest_runner import (
+from financial_analyzer.backtest.backtest_runner import (
     load_data,
     run,
     optimize,

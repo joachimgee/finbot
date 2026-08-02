@@ -21,11 +21,11 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from financial_analyzer.backtesting.walk_forward_analyzer import (
+from financial_analyzer.backtest.walk_forward_analyzer import (
     WalkForwardAnalyzer,
     WFAResult,
 )
-from financial_analyzer.backtesting.finbot_strategy import FinBotBacktester, RiskConfig
+from financial_analyzer.backtest.finbot_strategy import FinBotBacktester, RiskConfig
 from financial_analyzer.utils.helpers import get_logger
 
 logger = get_logger(__name__)

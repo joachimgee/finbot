@@ -90,51 +90,50 @@ print(f"\nOptimal Weights:\n{result['weights']}")
 
 ```
 finbot/
-├── src/financial_analyzer/
-│   ├── data/              # Data Layer (Universe, Market Data, Fundamentals)
-│   ├── features/          # Feature Engineering (Technical, Fundamental)
-│   ├── backtest/          # Backtesting Engine
-│   ├── portfolio/         # Portfolio Optimization ✅
-│   │   ├── optimizer.py       # Mean-Variance Optimization
-│   │   ├── constraints.py     # Portfolio Constraints
-│   │   ├── rebalancer.py      # Rebalancing Strategies
-│   │   └── metrics.py         # Risk/Return Metrics
-│   ├── ml/                # Machine Learning ✅
-│   │   ├── feature_engineering.py  # AlphaFactorEngine (26+ factors)
-│   │   ├── factor_selection.py     # FactorAnalyzer (IC computation)
-│   │   └── feature_importance.py   # FeatureImportance (permutation)
-│   └── trading/           # Live Trading (TODO)
-├── tests/
-│   ├── test_portfolio/    # Portfolio Tests (69 tests, 100% passed) ✅
-│   │   ├── test_integration.py   # 42 E2E tests
-│   │   ├── test_optimizer.py     # 13 tests
-│   │   ├── test_constraints.py   # 11 tests
-│   │   ├── test_rebalancer.py    # 3 tests
-│   │   └── test_metrics.py       # 3 tests
-│   ├── test_portfolio_optimization/  # PyPortfolioOpt Tests (39 tests, 100% passed) ✅
-│   │   └── test_pyportfolioopt_optimizer.py  # 39 comprehensive tests
-│   ├── test_ml/           # ML Tests (19 tests, 100% passed) ✅
-│   │   ├── test_features.py           # 8 tests (factors + edge cases)
-│   │   ├── test_feature_importance.py # 7 tests (validation)
-│   │   └── test_features_edge_cases.py # 4 tests (robustness)
-│   ├── test_data/
-│   ├── test_features/
-│   └── test_backtest/
-├── docs/                  # Documentation ✅
-│   ├── API_REFERENCE.md       # Complete API docs
-│   ├── ARCHITECTURE.md        # System design
-│   ├── EXAMPLES.md            # 8+ usage examples
-│   ├── DEPLOYMENT.md          # Production guide
-│   ├── PHASE4_COMPLETION.md   # Portfolio module docs
-│   ├── PHASE4.5_COMPLETION.md # Enhanced tests docs
-│   ├── PHASE5.1_COMPLETION.md # ML Alpha Factors docs
-│   └── PYPORTFOLIOOPT_INTEGRATION.md  # PyPortfolioOpt backend docs
-├── examples/              # Code examples ✅
-│   └── pyportfolioopt_example.py  # 7 complete examples
-├── api/                   # REST API (TODO)
-├── notebooks/             # Jupyter notebooks
-└── README.md              # This file
+├── src/financial_analyzer/    # Package principal (installé via pip install -e .)
+│   ├── data/                  # Data Layer (Universe, Market Data, Fundamentals)
+│   ├── features/              # Feature Engineering (Technical, Fundamental)
+│   ├── backtest/              # Backtesting : engine, stratégie FinBot, metrics, signals
+│   │   └── validation/        # Purged/combinatorial CV, meta-labeling, walk-forward
+│   ├── portfolio/             # Optimisation Mean-Variance, contraintes, rebalancing
+│   ├── portfolio_optimization/# Backends PyPortfolioOpt, Riskfolio-Lib, Black-Litterman
+│   ├── risk/                  # Risk metrics, VaR backtest, stress tests, drawdowns
+│   ├── ml/ + ml_features*/    # Alpha factors, feature engineering avancé
+│   ├── deep_learning/         # LSTM & Transformer predictors
+│   ├── rl/                    # Reinforcement learning (PPO)
+│   ├── sentiment/             # FinBERT sentiment analysis
+│   ├── strategies/            # Stratégies (factor ensemble, sentiment momentum…)
+│   ├── pipeline/              # Pipelines ML/RL de trading
+│   ├── trading/               # Live trading Alpaca (broker adapter, bet sizing)
+│   ├── universe/              # Sélection & screening d'univers (12k+ tickers)
+│   └── api/                   # Routes FastAPI
+├── scripts/                   # Scripts d'exécution (daily run, analyses, audits)
+│   └── manual_tests/          # Tests manuels ad-hoc
+├── tests/                     # Suite pytest (unit, integration, backtest)
+├── examples/                  # Exemples d'utilisation exécutables
+├── config/                    # Configurations YAML (live trading, RL training)
+├── deploy/systemd/            # Unités systemd (daily run)
+├── docker/                    # Fichiers Docker auxiliaires
+├── docs/                      # Documentation
+│   ├── guides/                # Guides utilisateur (trading continu, Alpaca, prod…)
+│   ├── archive/               # Rapports de phases & prompts historiques
+│   └── VENDORED_REPOS.md      # Où retrouver les repos tiers retirés du repo
+├── monitoring/                # Config Prometheus/Grafana
+├── models/                    # Modèles entraînés (non versionnés, voir models/README.md)
+├── notebooks/                 # Jupyter notebooks
+├── run_continuous_alpaca_trading.py  # Point d'entrée trading continu
+├── pyproject.toml             # Packaging & config outils (remplace setup.py/pytest.ini)
+└── requirements.txt           # Dépendances
 ```
+
+### 📚 Guides
+
+- **[Trading continu](docs/guides/CONTINUOUS_TRADING_GUIDE.md)** — boucle de trading Alpaca
+- **[Guide Alpaca](docs/guides/TESTING_ALPACA_GUIDE.md)** — tests paper trading
+- **[Gestion de portefeuille](docs/guides/PORTFOLIO_MANAGEMENT.md)**
+- **[Déploiement production](docs/guides/PRODUCTION_DEPLOYMENT.md)**
+- **[Secrets GitHub Actions](docs/guides/GITHUB_SECRETS_SETUP.md)**
+- **[Référence rapide](docs/guides/QUICK_REFERENCE.md)**
 
 ## 🧪 Tests
 
@@ -186,9 +185,11 @@ pytest tests/test_ml/test_features.py -v
 - [x] **Phase 4**: Portfolio Optimization (Optimizer, Constraints, Rebalancer) ✅
 - [x] **Phase 4.5**: Enhanced Test Suite (42 E2E tests, 9.85/10) ✅
 - [x] **Phase 5.1**: Alpha Factor Engineering (26+ factors, IC analysis, 9.8/10) ✅
-- [ ] **Phase 5.2**: Extended Factor Library (100+ factors, advanced selection)
-- [ ] **Phase 6**: Live Trading (Broker Integration, Order Management)
-- [ ] **Phase 7**: Production (CLI, Dashboard, Deployment)
+- [x] **Phase 5.2**: Extended Factor Library (100+ factors, advanced selection) ✅
+- [x] **Phase 6**: Live Trading (Alpaca broker integration, order management) ✅
+- [x] **Phase 7**: Production (workflows GitHub Actions quotidiens, Docker, monitoring) ✅
+
+L'historique détaillé des phases est archivé dans [docs/archive/](docs/archive/).
 
 ## 📝 License
 

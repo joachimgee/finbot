@@ -29,7 +29,7 @@ from financial_analyzer.ml_features_advanced import (
     MicrostructureFeatures,
     FeatureImportanceAnalyzer,
 )
-from financial_analyzer.backtest_advanced import (
+from financial_analyzer.backtest.validation import (
     WalkForwardAnalyzer,
     PurgedKFold,
     MetaLabeler,

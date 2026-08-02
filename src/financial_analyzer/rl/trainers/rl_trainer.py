@@ -12,7 +12,7 @@ Orchestrates complete RL training pipeline with:
 Integration:
     - financial_analyzer.rl.environments.TradingEnvironment
     - financial_analyzer.rl.agents (PPO, DQN, DDPG, A2C)
-    - financial_analyzer.backtest_advanced.walk_forward.WalkForwardAnalyzer
+    - financial_analyzer.backtest.validation.walk_forward.WalkForwardAnalyzer
     - financial_analyzer.portfolio_optimization (PyPortfolioOpt baselines)
 
 Architecture:

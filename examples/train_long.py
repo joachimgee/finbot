@@ -4,10 +4,10 @@ Long RL training runner.
 Usage examples:
 
 # Smoke (quick validation, overrides total_timesteps):
-python examples/train_long.py --config configs/rl_train_long.yaml --timesteps 2000
+python examples/train_long.py --config config/rl_train_long.yaml --timesteps 2000
 
 # Full production run (uses config default 1_000_000):
-python examples/train_long.py --config configs/rl_train_long.yaml
+python examples/train_long.py --config config/rl_train_long.yaml
 
 """
 import argparse
