@@ -46,9 +46,22 @@ def _fake_download(symbols, period=None, interval="1d", start=None, end=None, gr
         }, index=idx)
 
 fake_yf = types.SimpleNamespace(Ticker=_FakeTicker, download=_fake_download)
-sys.modules['yfinance'] = fake_yf
 
+import pytest
+
+import financial_analyzer.data.market_data as _md
 from financial_analyzer.data.market_data import MarketDataFetcher
+
+
+@pytest.fixture(autouse=True)
+def _fake_yfinance(monkeypatch):
+    """Substitue yfinance dans le module market_data, pour ce fichier seulement.
+
+    L'ancien `sys.modules['yfinance'] = fake_yf` (au niveau module) fuyait dans
+    tous les tests collectés après ce fichier, et le SimpleNamespace sans
+    __spec__ cassait la collection d'autres modules.
+    """
+    monkeypatch.setattr(_md, 'yf', fake_yf, raising=False)
 
 
 def test_yfinance_batched_download_and_cache(tmp_path, monkeypatch):

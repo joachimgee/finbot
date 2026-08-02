@@ -15,6 +15,13 @@ sys.modules['tensorflow.keras.callbacks'] = MagicMock()
 
 from financial_analyzer.deep_learning import TransformerPredictor
 
+# Retire les stubs de sys.modules : le module predictor garde ses references
+# aux MagicMock lies a l'import ci-dessus, mais un faux tensorflow laisse dans
+# sys.modules (sans __spec__) casse la collection des autres modules de tests
+# (transformers appelle find_spec('tensorflow')).
+for _m in [m for m in sys.modules if m == 'tensorflow' or m.startswith('tensorflow.')]:
+    del sys.modules[_m]
+
 
 @pytest.fixture
 def returns_df():

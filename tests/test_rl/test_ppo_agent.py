@@ -217,9 +217,14 @@ class TestPPOAgentEvaluation:
         assert isinstance(metrics['mean_reward'], float)
     
     def test_evaluate_multiple_episodes(self, ppo_agent):
-        """Test evaluation with multiple episodes."""
+        """Test evaluation with multiple episodes.
+
+        L'env d'évaluation doit avoir le même univers que l'env
+        d'entraînement : l'espace d'observation d'une MlpPolicy est figé
+        (SB3 rejette toute observation d'une autre dimension).
+        """
         eval_env = TradingEnvironment(
-            symbols=['AAPL'],
+            symbols=['AAPL', 'MSFT'],
             start_date='2020-01-01',
             end_date='2020-03-31',
             initial_capital=100_000
