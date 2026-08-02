@@ -325,7 +325,9 @@ class MetaLabeler:
             raise ValueError("Side model not fitted yet. Call fit() first.")
         
         # Prédire seulement où il y a signal primaire
-        predictions = pd.Series(0, index=X.index)
+        # dtype float : les probabilités (return_proba) ne tiennent pas dans un
+        # int64 et pandas >= 3 refuse le downcast silencieux à l'assignation
+        predictions = pd.Series(0.0, index=X.index)
         mask = primary_signals != 0
         
         if mask.sum() == 0:
