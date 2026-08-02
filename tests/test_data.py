@@ -361,8 +361,10 @@ class TestMarketDataFetcher:
         mock_ts_instance.get_intraday.return_value = (sample_prices_df, {})
         mock_timeseries_class.return_value = mock_ts_instance
 
-        # Exécuter
-        result = market_fetcher.get_intraday_data("AAPL", interval="5min")
+        # Clé Alpha Vantage injectée : sinon get_intraday_data lève avant
+        # d'atteindre le TimeSeries mocké (dépendait d'un .env réel auparavant)
+        with patch('financial_analyzer.data.market_data.API_KEYS', {'alpha_vantage': 'test_av_key'}):
+            result = market_fetcher.get_intraday_data("AAPL", interval="5min")
 
         # Assertions
         assert isinstance(result, dict)
