@@ -40,24 +40,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# Optional: JSONB detection (if using PostgreSQL dialect)
-def _resolve_json_type() -> Any:
-    """Return dialect-appropriate JSON type.
+# Type JSON portable, résolu au moment de la compilation du DDL selon le
+# dialecte réellement utilisé : JSONB sous PostgreSQL, JSON générique ailleurs
+# (SQLite). Contrairement à une détection basée sur DATABASE_URL à l'import, la
+# même définition de colonne rend correctement quel que soit le moteur ciblé —
+# donc les tests SQLite ne cassent pas quand DATABASE_URL pointe vers Postgres.
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
 
-    Uses JSONB only if DATABASE_URL starts with 'postgres'. Falls back to generic JSON.
-    This avoids compilation errors on SQLite when JSONB unsupported.
-    """
-    import os
-    url = os.getenv("DATABASE_URL", "")
-    if url.startswith("postgres"):
-        try:  # pragma: no cover - dialect dependent
-            from sqlalchemy.dialects.postgresql import JSONB  # type: ignore
-            return JSONB  # type: ignore
-        except Exception:  # pragma: no cover
-            return JSON  # type: ignore
-    return JSON  # type: ignore
-
-JSONType = _resolve_json_type()
+JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 # ---------------------------------------------------------------------------
 # Base class
