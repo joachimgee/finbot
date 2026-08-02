@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 dist/
@@ -14,9 +15,12 @@ dist/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Environment variables
+# Environment variables — never commit real keys
 .env
+.env.*
 *.env
+!.env.example
+!.env.production.example
 
 # IDE
 .vscode/
@@ -32,11 +36,40 @@ data/cache/*
 !data/processed/.gitkeep
 !data/cache/.gitkeep
 
-# Models
+# Trained models & binaries (regenerated via examples/train_long.py, etc.)
+models/*
+!models/README.md
 *.pkl
 *.h5
 *.pt
 *.pth
+
+# Vendored third-party repos (re-download from upstream, see docs/VENDORED_REPOS.md)
+vendor/
+external_repos/
+docs/Forks complet/
+
+# Run artifacts (analysis outputs, backtest plots, reports)
+professional_analysis*.csv
+professional_daily*.csv
+daily_master_result*.csv
+test_complete_analysis.csv
+test_professional*.csv
+test_global_*.csv
+test_advanced.csv
+report_*.csv
+audit_report.json
+*.html
+
+# Systemd units generated at project root by scripts/setup_daily_cron.sh
+/finbot-daily.service
+/finbot-daily.timer
+
+# Test & coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
 
 # Logs
 *.log
