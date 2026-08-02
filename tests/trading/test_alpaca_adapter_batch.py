@@ -92,7 +92,19 @@ fake_mod.rest = types.SimpleNamespace(APIError=Exception)
 
 sys.modules.setdefault("alpaca_trade_api", fake_mod)
 
+from financial_analyzer.trading import alpaca_adapter as _adapter_mod
 from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
+
+
+@pytest.fixture(autouse=True)
+def _force_fake_tradeapi(monkeypatch):
+    """Patch le SDK dans le module adapter.
+
+    Le setdefault ci-dessus ne suffit que si le vrai alpaca_trade_api n'a pas
+    encore été importé ; si un autre test l'a chargé avant, l'adapter garde une
+    référence au vrai SDK et ces tests partiraient sur l'API réelle.
+    """
+    monkeypatch.setattr(_adapter_mod, "tradeapi", fake_mod, raising=False)
 
 
 def test_from_env_constructor(monkeypatch):
