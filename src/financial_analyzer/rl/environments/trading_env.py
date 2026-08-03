@@ -247,13 +247,17 @@ class TradingEnvironment(gym.Env):
         # Compute technical indicators if requested
         if self.use_technical_indicators and TechnicalFeatureEngine is not None:
             try:
-                self.technical_engine = TechnicalFeatureEngine()
                 self.technical_features = {}
-                
+
                 for symbol in self.symbols:
                     df = self.price_data[symbol]
-                    features = self.technical_engine.compute_features(df)
+                    # L'API du moteur prend l'OHLCV au constructeur, avec des
+                    # colonnes capitalisées (Open/High/...) — les données de
+                    # l'env sont en minuscules
+                    engine = TechnicalFeatureEngine(df.rename(columns=str.capitalize))
+                    features = engine.calculate_all_features()
                     self.technical_features[symbol] = features
+                    self.technical_engine = engine
                     
                 logger.info(f"Technical indicators computed: {len(self.technical_features[self.symbols[0]].columns)} features")
             except Exception as e:
@@ -278,6 +282,11 @@ class TradingEnvironment(gym.Env):
     def _generate_synthetic_data(self) -> pd.DataFrame:
         """Generate synthetic OHLCV data for testing."""
         dates = pd.date_range(start=self.start_date, end=self.end_date, freq='B')
+        if len(dates) == 0:
+            # Bornes inversées ou fenêtre vide : générer quand même une fenêtre
+            # minimale pour que l'environnement reste utilisable (reset/step)
+            first = min(pd.to_datetime(self.start_date), pd.to_datetime(self.end_date))
+            dates = pd.date_range(start=first, periods=100, freq='B')
         n_days = len(dates)
         
         # Random walk with drift
@@ -419,8 +428,9 @@ class TradingEnvironment(gym.Env):
         reward = self._calculate_reward()
         
         # Check if episode ended
-        terminated = self.current_step >= self.max_steps
-        truncated = self.cash < 0  # Bankruptcy
+        # bool() natif : l'API Gymnasium attend des bool Python, pas np.bool_
+        terminated = bool(self.current_step >= self.max_steps)
+        truncated = bool(self.cash < 0)  # Bankruptcy
         
         # Get next observation
         observation = self._get_observation()
@@ -449,7 +459,10 @@ class TradingEnvironment(gym.Env):
             action[i] = +1: Buy maximum allowed of asset i
         """
         current_prices = self._get_current_prices()
-        
+
+        # Un env mono-actif peut recevoir une action scalaire (0-d) de SB3
+        action = np.atleast_1d(np.asarray(action))
+
         for i, target_action in enumerate(action):
             current_holding = self.holdings[i]
             current_price = current_prices[i]
@@ -590,8 +603,11 @@ class TradingEnvironment(gym.Env):
                     current_date = self.dates[idx]
                     try:
                         features = self.technical_features[symbol].loc[current_date]
-                        # Take first 25 features, fill NaN with 0
-                        feature_values = features.fillna(0).values[:25]
+                        # Exactement 25 valeurs (l'observation_space le suppose) :
+                        # tronque au-delà, complète par des zéros en deçà
+                        feature_values = np.asarray(features.fillna(0).values[:25], dtype=np.float32)
+                        if len(feature_values) < 25:
+                            feature_values = np.pad(feature_values, (0, 25 - len(feature_values)))
                         state.extend(feature_values)
                     except (KeyError, IndexError):
                         state.extend([0.0] * 25)

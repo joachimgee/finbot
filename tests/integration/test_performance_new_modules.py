@@ -18,7 +18,11 @@ from financial_analyzer.database.db import init_db, SessionLocal, close_db
 from financial_analyzer.database.models import Trade, Allocation, PerformanceMetric, CacheStat
 
 
-def test_cache_manager_in_memory_basic():
+def test_cache_manager_in_memory_basic(monkeypatch):
+    # Ce test cible le backend mémoire : neutraliser REDIS_URL, sinon
+    # CacheManager(url=None) le récupère via l'env (auto-détection prod) et
+    # bascule sur redis quand un service Redis tourne (comme en CI).
+    monkeypatch.delenv("REDIS_URL", raising=False)
     cm = CacheManager(url=None)
     cm.set("foo", {"a": 1}, ttl=1)
     assert cm.get("foo") == {"a": 1}

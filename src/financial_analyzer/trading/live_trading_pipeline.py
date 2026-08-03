@@ -624,8 +624,8 @@ class LiveTradingPipeline:
                 except Exception:
                     pass
             
-            # 3. Sentiment
-            if ticker in data['sentiment']:
+            # 3. Sentiment (clé absente si la collecte sentiment est désactivée)
+            if ticker in data.get('sentiment', {}):
                 sentiment_signal = float(data['sentiment'][ticker])
                 sentiment_signal = np.clip(sentiment_signal, -1, 1)
             
@@ -682,11 +682,13 @@ class LiveTradingPipeline:
             logger.warning("No positive signals, no positions")
             return {}
         
-        # Build prices DataFrame for optimization
+        # Build prices DataFrame for optimization ('prices' peut être absent :
+        # le fallback proportionnel ci-dessous prend alors le relais)
         price_frames = []
+        available_prices = data.get('prices', {})
         for sym in positive_signals:
-            if sym in data['prices'] and not data['prices'][sym].empty:
-                close = data['prices'][sym]['close'].rename(sym)
+            if sym in available_prices and not available_prices[sym].empty:
+                close = available_prices[sym]['close'].rename(sym)
                 price_frames.append(close)
         
         if not price_frames:

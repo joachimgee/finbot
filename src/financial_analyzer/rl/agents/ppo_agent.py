@@ -120,12 +120,23 @@ class PPOAgent:
         self.verbose = verbose
         
         # Default policy kwargs (2-layer MLP with 256 units)
+        import torch.nn as nn
         if policy_kwargs is None:
-            import torch.nn as nn
             policy_kwargs = {
                 "net_arch": [256, 256],
                 "activation_fn": nn.Tanh,  # Must be class, not string
             }
+        elif isinstance(policy_kwargs.get("activation_fn"), str):
+            # Accepte "tanh"/"relu"/... et convertit vers la classe torch,
+            # SB3 exige un callable
+            _activations = {
+                "tanh": nn.Tanh, "relu": nn.ReLU, "elu": nn.ELU,
+                "leaky_relu": nn.LeakyReLU, "sigmoid": nn.Sigmoid, "gelu": nn.GELU,
+            }
+            name = policy_kwargs["activation_fn"].lower()
+            if name not in _activations:
+                raise ValueError(f"Unknown activation_fn '{name}'. Options: {sorted(_activations)}")
+            policy_kwargs = {**policy_kwargs, "activation_fn": _activations[name]}
         
         # Initialize PPO model
         self.model = PPO(
@@ -189,8 +200,8 @@ class PPOAgent:
         # Setup callbacks
         callbacks = []
         
-        # Checkpoint callback
-        if save_path is not None:
+        # Checkpoint callback (save_freq None ou 0 = pas de checkpoints)
+        if save_path is not None and save_freq:
             Path(save_path).mkdir(parents=True, exist_ok=True)
             checkpoint_callback = CheckpointCallback(
                 save_freq=save_freq,

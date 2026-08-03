@@ -92,9 +92,10 @@ class RiskBudgeter:
         if weights is None:
             weights = self.weights
         
+        # .item() : le produit (1,1) n'est plus convertible via float() en numpy >= 2
         w = weights.values.reshape(-1, 1)
-        variance = float(w.T @ self.cov_matrix.values @ w)
-        
+        variance = (w.T @ self.cov_matrix.values @ w).item()
+
         return variance
     
     def calculate_portfolio_volatility(

@@ -83,14 +83,19 @@ class TestGetHistoricalData:
         assert list(result.columns) == ['Open', 'High', 'Low', 'Close', 'Volume']
         assert isinstance(result.index, pd.DatetimeIndex)
 
+    @patch('yfinance.download')
     @patch('yfinance.Ticker')
     @pytest.mark.integration
     @pytest.mark.slow
-    def test_get_historical_multiple_tickers(self, mock_yf_ticker, mock_ohlcv_data):
+    def test_get_historical_multiple_tickers(self, mock_yf_ticker, mock_download, mock_ohlcv_data):
         """Test récupération données pour plusieurs tickers."""
         mock_instance = MagicMock()
         mock_instance.history.return_value = mock_ohlcv_data
         mock_yf_ticker.return_value = mock_instance
+        # Le chemin multi-symboles tente d'abord yf.download (batch). On le rend
+        # vide pour forcer le fallback per-symbol déterministe via le Ticker
+        # mocké — sinon le test tapait le vrai réseau (échec en CI sans accès).
+        mock_download.return_value = pd.DataFrame()
 
         fetcher = MarketDataFetcher()
         result = fetcher.get_historical_data(['AAPL', 'MSFT'], '2020-01-01', '2020-01-05')

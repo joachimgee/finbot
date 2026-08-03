@@ -4,17 +4,21 @@ import pytest
 
 from financial_analyzer.risk.var_backtest import _compute_var, backtest_multi_methods, VaRBacktester, backtest_rolling_var
 
-np.random.seed(42)
+# Générateurs locaux : le RNG global (np.random.seed) dépend de l'ordre
+# d'exécution des autres fichiers de tests et rendait ces fixtures — donc les
+# assertions statistiques — non déterministes en suite complète.
 
 @pytest.fixture
 def normal_returns():
-    return pd.Series(np.random.normal(0, 0.01, 3000))
+    rng = np.random.default_rng(42)
+    return pd.Series(rng.normal(0, 0.01, 3000))
 
 @pytest.fixture
 def skewed_returns():
-    base = np.random.normal(0, 0.012, 3000)
+    rng = np.random.default_rng(1)
+    base = rng.normal(0, 0.012, 3000)
     # Introduire skew négatif et lourdes queues
-    skewed = np.where(np.random.rand(3000) < 0.02, base - np.abs(np.random.normal(0.05,0.02)), base)
+    skewed = np.where(rng.random(3000) < 0.02, base - np.abs(rng.normal(0.05, 0.02)), base)
     return pd.Series(skewed)
 
 @pytest.mark.parametrize("method", ["historical","parametric","ewma","cornish_fisher"])  
@@ -76,7 +80,8 @@ def test_parametric_vs_historical_relative(normal_returns):
 
 def test_ewma_lower_than_parametric_when_vol_drops(normal_returns):
     # Décroissance de volatilité: EWMA devrait capter baisse mais peut rester > param si derniers points volatils
-    window = pd.Series(np.linspace(0.02,0.005,500) * np.random.randn(500))
+    rng = np.random.default_rng(0)
+    window = pd.Series(np.linspace(0.02,0.005,500) * rng.standard_normal(500))
     ewma = _compute_var(window, 0.95, 'ewma')
     param = _compute_var(window, 0.95, 'parametric')
     # Vérifier ratio raisonnable au lieu d'inégalité stricte
@@ -84,7 +89,8 @@ def test_ewma_lower_than_parametric_when_vol_drops(normal_returns):
 
 def test_cornish_fisher_kurtosis_effect():
     # Distribution avec kurtosis élevée: VaR ajustée proche ou supérieure (tolérance 15%)
-    data = pd.Series(np.random.standard_t(df=3, size=800) * 0.01)
+    rng = np.random.default_rng(0)
+    data = pd.Series(rng.standard_t(df=3, size=800) * 0.01)
     cf = _compute_var(data, 0.95, 'cornish_fisher')
     param = _compute_var(data, 0.95, 'parametric')
     assert cf >= param * 0.85

@@ -490,7 +490,9 @@ class DiscreteAllocation:
         
         # Extract integer solution
         shares = np.rint(x.value).astype(int)
-        leftover = r.value
+        # max(0, ...) : le solveur peut renvoyer un reliquat infinitésimalement
+        # négatif (~-1e-11) par imprécision flottante, ce qui n'a pas de sens
+        leftover = max(0.0, float(r.value))
         
         self.allocation = self._remove_zero_positions(
             collections.OrderedDict(zip(tickers, [int(s) for s in shares]))

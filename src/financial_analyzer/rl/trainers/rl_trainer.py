@@ -294,12 +294,13 @@ class RLTrainer:
         train_end = start + pd.Timedelta(days=train_days)
         val_end = train_end + pd.Timedelta(days=val_days)
         
-        # Format as strings
+        # Format as strings — les périodes sont disjointes : chaque split
+        # démarre le lendemain de la fin du précédent (pas de chevauchement)
         train_start = start.strftime('%Y-%m-%d')
         train_end_str = train_end.strftime('%Y-%m-%d')
-        val_start = train_end.strftime('%Y-%m-%d')
+        val_start = (train_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         val_end_str = val_end.strftime('%Y-%m-%d')
-        test_start = val_end.strftime('%Y-%m-%d')
+        test_start = (val_end + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         test_end_str = end.strftime('%Y-%m-%d')
         
         return train_start, train_end_str, val_start, val_end_str, test_start, test_end_str

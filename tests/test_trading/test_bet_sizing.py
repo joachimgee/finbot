@@ -58,16 +58,22 @@ def sample_ml_confidence():
 @pytest.fixture
 def sample_events_t1():
     """Événements avec label end times pour budget method."""
+    # RNG local : le RNG global np.random dépend de l'ordre d'exécution des
+    # autres fichiers de tests, ce qui rendait les durées d'événements (donc
+    # les recouvrements long/short, donc les signes des bet sizes) non
+    # déterministes en suite complète.
+    rng = np.random.default_rng(0)
     start_dates = pd.date_range('2023-01-01', periods=100, freq='D')
-    end_dates = start_dates + pd.Series([timedelta(days=np.random.randint(1, 10)) for _ in range(100)])
+    end_dates = start_dates + pd.Series([timedelta(days=int(rng.integers(1, 10))) for _ in range(100)])
     return pd.Series(end_dates.values, index=start_dates)
 
 
 @pytest.fixture
 def sample_sides():
     """Sides (1 = long, -1 = short) pour events."""
+    rng = np.random.default_rng(0)
     start_dates = pd.date_range('2023-01-01', periods=100, freq='D')
-    return pd.Series(np.random.choice([1, -1], size=100), index=start_dates)
+    return pd.Series(rng.choice([1, -1], size=100), index=start_dates)
 
 
 # ==============================

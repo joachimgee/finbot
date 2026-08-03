@@ -15,6 +15,13 @@ sys.modules['tensorflow.keras.callbacks'] = MagicMock()
 
 from financial_analyzer.deep_learning import TransformerPredictor
 
+# Retire les stubs de sys.modules : le module predictor garde ses references
+# aux MagicMock lies a l'import ci-dessus, mais un faux tensorflow laisse dans
+# sys.modules (sans __spec__) casse la collection des autres modules de tests
+# (transformers appelle find_spec('tensorflow')).
+for _m in [m for m in sys.modules if m == 'tensorflow' or m.startswith('tensorflow.')]:
+    del sys.modules[_m]
+
 
 @pytest.fixture
 def returns_df():
@@ -123,12 +130,17 @@ def test_positional_encoding(mock_tf):
 
 # -------------------- Polish Tests -------------------- #
 
+# tf est patché (non-None) pour forcer le chemin Keras mocké : sinon, selon
+# l'ordre d'import de la suite, transformer_predictor.tf peut valoir None et
+# build_model bascule sur le _SimpleModel fallback (val_loss monotone), ce qui
+# donnait best_epoch=epochs au lieu de l'index réel du mock.
+@patch("financial_analyzer.deep_learning.transformer_predictor.tf")
 @patch("financial_analyzer.deep_learning.transformer_predictor.MinMaxScaler")
 @patch("financial_analyzer.deep_learning.transformer_predictor.layers")
 @patch("financial_analyzer.deep_learning.transformer_predictor.models")
 @patch("financial_analyzer.deep_learning.transformer_predictor.keras")
 @patch("financial_analyzer.deep_learning.transformer_predictor.callbacks")
-def test_enhanced_history_format(mock_callbacks, mock_keras, mock_models, mock_layers, mock_scaler, returns_df):
+def test_enhanced_history_format(mock_callbacks, mock_keras, mock_models, mock_layers, mock_scaler, mock_tf, returns_df):
     """Test that fit returns enhanced history with train_loss, val_loss, epochs_trained, best_epoch."""
     mock_scaler_instance = MagicMock()
     mock_scaler.return_value = mock_scaler_instance

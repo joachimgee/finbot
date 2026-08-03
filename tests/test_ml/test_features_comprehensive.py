@@ -173,8 +173,8 @@ def test_momentum_vectorization(engine):
     _ = engine.roc(20)
     elapsed = time.time() - start
     
-    # Vectorized operations should be < 10ms
-    assert elapsed < 0.01
+    # Garde-fou anti-boucles Python : ~10ms attendu, marge x5 pour runners CI charges
+    assert elapsed < 0.05
 
 
 def test_momentum_with_nan_inputs(sample_ohlcv):
@@ -443,8 +443,8 @@ def test_value_factors_vectorization(engine):
     _ = engine.value_factors()
     elapsed = time.time() - start
     
-    # Should be < 100ms for 15 factors
-    assert elapsed < 0.1
+    # Garde-fou anti-boucles Python : ~100ms attendu, marge x5 pour runners CI charges
+    assert elapsed < 0.5
 
 
 def test_value_factors_with_short_data():
@@ -689,8 +689,8 @@ def test_alternative_factors_vectorization(engine):
     _ = engine.alternative_factors()
     elapsed = time.time() - start
     
-    # Should be < 100ms for 15 factors
-    assert elapsed < 0.1
+    # Garde-fou anti-boucles Python : ~100ms attendu, marge x5 pour runners CI charges
+    assert elapsed < 0.5
 
 
 # ================= CROSS-ASSET TESTS (10) =====================
@@ -801,8 +801,8 @@ def test_cross_asset_factors_vectorization(engine):
     _ = engine.cross_asset_factors()
     elapsed = time.time() - start
     
-    # Should be < 150ms for 10 factors
-    assert elapsed < 0.15
+    # Garde-fou anti-boucles Python : ~150ms attendu, marge x4 pour runners CI charges
+    assert elapsed < 0.6
 
 
 # ============== MICROSTRUCTURE TESTS (15) =====================
