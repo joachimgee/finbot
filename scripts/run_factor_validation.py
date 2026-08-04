@@ -51,9 +51,15 @@ def main() -> None:
     print(f"  {'equal_weight':16s} {out['equal_weight'].summary()}")
     print("\nCombinateur appris (OOS):")
     print(f"  {'combined':16s} {out['combined'].summary()}")
-    print("\nPoids moyens appris:")
-    for name, w in out["avg_weights"].items():
-        print(f"  {name:16s} {w:+.3f}")
+    print("\nPoids moyens appris (normalisés, somme |w|=1):")
+    w = out["avg_weights"]
+    wn = w / w.abs().sum() if w.abs().sum() > 0 else w
+    for name, val in wn.items():
+        print(f"  {name:16s} {val:+.3f}")
+    print(
+        "\nRappel : un IC significatif exige |t| > ~2. En-dessous, le signal "
+        "n'est pas distinguable du bruit sur cet échantillon."
+    )
 
 
 if __name__ == "__main__":
