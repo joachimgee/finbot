@@ -40,44 +40,45 @@ def fetch_daily_history(
     secret_key: Optional[str] = None,
     feed: str = "iex",
     timeout: int = 30,
+    chunk_size: int = 200,
     progress: bool = True,
 ) -> pd.DataFrame:
     """Panel (dates × tickers) de clôtures ajustées via Alpaca.
 
-    Multi-symbole + pagination automatique (next_page_token).
+    Symboles fetchés par lots (chunk_size) pour éviter les URL trop longues ;
+    pagination automatique (next_page_token) à l'intérieur de chaque lot.
     """
     headers = _keys(api_key, secret_key)
-    closes: Dict[str, Dict[pd.Timestamp, float]] = {t: {} for t in tickers}
-    page_token: Optional[str] = None
-    n_pages = 0
+    closes: Dict[str, Dict[pd.Timestamp, float]] = {}
 
-    while True:
-        params = {
-            "symbols": ",".join(tickers),
-            "timeframe": "1Day",
-            "start": start,
-            "end": end,
-            "limit": 10000,
-            "adjustment": "all",
-            "feed": feed,
-        }
-        if page_token:
-            params["page_token"] = page_token
-        r = requests.get(_URL, headers=headers, params=params, timeout=timeout)
-        r.raise_for_status()
-        payload = r.json()
-        bars = payload.get("bars") or {}
-        for sym, sym_bars in bars.items():
-            for bar in sym_bars:
-                ts = pd.Timestamp(bar["t"]).normalize()
-                closes.setdefault(sym, {})[ts] = float(bar["c"])
-        n_pages += 1
-        page_token = payload.get("next_page_token")
+    chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+    for ci, chunk in enumerate(chunks):
+        page_token: Optional[str] = None
+        while True:
+            params = {
+                "symbols": ",".join(chunk),
+                "timeframe": "1Day",
+                "start": start,
+                "end": end,
+                "limit": 10000,
+                "adjustment": "all",
+                "feed": feed,
+            }
+            if page_token:
+                params["page_token"] = page_token
+            r = requests.get(_URL, headers=headers, params=params, timeout=timeout)
+            r.raise_for_status()
+            payload = r.json()
+            bars = payload.get("bars") or {}
+            for sym, sym_bars in bars.items():
+                d = closes.setdefault(sym, {})
+                for bar in sym_bars:
+                    d[pd.Timestamp(bar["t"]).normalize()] = float(bar["c"])
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
         if progress:
-            got = sum(len(v) for v in closes.values())
-            print(f"  page {n_pages}: {got} barres cumulées")
-        if not page_token:
-            break
+            print(f"  lot {ci+1}/{len(chunks)} ({len(chunk)} sym) : {len(closes)} tickers avec données")
 
     series = [pd.Series(v, name=sym).sort_index() for sym, v in closes.items() if v]
     if not series:
