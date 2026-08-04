@@ -176,8 +176,10 @@ def test_drift_detector_ttest_no_drift():
         detection_method="ttest",
     )
     
-    # Returns around zero (no significant drift)
-    returns = np.random.normal(0.0001, 0.02, 100)
+    # Returns around zero (no significant drift). RNG local seedé : un t-test
+    # "no drift" sur données non seedées a ~5% de faux positifs (dépend du RNG
+    # global partagé entre fichiers) — source de flakiness order-dépendante.
+    returns = np.random.default_rng(0).normal(0.0001, 0.02, 100)
     current_metrics = PerformanceMetrics(
         sharpe_ratio=1.4,
         sortino_ratio=1.8,

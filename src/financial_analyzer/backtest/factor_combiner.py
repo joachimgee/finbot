@@ -32,10 +32,16 @@ import pandas as pd
 from financial_analyzer.backtest.signal_evaluation import (
     CostModel,
     SignalEvalResult,
+    cross_sectional_weights,
     evaluate_signal,
 )
 
-__all__ = ["FactorCombiner", "walk_forward_combine"]
+__all__ = [
+    "FactorCombiner",
+    "CostAwareCombiner",
+    "walk_forward_combine",
+    "walk_forward_cost_aware",
+]
 
 
 def _zscore_cross_section(panel: pd.DataFrame) -> pd.DataFrame:
@@ -202,3 +208,171 @@ def walk_forward_combine(
         "avg_weights": avg_weights,
         "n_splits": n_done,
     }
+
+
+# ============================================================================
+# B cost-aware : optimise le Sharpe NET DE COÛTS, pas l'IC
+# ============================================================================
+# Le combinateur ridge ci-dessus maximise l'ajustement au rendement forward
+# (IC). Sur données réelles, il charge des facteurs à fort turnover (ex.
+# reversal) qui ont un IC positif mais perdent de l'argent après coûts. Le
+# CostAwareCombiner optimise directement le Sharpe net d'un portefeuille
+# long/short — via le MÊME modèle de coûts que l'évaluation — ce qui pénalise
+# de fait le turnover et écarte les facteurs qui ne « paient » pas leurs frais.
+
+
+def _quantile_weight_matrix(scores: pd.DataFrame, quantile: float, long_short: bool) -> np.ndarray:
+    """Matrice de poids (dates × actifs) : long top-k / short bottom-k par date.
+
+    Version vectorisée de cross_sectional_weights sur tout le panel — même
+    convention (poids ±0.5/k, somme |w|=1 ; 0 si < 5 actifs valides).
+    """
+    n_valid = scores.notna().sum(axis=1)
+    k = (n_valid * quantile).round().clip(lower=1)
+    r = scores.rank(axis=1)  # 1..n_valid, NaN reste NaN
+    long_mask = r.gt(n_valid - k, axis=0).fillna(False)
+    short_mask = r.le(k, axis=0).fillna(False)
+    inv_k = (1.0 / k).replace([np.inf, -np.inf], 0.0)
+    if long_short:
+        W = long_mask.mul(0.5 * inv_k, axis=0) - short_mask.mul(0.5 * inv_k, axis=0)
+    else:
+        W = long_mask.mul(inv_k, axis=0)
+    W = W.where((n_valid >= 5), 0.0)
+    return W.values
+
+
+def _net_sharpe_of_scores(
+    combined: pd.DataFrame,
+    returns: pd.DataFrame,
+    cost_model: CostModel,
+    quantile: float,
+    long_short: bool,
+    periods_per_year: int,
+) -> float:
+    """Sharpe net de coûts du portefeuille long/short issu d'un panel de scores.
+
+    Version vectorisée (pas de calcul d'IC) pour servir de fonction-objectif.
+    """
+    fwd = returns.shift(-1).reindex(index=combined.index, columns=combined.columns)
+    W = _quantile_weight_matrix(combined, quantile, long_short)  # (T, N)
+    F = np.nan_to_num(fwd.values, nan=0.0)
+    gross = np.einsum("ta,ta->t", W, F)
+    turnover = np.empty(W.shape[0])
+    turnover[0] = np.abs(W[0]).sum()
+    turnover[1:] = np.abs(np.diff(W, axis=0)).sum(axis=1)
+    net = gross - turnover * cost_model.cost_rate
+    if net.size < 2:
+        return 0.0
+    sd = net.std(ddof=1)
+    if sd == 0:
+        return 0.0
+    return float(net.mean() / sd * np.sqrt(periods_per_year))
+
+
+@dataclass
+class CostAwareCombiner:
+    """Pondère les sources par leur Sharpe NET DE COÛTS standalone.
+
+    Contrairement à FactorCombiner (ridge sur l'IC, qui charge les facteurs à
+    fort turnover parce qu'ils ont un IC positif *brut*), chaque source reçoit
+    un poids proportionnel à son Sharpe net de coûts sur la fenêtre
+    d'entraînement, les valeurs négatives étant mises à zéro. Un facteur qui ne
+    rembourse pas ses frais (piège à turnover) est donc écarté (poids 0).
+
+    Cette heuristique est délibérément robuste : optimiser conjointement le
+    Sharpe net surajuste sur petit échantillon et ne généralise pas hors
+    échantillon, alors que la pondération par Sharpe net standalone est stable.
+    """
+
+    cost_model: Optional[CostModel] = None
+    quantile: float = 0.2
+    long_short: bool = True
+    periods_per_year: int = 252
+    weights_: Optional[pd.Series] = None
+    sources_: Optional[List[str]] = None
+
+    def fit(self, source_panels: Dict[str, pd.DataFrame], returns: pd.DataFrame) -> "CostAwareCombiner":
+        cost = self.cost_model or CostModel()
+        sources = sorted(source_panels)
+        self.sources_ = sources
+        idx, cols = returns.index, returns.columns
+        z = {s: _zscore_cross_section(source_panels[s]).reindex(index=idx, columns=cols).fillna(0.0)
+             for s in sources}
+
+        net = {s: _net_sharpe_of_scores(z[s], returns, cost, self.quantile, self.long_short,
+                                        self.periods_per_year) for s in sources}
+        pos = np.array([max(0.0, net[s]) for s in sources])
+        if pos.sum() > 0:
+            w = pos / pos.sum()
+        else:
+            # aucun facteur net-positif : ne garder que le moins mauvais
+            w = np.zeros(len(sources))
+            w[int(np.argmax([net[s] for s in sources]))] = 1.0
+        self.weights_ = pd.Series(w, index=sources)
+        return self
+
+    def predict(self, source_panels: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        if self.weights_ is None or self.sources_ is None:
+            raise RuntimeError("CostAwareCombiner.predict appelé avant fit().")
+        any_panel = source_panels[self.sources_[0]]
+        out = None
+        for s in self.sources_:
+            z = _zscore_cross_section(source_panels[s]).reindex(
+                index=any_panel.index, columns=any_panel.columns).fillna(0.0)
+            term = self.weights_[s] * z
+            out = term if out is None else out + term
+        return out
+
+
+def walk_forward_cost_aware(
+    source_panels: Dict[str, pd.DataFrame],
+    returns: pd.DataFrame,
+    n_splits: int = 5,
+    cost_model: Optional[CostModel] = None,
+    quantile: float = 0.2,
+    long_short: bool = True,
+    periods_per_year: int = 252,
+) -> Dict[str, object]:
+    """Valide le combinateur cost-aware en walk-forward, coûts inclus.
+
+    Returns: dict avec 'cost_aware' (SignalEvalResult OOS agrégé) et
+    'avg_weights' (poids moyens appris). À comparer aux sorties de
+    walk_forward_combine (ridge/IC, égal-poids, sources seules).
+    """
+    cost_model = cost_model or CostModel()
+    sources = sorted(source_panels)
+    common = returns.index
+    for s in sources:
+        common = common.intersection(source_panels[s].index)
+    common = common.sort_values()
+    returns = returns.loc[common]
+    source_panels = {s: source_panels[s].loc[common] for s in sources}
+
+    n = len(common)
+    if n < (n_splits + 1) * 5:
+        raise ValueError(f"Historique trop court ({n} dates) pour {n_splits} fenêtres.")
+
+    fold = n // (n_splits + 1)
+    parts: List[pd.DataFrame] = []
+    weights_list: List[pd.Series] = []
+    n_done = 0
+    for i in range(1, n_splits + 1):
+        tr = common[: fold * i]
+        te = common[fold * i : (fold * (i + 1) if i < n_splits else n)]
+        if len(te) < 5:
+            continue
+        comb = CostAwareCombiner(
+            cost_model=cost_model, quantile=quantile, long_short=long_short,
+            periods_per_year=periods_per_year,
+        ).fit(_slice_panels(source_panels, tr), returns.loc[tr])
+        weights_list.append(comb.weights_)
+        parts.append(comb.predict(_slice_panels(source_panels, te)))
+        n_done += 1
+
+    oos = None
+    if parts:
+        panel = pd.concat(parts)
+        oos = evaluate_signal(panel, returns.reindex(panel.index), cost_model=cost_model,
+                              quantile=quantile, long_short=long_short, periods_per_year=periods_per_year)
+    avg_weights = pd.concat(weights_list, axis=1).mean(axis=1) if weights_list else pd.Series(dtype=float)
+    return {"cost_aware": oos, "avg_weights": avg_weights, "n_splits": n_done}
