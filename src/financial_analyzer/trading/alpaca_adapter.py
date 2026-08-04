@@ -30,6 +30,11 @@ from financial_analyzer.trading.broker_adapter import (
     InsufficientFundsError,
     OrderNotFoundError
 )
+from financial_analyzer.trading.safety import (
+    assert_live_allowed,
+    base_url_for_mode,
+    resolve_trading_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,25 +197,26 @@ class AlpacaAdapter(BrokerAdapter):
         api_key, key_name = first_env(candidates_key)
         secret_key, sec_name = first_env(candidates_secret)
 
-        if base_url is None:
-            # Allow overriding base URL from env in a robust way
-            env_base_candidates = [
-                'APCA_API_BASE_URL',
-                'ALPACA_API_BASE_URL',
-                'ALPACA_PAPER_BASE_URL' if mode == 'paper' else 'ALPACA_LIVE_BASE_URL',
-            ]
-            for n in env_base_candidates:
-                v = os.environ.get(n)
-                if v:
-                    base_url = v
-                    break
+        # Politique de sûreté : résoudre le mode (le live est rétrogradé en paper
+        # s'il n'est pas explicitement activé) et DÉRIVER l'URL du mode résolu.
+        # On n'accepte plus une base URL d'environnement qui pourrait diverger du
+        # mode (mode=paper mais APCA_API_BASE_URL=live) — ce croisement était le
+        # trou de sûreté principal.
+        resolved_mode = resolve_trading_mode(mode)
+        expected_url = base_url_for_mode(resolved_mode)
+        if base_url is not None and base_url != expected_url:
+            raise ValueError(
+                f"base_url {base_url!r} incohérent avec le mode résolu "
+                f"'{resolved_mode.value}' (attendu {expected_url!r})."
+            )
+        base_url = expected_url
 
         if not api_key or not secret_key:
             checked = ','.join(candidates_key) + ' / ' + ','.join(candidates_secret)
             raise ValueError(
                 f"Missing Alpaca credentials in env. Checked: {checked}"
             )
-        return cls(api_key=api_key, secret_key=secret_key, mode=mode, base_url=base_url)
+        return cls(api_key=api_key, secret_key=secret_key, mode=resolved_mode.value, base_url=base_url)
     
     def _check_rate_limit(self) -> None:
         """
@@ -250,9 +256,12 @@ class AlpacaAdapter(BrokerAdapter):
             >>> adapter.connect()
             >>> assert adapter.connected is True
         """
+        # Dernier garde-fou avant toute connexion live : refuser le live non
+        # activé, même si l'adaptateur a été construit directement en mode live.
+        assert_live_allowed(self.mode)
         try:
             logger.info("Connecting to Alpaca...")
-            
+
             self.api = tradeapi.REST(
                 key_id=self.api_key,
                 secret_key=self.secret_key,
