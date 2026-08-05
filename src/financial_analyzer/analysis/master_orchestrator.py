@@ -572,14 +572,22 @@ class MasterOrchestrator:
         end = datetime.now()
         start = end - timedelta(days=252)
         
-        prices = loader.load_prices(
+        price_data = loader.load_prices(
             symbols=self.symbols,
             start_date=start.strftime('%Y-%m-%d'),
             end_date=end.strftime('%Y-%m-%d'),
         )
-        
+
+        # PITDataLoader returns {symbol: OHLCV DataFrame}; build a close-price
+        # panel before computing returns (a bare dict has no .pct_change()).
+        if isinstance(price_data, dict):
+            prices = pd.DataFrame(
+                {sym: df['close'] for sym, df in price_data.items() if not df.empty}
+            )
+        else:
+            prices = price_data
         returns = prices.pct_change().dropna()
-        
+
         # Current weights (from portfolio snapshot)
         current_positions = pre_analysis.current_portfolio.get('positions', [])
         current_weights = pd.Series(0.0, index=self.symbols)
@@ -591,23 +599,29 @@ class MasterOrchestrator:
                 if symbol in self.symbols:
                     current_weights[symbol] = pos.get('market_value', 0) / total_value if total_value > 0 else 0.0
         
-        # Optimize target weights
+        # Optimize target weights. The optimizer methods return a dict
+        # {'weights': Series, ...}; there is no 'optimize_mean_variance' (the old
+        # call raised AttributeError and was swallowed) — map to the real methods.
         optimizer = PortfolioOptimizer(returns=returns)
-        
-        if optimization_method == 'mean_variance':
-            target_weights, metrics = optimizer.optimize_mean_variance(
-                risk_aversion=1.0,
-                min_weight=0.0,
-                max_weight=0.2,
-            )
-        elif optimization_method == 'risk_parity':
-            target_weights, metrics = optimizer.optimize_risk_parity()
-        elif optimization_method == 'hrp':
-            target_weights, metrics = optimizer.optimize_hrp()
-        else:
-            # Default: equal weight
+
+        try:
+            if optimization_method == 'risk_parity':
+                result = optimizer.optimize_risk_parity()
+            elif optimization_method == 'min_variance':
+                result = optimizer.optimize_min_variance()
+            elif optimization_method == 'equal_weight':
+                result = optimizer.optimize_equal_weight()
+            else:  # 'mean_variance' / 'max_sharpe' default
+                result = optimizer.optimize_max_sharpe()
+            target_weights = pd.Series(result['weights'])
+            metrics = {k: v for k, v in result.items() if k != 'weights'}
+        except Exception as e:
+            logger.warning(f"Optimization failed ({e}); using equal weight")
             target_weights = pd.Series(1.0 / len(self.symbols), index=self.symbols)
             metrics = {}
+
+        # Guarantee a Series indexed by every symbol for the trade computation.
+        target_weights = target_weights.reindex(self.symbols).fillna(0.0)
         
         # Options hedge overlay (if enabled)
         options_hedge_overlay = None
@@ -671,6 +685,20 @@ class MasterOrchestrator:
         Returns:
             ExecutionResult with execution details
         """
+        # SAFETY: this execution path is NOT production-ready. It is unvalidated
+        # and redundant with LiveTradingPipeline: portfolio construction is fed
+        # synthetic random-walk prices (PITDataLoader) and has never been covered
+        # by tests. Rather than let it silently place orders on garbage data, it
+        # refuses any real submission and fails loudly. dry_run analysis is still
+        # allowed. Use LiveTradingPipeline for real order execution.
+        if not dry_run:
+            raise NotImplementedError(
+                "MasterOrchestrator order execution is disabled: this path is "
+                "unvalidated (synthetic prices, no tests) and redundant with "
+                "LiveTradingPipeline. Use LiveTradingPipeline to submit real "
+                "orders, or call this analysis with dry_run=True."
+            )
+
         from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
         from financial_analyzer.trading.account_monitor import AccountMonitor
         from financial_analyzer.trading.risk_guard import RiskGuard, CircuitBreakerTriggered, RiskLimitExceeded, InvalidOrderError
