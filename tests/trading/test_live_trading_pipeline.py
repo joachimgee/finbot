@@ -649,3 +649,40 @@ class TestOptimizeBlackLitterman:
         signals = {"AAPL": 0.8, "MSFT": -0.5}
         weights = pipeline._optimize_portfolio(signals, data)
         assert "MSFT" not in weights  # long-only: negatives filtered out
+
+
+class TestExecuteOrdersLifecycle:
+    """P1: execution results reflect the broker's actual order status, not merely
+    that submit_order returned without raising."""
+
+    def _orders(self):
+        return [{"symbol": "AAPL", "qty": 10, "side": "buy", "price": 150.0, "order_type": "market"}]
+
+    def test_broker_rejection_reported_as_rejected(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {"order_id": "1", "status": "rejected"}
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "rejected"
+        assert "broker_status=rejected" in results[0]["reason"]
+
+    def test_filled_order_reports_filled_qty(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {
+            "order_id": "1",
+            "status": "filled",
+            "filled_qty": 10,
+        }
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "executed"
+        assert results[0]["filled_qty"] == 10
+
+    def test_partial_fill_still_executed_with_qty(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {
+            "order_id": "1",
+            "status": "partially_filled",
+            "filled_qty": 4,
+        }
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "executed"
+        assert results[0]["filled_qty"] == 4

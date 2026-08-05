@@ -883,16 +883,47 @@ class LiveTradingPipeline:
                     order_type=order.get('order_type', 'market'),
                 )
 
+                # Classify by the broker's actual order status rather than
+                # assuming a submitted order was executed: an order can be
+                # rejected/canceled by the broker without raising, and market
+                # orders can fill partially. True position state is reconciled by
+                # monitor.update() after this loop; here we report faithfully.
+                broker_status = (
+                    str(broker_result.get('status', '')).lower()
+                    if isinstance(broker_result, dict)
+                    else ''
+                )
+                if broker_status in ('rejected', 'canceled', 'cancelled', 'expired', 'suspended'):
+                    results.append({
+                        'status': 'rejected',
+                        'order': order,
+                        'result': broker_result,
+                        'reason': f'broker_status={broker_status}',
+                    })
+                    logger.warning(
+                        f"Order rejected by broker: {order['side']} {order['qty']} "
+                        f"{order['symbol']} (status={broker_status})"
+                    )
+                    continue
+
+                filled_qty = (
+                    broker_result.get('filled_qty')
+                    if isinstance(broker_result, dict)
+                    else None
+                )
                 results.append({
                     'status': 'executed',
                     'order': order,
-                    'result': broker_result
+                    'result': broker_result,
+                    'filled_qty': filled_qty,
                 })
-                
+
                 logger.info(
                     f"Order executed: {order['side']} {order['qty']} {order['symbol']} "
-                    f"@ ${order['price']:.2f} (order_id={broker_result.get('order_id', 'N/A')})")
-            
+                    f"@ ${order['price']:.2f} (order_id={broker_result.get('order_id', 'N/A')}, "
+                    f"status={broker_status or 'n/a'}, filled_qty={filled_qty})"
+                )
+
             except Exception as e:
                 results.append({
                     'status': 'rejected',
