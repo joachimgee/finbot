@@ -14,6 +14,8 @@ def test_alpaca_from_env_prefers_apca_env(monkeypatch):
     monkeypatch.setenv('APCA_API_SECRET_KEY', 'SECRET_APCA')
     monkeypatch.setenv('ALPACA_API_KEY', 'KEY_ALP')
     monkeypatch.setenv('ALPACA_API_SECRET', 'SECRET_ALP')
+    # A stray env base URL must NOT override the mode-derived URL: paper vs live
+    # is decided by the resolved mode only (P0 safety fix), so this is ignored.
     monkeypatch.setenv('APCA_API_BASE_URL', 'https://paper-api.apca-test.example')
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
@@ -21,7 +23,8 @@ def test_alpaca_from_env_prefers_apca_env(monkeypatch):
     adapter = AlpacaAdapter.from_env(mode='paper')
     assert adapter.api_key == 'KEY_APCA'
     assert adapter.secret_key == 'SECRET_APCA'
-    assert adapter.base_url == 'https://paper-api.apca-test.example'
+    # Deterministic paper URL, derived from the mode (env override ignored).
+    assert adapter.base_url == 'https://paper-api.alpaca.markets'
 
 
 def test_alpaca_from_env_fallback_alpaca_env(monkeypatch):
@@ -36,6 +39,7 @@ def test_alpaca_from_env_fallback_alpaca_env(monkeypatch):
 
     monkeypatch.setenv('ALPACA_API_KEY', 'KEY_ALP')
     monkeypatch.setenv('ALPACA_API_SECRET', 'SECRET_ALP')
+    # Env-provided base URLs are intentionally ignored (P0 safety fix).
     monkeypatch.setenv('ALPACA_PAPER_BASE_URL', 'https://paper-api.fallback.example')
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
@@ -43,4 +47,5 @@ def test_alpaca_from_env_fallback_alpaca_env(monkeypatch):
     adapter = AlpacaAdapter.from_env(mode='paper')
     assert adapter.api_key == 'KEY_ALP'
     assert adapter.secret_key == 'SECRET_ALP'
-    assert adapter.base_url == 'https://paper-api.fallback.example'
+    # Deterministic paper URL, derived from the mode (env override ignored).
+    assert adapter.base_url == 'https://paper-api.alpaca.markets'

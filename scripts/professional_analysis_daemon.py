@@ -645,6 +645,16 @@ Configuration :
             print(f"  🎯 Master Orchestrator...")
             subset_syms = top_syms[: min(50, len(top_syms))]
             orchestrator = MasterOrchestrator(symbols=subset_syms, mode='paper')
+            # dry_run=True : l'orchestrateur sert UNIQUEMENT à l'analyse/reporting
+            # (construction de portefeuille, Sharpe, validation risque). Il NE
+            # soumet PAS d'ordres. La soumission réelle est faite plus bas, à
+            # l'étape 10, à partir de portfolio_decisions + des signaux de fusion
+            # (composite_score/confidence). C'est la source unique d'ordres.
+            #
+            # Auparavant cet appel était dry_run=False : l'orchestrateur soumettait
+            # une première salve d'ordres sur des signaux internes nuls
+            # (RL/ML/sentiment codés à 0.0), PUIS l'étape 10 soumettait une seconde
+            # salve — double exécution sur le même compte. Voir _run_signal_generation.
             orchestration_result = orchestrator.run_complete_analysis(
                 start_date=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
                 end_date=datetime.now().strftime('%Y-%m-%d'),
@@ -654,15 +664,15 @@ Configuration :
                 use_sentiment=True,
                 optimization_method='mean_variance',
                 enable_options_hedge=True,
-                dry_run=False,
+                dry_run=True,
             )
             if orchestration_result.portfolio_construction:
                 print(f"     ✅ Sharpe: {orchestration_result.portfolio_construction.expected_sharpe:.2f}")
                 print(f"     ✅ Return: {orchestration_result.portfolio_construction.expected_return:.2%}")
                 print(f"     ✅ Vol: {orchestration_result.portfolio_construction.expected_volatility:.2%}")
             if orchestration_result.execution:
-                print(f"     ✅ Orders submitted: {len(orchestration_result.execution.orders_submitted)}")
-                print(f"     ✅ Orders executed: {len(orchestration_result.execution.orders_executed)}")
+                # dry_run : ordres seulement préparés/validés, pas soumis (l'étape 10 soumet)
+                print(f"     ✅ Ordres préparés (analyse, non soumis): {len(orchestration_result.execution.orders_submitted)}")
                 if orchestration_result.execution.risk_score:
                     print(f"     ✅ Risk score: {orchestration_result.execution.risk_score:.1f}")
         except Exception as e:

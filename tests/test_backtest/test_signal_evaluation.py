@@ -1,0 +1,113 @@
+"""Tests du harness d'évaluation de signal (coûts + IC + walk-forward)."""
+import numpy as np
+import pandas as pd
+import pytest
+
+from financial_analyzer.backtest.signal_evaluation import (
+    CostModel,
+    cross_sectional_weights,
+    evaluate_signal,
+    walk_forward_evaluate,
+)
+
+
+def _make_panel(n_dates=300, n_assets=20, beta=0.03, noise=0.02, seed=0):
+    """Panel où scores[t] prédit le rendement t->t+1 (beta>0 = vrai edge)."""
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2020-01-01", periods=n_dates, freq="B")
+    cols = [f"A{i}" for i in range(n_assets)]
+    scores = pd.DataFrame(rng.standard_normal((n_dates, n_assets)), index=dates, columns=cols)
+    # returns[t] = beta * scores[t-1] + bruit  =>  scores[t] prédit returns[t+1]
+    shifted = scores.shift(1).fillna(0.0)
+    rets = beta * shifted + rng.standard_normal((n_dates, n_assets)) * noise
+    return scores, rets
+
+
+# ----------------------------- cross_sectional_weights -----------------------------
+
+def test_weights_dollar_neutral_and_normalized():
+    row = pd.Series({f"A{i}": float(i) for i in range(20)})
+    w = cross_sectional_weights(row, quantile=0.2, long_short=True)
+    assert abs(w.sum()) < 1e-9              # dollar-neutre
+    assert abs(w.abs().sum() - 1.0) < 1e-9  # normalisé
+    assert w["A19"] > 0 and w["A0"] < 0     # top long, bottom short
+
+
+def test_weights_long_only():
+    row = pd.Series({f"A{i}": float(i) for i in range(20)})
+    w = cross_sectional_weights(row, quantile=0.25, long_short=False)
+    assert (w >= 0).all()
+    assert abs(w.abs().sum() - 1.0) < 1e-9
+
+
+def test_weights_too_few_assets_returns_zero():
+    row = pd.Series({"A": 1.0, "B": 2.0})
+    w = cross_sectional_weights(row, quantile=0.2)
+    assert (w == 0).all()
+
+
+# ----------------------------- evaluate_signal -----------------------------
+
+def test_predictive_signal_has_positive_ic_and_edge():
+    scores, rets = _make_panel(beta=0.04, seed=1)
+    res = evaluate_signal(scores, rets, CostModel(commission_bps=5, slippage_bps=2))
+    assert res.ic_mean > 0.05          # tri informatif
+    assert res.ic_t_stat > 3           # statistiquement net
+    assert res.gross_sharpe > 1.0      # edge brut réel
+    assert res.net_sharpe > 0          # survit à des coûts modérés
+
+
+def test_random_signal_has_no_edge():
+    rng = np.random.default_rng(2)
+    dates = pd.date_range("2020-01-01", periods=300, freq="B")
+    cols = [f"A{i}" for i in range(20)]
+    scores = pd.DataFrame(rng.standard_normal((300, 20)), index=dates, columns=cols)
+    rets = pd.DataFrame(rng.standard_normal((300, 20)) * 0.02, index=dates, columns=cols)
+    res = evaluate_signal(scores, rets)
+    assert abs(res.ic_mean) < 0.03     # IC ≈ 0
+    assert abs(res.ic_t_stat) < 2.5    # non significatif
+
+
+def test_costs_reduce_net_return():
+    scores, rets = _make_panel(beta=0.04, seed=3)
+    cheap = evaluate_signal(scores, rets, CostModel(commission_bps=1, slippage_bps=0))
+    dear = evaluate_signal(scores, rets, CostModel(commission_bps=50, slippage_bps=30))
+    assert dear.net_ann_return < cheap.net_ann_return
+    assert cheap.gross_ann_return == pytest.approx(dear.gross_ann_return, rel=1e-9)  # brut inchangé
+
+
+def test_cost_model_rate():
+    assert CostModel(commission_bps=20, slippage_bps=5).cost_rate == pytest.approx(0.0025)
+
+
+# ----------------------------- walk_forward_evaluate -----------------------------
+
+def test_walk_forward_out_of_sample_edge():
+    scores, rets = _make_panel(n_dates=600, beta=0.04, seed=4)
+    out = walk_forward_evaluate(scores, rets, n_splits=5,
+                                cost_model=CostModel(commission_bps=5, slippage_bps=2))
+    assert out["n_splits"] >= 4
+    assert out["oos"] is not None
+    assert out["oos"].ic_mean > 0.03        # edge persiste hors échantillon
+    assert out["oos"].n_periods > 0
+
+
+def test_walk_forward_rejects_short_history():
+    scores, rets = _make_panel(n_dates=20, seed=5)
+    with pytest.raises(ValueError):
+        walk_forward_evaluate(scores, rets, n_splits=5)
+
+
+def test_walk_forward_custom_fit_predict_is_out_of_sample():
+    """Un fit_predict qui trahirait le futur échouerait ; ici on vérifie juste
+    que le combinateur reçoit bien des fenêtres train/test disjointes."""
+    scores, rets = _make_panel(n_dates=400, seed=6)
+    seen = {}
+
+    def fit_predict(s_train, r_train, s_test):
+        # les indices train et test ne doivent jamais se chevaucher
+        seen["overlap"] = set(s_train.index) & set(s_test.index)
+        return s_test
+
+    walk_forward_evaluate(scores, rets, fit_predict=fit_predict, n_splits=4)
+    assert seen["overlap"] == set()

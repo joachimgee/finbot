@@ -569,3 +569,120 @@ class TestStatusAndMetrics:
 
 
 # Run with: pytest tests/trading/test_live_trading_pipeline.py -v --cov
+
+
+class TestGenerateSignalsAbstention:
+    """P1: stub sources abstain (no fabricated 0.0); weights renormalise over
+    the signal sources that truly produced a value."""
+
+    @staticmethod
+    def _rising_df():
+        idx = pd.date_range("2024-01-01", periods=25, freq="D")
+        close = pd.Series(np.linspace(100.0, 120.0, 25), index=idx)
+        return pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": 1e6},
+            index=idx,
+        )
+
+    def _momentum(self, df):
+        returns_20d = df["close"].iloc[-1] / df["close"].iloc[-20] - 1
+        return float(np.tanh(returns_20d * 10))
+
+    def test_ml_stub_does_not_dilute(self, pipeline):
+        """With only momentum available, the signal equals the momentum signal
+        (renormalised to weight 1.0) — the dead ML source no longer scales it down."""
+        df = self._rising_df()
+        data = {"prices": {"AAPL": df}, "sentiment": {}}
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None
+        ):
+            signals = pipeline._generate_signals(data)
+        assert signals["AAPL"] == pytest.approx(self._momentum(df), abs=1e-9)
+
+    def test_sentiment_included_when_present(self, pipeline):
+        df = self._rising_df()
+        data = {"prices": {"AAPL": df}, "sentiment": {"AAPL": 0.5}}
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None
+        ):
+            signals = pipeline._generate_signals(data)
+        mom = self._momentum(df)
+        expected = (0.5 * 0.2 + mom * 0.3) / (0.2 + 0.3)
+        assert signals["AAPL"] == pytest.approx(expected, abs=1e-9)
+
+    def test_no_price_data_abstains(self, pipeline):
+        signals = pipeline._generate_signals({"prices": {}, "sentiment": {}})
+        for ticker in pipeline.tickers:
+            assert signals[ticker] == 0.0
+
+
+class TestOptimizeBlackLitterman:
+    """P1: real signals tilt allocation via Black-Litterman views (existing
+    PortfolioOptimizer.optimize_black_litterman), not just Sharpe on prices."""
+
+    @staticmethod
+    def _prices(sym_to_last):
+        idx = pd.date_range("2024-01-01", periods=40, freq="D")
+        cols = {}
+        for sym, last in sym_to_last.items():
+            cols[sym] = pd.Series(np.linspace(100.0, last, 40), index=idx)
+        return {sym: pd.DataFrame({"close": s}) for sym, s in cols.items()}
+
+    def test_stronger_signal_gets_more_weight(self, pipeline):
+        # Two symbols, near-identical price paths so Sharpe alone wouldn't
+        # separate them; only the signal strength differs.
+        data = {"prices": self._prices({"AAPL": 118.0, "MSFT": 119.0})}
+        signals = {"AAPL": 0.9, "MSFT": 0.2}
+        # Force the PyPortfolioOpt path off so BL (or proportional) decides.
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.PyPortfolioOptOptimizer", None
+        ), patch(
+            "financial_analyzer.trading.live_trading_pipeline.RiskfolioOptimizer", None
+        ):
+            weights = pipeline._optimize_portfolio(signals, data)
+        assert weights, "expected non-empty weights"
+        assert weights["AAPL"] > weights["MSFT"]
+        assert abs(sum(weights.values()) - 1.0) < 1e-6
+
+    def test_negative_signals_excluded(self, pipeline):
+        data = {"prices": self._prices({"AAPL": 118.0, "MSFT": 119.0})}
+        signals = {"AAPL": 0.8, "MSFT": -0.5}
+        weights = pipeline._optimize_portfolio(signals, data)
+        assert "MSFT" not in weights  # long-only: negatives filtered out
+
+
+class TestExecuteOrdersLifecycle:
+    """P1: execution results reflect the broker's actual order status, not merely
+    that submit_order returned without raising."""
+
+    def _orders(self):
+        return [{"symbol": "AAPL", "qty": 10, "side": "buy", "price": 150.0, "order_type": "market"}]
+
+    def test_broker_rejection_reported_as_rejected(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {"order_id": "1", "status": "rejected"}
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "rejected"
+        assert "broker_status=rejected" in results[0]["reason"]
+
+    def test_filled_order_reports_filled_qty(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {
+            "order_id": "1",
+            "status": "filled",
+            "filled_qty": 10,
+        }
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "executed"
+        assert results[0]["filled_qty"] == 10
+
+    def test_partial_fill_still_executed_with_qty(self, pipeline):
+        pipeline.order_gateway = MagicMock()
+        pipeline.order_gateway.submit.return_value = {
+            "order_id": "1",
+            "status": "partially_filled",
+            "filled_qty": 4,
+        }
+        results = pipeline._execute_orders_with_risk_checks(self._orders())
+        assert results[0]["status"] == "executed"
+        assert results[0]["filled_qty"] == 4

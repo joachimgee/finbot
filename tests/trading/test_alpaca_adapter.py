@@ -577,3 +577,44 @@ class TestRateLimiting:
         
         # Should have slept at least 0.5 seconds
         assert elapsed > 0.5
+
+
+class TestFromEnvSafety:
+    """Fail-safe paper/live behaviour of the from_env factory + connect guard."""
+
+    from financial_analyzer.trading.safety import (
+        LIVE_ENABLE_ENV as _ENABLE,
+        LIVE_CONFIRM_TOKEN as _TOKEN,
+        LIVE_BASE_URL as _LIVE_URL,
+        PAPER_BASE_URL as _PAPER_URL,
+        LiveTradingNotEnabledError as _LiveErr,
+    )
+
+    def _creds(self, monkeypatch):
+        monkeypatch.setenv("APCA_API_KEY_ID", "k")
+        monkeypatch.setenv("APCA_API_SECRET_KEY", "s")
+        monkeypatch.delenv(self._ENABLE, raising=False)
+
+    def test_live_request_downgraded_to_paper_when_disabled(self, monkeypatch):
+        self._creds(monkeypatch)
+        a = AlpacaAdapter.from_env(mode="live")
+        assert a.mode == "paper"
+        assert a.base_url == self._PAPER_URL
+
+    def test_live_request_honored_when_enabled(self, monkeypatch):
+        self._creds(monkeypatch)
+        monkeypatch.setenv(self._ENABLE, self._TOKEN)
+        a = AlpacaAdapter.from_env(mode="live")
+        assert a.mode == "live"
+        assert a.base_url == self._LIVE_URL
+
+    def test_divergent_base_url_rejected(self, monkeypatch):
+        self._creds(monkeypatch)
+        with pytest.raises(ValueError):
+            AlpacaAdapter.from_env(mode="paper", base_url=self._LIVE_URL)
+
+    def test_connect_refuses_live_when_disabled(self, monkeypatch):
+        monkeypatch.delenv(self._ENABLE, raising=False)
+        a = AlpacaAdapter(api_key="k", secret_key="s", mode="live")
+        with pytest.raises(self._LiveErr):
+            a.connect()
