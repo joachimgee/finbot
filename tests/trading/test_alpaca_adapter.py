@@ -618,3 +618,21 @@ class TestFromEnvSafety:
         a = AlpacaAdapter(api_key="k", secret_key="s", mode="live")
         with pytest.raises(self._LiveErr):
             a.connect()
+
+
+def test_submit_order_refuses_live_when_disabled(monkeypatch):
+    """Defense-in-depth: a direct submit_order (bypassing OrderGateway) still
+    cannot place a live order unless live is explicitly enabled."""
+    from financial_analyzer.trading.safety import (
+        LIVE_ENABLE_ENV,
+        LiveTradingNotEnabledError,
+    )
+
+    monkeypatch.delenv(LIVE_ENABLE_ENV, raising=False)
+    a = AlpacaAdapter(api_key="k", secret_key="s", mode="live")
+    # Bypass connect() (which also guards) to isolate the submit_order guard.
+    a.connected = True
+    a.api = MagicMock()
+    with pytest.raises(LiveTradingNotEnabledError):
+        a.submit_order("AAPL", 1, "buy")
+    a.api.submit_order.assert_not_called()
