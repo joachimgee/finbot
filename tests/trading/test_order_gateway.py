@@ -126,3 +126,12 @@ def test_dry_run_still_enforces_mode_guard():
     gw, _broker, _ = _make(mode="live")
     with pytest.raises(LiveTradingNotEnabledError):
         gw.submit("AAPL", 10, "buy", price=150.0, dry_run=True)
+
+
+def test_fractional_qty_is_accepted():
+    """The daemon liquidates whole positions with fractional share counts; the
+    gateway must pass them straight through (Alpaca supports fractional)."""
+    gw, broker, risk = _make()
+    gw.submit("AAPL", 1.5, "sell", price=150.0)
+    risk.validate_order.assert_called_once_with(symbol="AAPL", qty=1.5, side="sell", price=150.0)
+    assert broker.submit_order.call_args.kwargs["qty"] == 1.5

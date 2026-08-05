@@ -871,7 +871,31 @@ Configuration :
         
         adapter = AlpacaAdapter.from_env(mode='paper')
         adapter.connect()
-        
+
+        # Route TOUTE soumission d'ordres par le chokepoint unique audité
+        # (mode-gate + RiskGuard + idempotence + audit), au lieu d'appeler
+        # adapter.submit_order en direct. Les limites du RiskGuard sont calées
+        # sur l'equity et sur le nombre de positions visé par ce daemon (jusqu'à
+        # ~60) pour ne pas rejeter d'ordres légitimes, tout en gardant circuit
+        # breaker / drawdown / perte quotidienne.
+        from financial_analyzer.trading.account_monitor import AccountMonitor
+        from financial_analyzer.trading.risk_guard import RiskGuard
+        from financial_analyzer.trading.order_gateway import OrderGateway
+        _monitor = AccountMonitor(adapter)
+        _monitor.update()
+        _equity_now = float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0)
+        _risk_guard = RiskGuard(
+            account_monitor=_monitor,
+            max_position_size=max(_equity_now, 50000.0),
+            max_position_pct=0.35,
+            max_total_positions=100,
+            max_drawdown=-0.25,
+            max_daily_loss=max(_equity_now * 0.10, 1000.0),
+            max_leverage=1.5,
+            enable_circuit_breaker=True,
+        )
+        gateway = OrderGateway(adapter, _risk_guard)
+
         # ÉTAPE 1: Exécuter les ordres SELL pour positions à liquider
         if portfolio_decisions:
             sell_positions = [sym for sym, dec in portfolio_decisions.items() if dec['decision'] == 'SELL']
@@ -882,11 +906,11 @@ Configuration :
                     try:
                         pos = adapter.api.get_position(sym)
                         qty = float(pos.qty)
-                        order = adapter.submit_order(
+                        order = gateway.submit(
                             symbol=sym,
                             qty=qty,
                             side='sell',
-                            order_type='market'
+                            order_type='market',
                         )
                         print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('id', 'N/A')})")
                         print(f"       Raison: {', '.join(portfolio_decisions[sym]['reasons'])}")
@@ -1022,13 +1046,13 @@ Configuration :
                     if abs(delta) > 0:
                         if delta > 0:
                             # Buy
-                            order = adapter.submit_order(symbol, abs(delta), 'buy', order_type='market')
+                            order = gateway.submit(symbol, abs(delta), 'buy', price=float(price), order_type='market')
                             if order:
                                 orders_submitted += 1
                                 print(f"  ✅ BUY {symbol}: {abs(delta)} shares @ ${price:.2f}")
                         else:
                             # Sell
-                            order = adapter.submit_order(symbol, abs(delta), 'sell', order_type='market')
+                            order = gateway.submit(symbol, abs(delta), 'sell', price=float(price), order_type='market')
                             if order:
                                 orders_submitted += 1
                                 print(f"  ✅ SELL {symbol}: {abs(delta)} shares @ ${price:.2f}")

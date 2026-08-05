@@ -242,6 +242,18 @@ def build_and_apply_portfolio(alpaca: AlpacaAdapter, market_data: MarketDataFetc
 
 
 def main():
+    # DEPRECATED: this script submits orders directly, bypassing the OrderGateway
+    # safety chokepoint. Use scripts/professional_analysis_daemon.py (routes every
+    # order through OrderGateway). Refuse to run unless explicitly overridden.
+    if os.environ.get("FINBOT_ALLOW_DEPRECATED_SCRIPTS") != "1":
+        print(
+            "DEPRECATED: run_daily_professional_manager.py bypasses the OrderGateway "
+            "safety chokepoint. Use scripts/professional_analysis_daemon.py instead. "
+            "Set FINBOT_ALLOW_DEPRECATED_SCRIPTS=1 to override (not recommended).",
+            file=sys.stderr,
+        )
+        return 1
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true', help='Do not submit orders to Alpaca')
     parser.add_argument('--limit', type=int, default=5000, help='Max tickers to analyze (global)')
