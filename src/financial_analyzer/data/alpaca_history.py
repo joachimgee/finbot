@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import requests
 
-__all__ = ["fetch_daily_history", "load_or_fetch"]
+__all__ = ["fetch_daily_history", "fetch_daily_ohlcv", "load_or_fetch"]
 
 _URL = "https://data.alpaca.markets/v2/stocks/bars"
 
@@ -84,6 +84,72 @@ def fetch_daily_history(
     if not series:
         return pd.DataFrame()
     return pd.concat(series, axis=1).sort_index()
+
+
+def fetch_daily_ohlcv(
+    tickers: List[str],
+    start: str,
+    end: str,
+    api_key: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    feed: str = "iex",
+    timeout: int = 30,
+    chunk_size: int = 200,
+    progress: bool = False,
+) -> Dict[str, pd.DataFrame]:
+    """Barres quotidiennes OHLCV **ajustées** (splits + dividendes) par symbole.
+
+    Même endpoint que :func:`fetch_daily_history` mais conserve open/high/low/
+    close/volume par symbole (point-in-time correct via ``adjustment="all"``),
+    au format attendu par ``PITDataLoader`` : ``{symbole: DataFrame OHLCV}``.
+    """
+    headers = _keys(api_key, secret_key)
+    bars_by_sym: Dict[str, list] = {}
+
+    chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+    for ci, chunk in enumerate(chunks):
+        page_token: Optional[str] = None
+        while True:
+            params = {
+                "symbols": ",".join(chunk),
+                "timeframe": "1Day",
+                "start": start,
+                "end": end,
+                "limit": 10000,
+                "adjustment": "all",
+                "feed": feed,
+            }
+            if page_token:
+                params["page_token"] = page_token
+            r = requests.get(_URL, headers=headers, params=params, timeout=timeout)
+            r.raise_for_status()
+            payload = r.json()
+            for sym, sym_bars in (payload.get("bars") or {}).items():
+                bars_by_sym.setdefault(sym, []).extend(sym_bars)
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                break
+        if progress:
+            print(f"  lot {ci+1}/{len(chunks)} ({len(chunk)} sym) : {len(bars_by_sym)} tickers avec données")
+
+    out: Dict[str, pd.DataFrame] = {}
+    for sym, bars in bars_by_sym.items():
+        if not bars:
+            continue
+        idx = pd.DatetimeIndex([pd.Timestamp(b["t"]).normalize() for b in bars])
+        df = pd.DataFrame(
+            {
+                "open": [float(b["o"]) for b in bars],
+                "high": [float(b["h"]) for b in bars],
+                "low": [float(b["l"]) for b in bars],
+                "close": [float(b["c"]) for b in bars],
+                "volume": [float(b["v"]) for b in bars],
+            },
+            index=idx,
+        ).sort_index()
+        # A paginated feed can repeat a boundary bar; keep the last occurrence.
+        out[sym] = df[~df.index.duplicated(keep="last")]
+    return out
 
 
 def load_or_fetch(

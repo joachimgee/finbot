@@ -203,7 +203,9 @@ def run_daily_preanalysis(
     Returns:
         Dict with preanalysis results including drift status and options analysis
     """
-    loader = PITDataLoader()
+    # Real adjusted prices when Alpaca credentials are present; degrades to
+    # synthetic (loudly) otherwise so offline/CI pre-analysis still runs.
+    loader = PITDataLoader(source="alpaca")
     prices_dict = loader.load_prices(symbols, start_date, end_date)
     metadata = loader.load_metadata(symbols)
     rewards = list(list_rewards().keys())
