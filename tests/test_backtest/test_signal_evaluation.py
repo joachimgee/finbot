@@ -111,3 +111,37 @@ def test_walk_forward_custom_fit_predict_is_out_of_sample():
 
     walk_forward_evaluate(scores, rets, fit_predict=fit_predict, n_splits=4)
     assert seen["overlap"] == set()
+
+
+class TestRebalancePeriod:
+    """Portail: a longer rebalancing period holds weights and cuts turnover/cost
+    without dropping periods (addresses momentum over-trading in daily)."""
+
+    @staticmethod
+    def _data():
+        import numpy as np
+        import pandas as pd
+        rng = np.random.default_rng(0)
+        dates = pd.date_range("2021-01-01", periods=120, freq="B")
+        cols = [f"A{i}" for i in range(8)]
+        # Scores that change every day -> daily rebalancing churns a lot.
+        scores = pd.DataFrame(rng.normal(size=(len(dates), len(cols))), index=dates, columns=cols)
+        returns = pd.DataFrame(rng.normal(0, 0.02, size=(len(dates), len(cols))), index=dates, columns=cols)
+        return scores, returns
+
+    def test_longer_period_reduces_turnover(self):
+        from financial_analyzer.backtest.signal_evaluation import evaluate_signal
+        scores, returns = self._data()
+        daily = evaluate_signal(scores, returns, rebalance_every=1)
+        held = evaluate_signal(scores, returns, rebalance_every=10)
+        assert held.avg_turnover < daily.avg_turnover
+        # Holding must not drop evaluation periods.
+        assert held.n_periods == daily.n_periods
+
+    def test_period_one_matches_default(self):
+        from financial_analyzer.backtest.signal_evaluation import evaluate_signal
+        scores, returns = self._data()
+        a = evaluate_signal(scores, returns)
+        b = evaluate_signal(scores, returns, rebalance_every=1)
+        assert a.avg_turnover == b.avg_turnover
+        assert a.net_ann_return == b.net_ann_return

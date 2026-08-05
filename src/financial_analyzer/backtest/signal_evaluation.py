@@ -144,6 +144,7 @@ def evaluate_signal(
     quantile: float = 0.2,
     long_short: bool = True,
     periods_per_year: int = 252,
+    rebalance_every: int = 1,
 ) -> SignalEvalResult:
     """Évalue un signal cross-sectionnel, coûts inclus.
 
@@ -156,11 +157,16 @@ def evaluate_signal(
         quantile: fraction long/short de chaque côté (0.2 = top/bottom 20 %).
         long_short: True pour un portefeuille dollar-neutre long/short.
         periods_per_year: 252 pour du journalier (annualisation Sharpe).
+        rebalance_every: nombre de périodes entre deux rééquilibrages. 1 (défaut)
+            = rééquilibrage à chaque période (turnover maximal). N > 1 tient les
+            poids N périodes, ce qui réduit le turnover et les coûts — utile pour
+            un signal lent comme le momentum, sur-tradé en quotidien.
 
     Returns:
         SignalEvalResult (IC, Sharpe brut/net, rendement net, turnover).
     """
     cost_model = cost_model or CostModel()
+    rebalance_every = max(1, int(rebalance_every))
 
     # Aligner et décaler : le signal en t est évalué sur le rendement en t+1.
     scores, returns = scores.align(returns, join="inner")
@@ -177,25 +183,36 @@ def evaluate_signal(
     turnovers: List[float] = []
     idx: List[pd.Timestamp] = []
 
+    steps = 0  # compteur de périodes retenues (hors dates sans rendement futur)
     for dt in scores.index:
         fwd = forward_returns.loc[dt]
         if fwd.isna().all():
             continue
-        w = cross_sectional_weights(scores.loc[dt], quantile=quantile, long_short=long_short)
-        gross = float((w * fwd.fillna(0.0)).sum())
 
-        if prev_w is None:
-            turnover = float(w.abs().sum())  # mise en place initiale
+        # Rééquilibrage seulement toutes les `rebalance_every` périodes ; sinon on
+        # tient les poids précédents (aucun turnover, aucun coût entre-temps).
+        if prev_w is None or steps % rebalance_every == 0:
+            target = cross_sectional_weights(
+                scores.loc[dt], quantile=quantile, long_short=long_short
+            )
+            if prev_w is None:
+                turnover = float(target.abs().sum())  # mise en place initiale
+            else:
+                aligned_prev = prev_w.reindex(target.index).fillna(0.0)
+                turnover = float((target - aligned_prev).abs().sum())
+            prev_w = target
         else:
-            aligned_prev = prev_w.reindex(w.index).fillna(0.0)
-            turnover = float((w - aligned_prev).abs().sum())
+            turnover = 0.0
+
+        w = prev_w.reindex(fwd.index).fillna(0.0)
+        gross = float((w * fwd.fillna(0.0)).sum())
         cost = turnover * cost_model.cost_rate
 
         gross_rets.append(gross)
         net_rets.append(gross - cost)
         turnovers.append(turnover)
         idx.append(dt)
-        prev_w = w
+        steps += 1
 
     gross_s = pd.Series(gross_rets, index=idx)
     net_s = pd.Series(net_rets, index=idx)
@@ -236,6 +253,7 @@ def walk_forward_evaluate(
     quantile: float = 0.2,
     long_short: bool = True,
     periods_per_year: int = 252,
+    rebalance_every: int = 1,
 ) -> Dict[str, object]:
     """Évaluation walk-forward strictement out-of-sample.
 
@@ -285,6 +303,7 @@ def walk_forward_evaluate(
         res = evaluate_signal(
             predicted, returns.loc[test_idx], cost_model=cost_model,
             quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
+            rebalance_every=rebalance_every,
         )
         per_window.append(res)
 
@@ -293,6 +312,7 @@ def walk_forward_evaluate(
     oos = evaluate_signal(
         oos_scores, returns.reindex(oos_scores.index), cost_model=cost_model,
         quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
+        rebalance_every=rebalance_every,
     ) if not oos_scores.empty else None
 
     return {"oos": oos, "per_window": per_window, "n_splits": len(per_window)}
