@@ -26,7 +26,7 @@ Architecture:
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Literal, Callable
+from typing import Dict, List, Optional, Literal, Callable, Tuple
 from datetime import datetime, time as dt_time, timedelta
 from dataclasses import dataclass
 import pandas as pd
@@ -523,7 +523,11 @@ class LiveTradingPipeline:
             except Exception as e:
                 logger.debug(f"News fetch skipped: {e}")
         
-        # Sentiment analysis via FinBERT if available
+        # Sentiment analysis via FinBERT if available. A ticker gets a sentiment
+        # entry ONLY when FinBERT actually scores real news for it. On any failure
+        # (no analyzer, no news, empty text, exception) the key is left ABSENT so
+        # the signal layer abstains, instead of being diluted by a fabricated
+        # neutral 0.0 that would look like a real "neutral" view.
         if FinBERTEngine is not None and data['news']:
             try:
                 analyzer = FinBERTEngine()
@@ -533,22 +537,16 @@ class LiveTradingPipeline:
                         texts = [t for t in texts if t.strip()]
                         if texts:
                             scores = [analyzer.analyze_text(t) for t in texts]
-                            avg_score = float(np.mean(scores)) if scores else 0.0
-                            data['sentiment'][ticker] = avg_score
-                        else:
-                            data['sentiment'][ticker] = 0.0
+                            if scores:
+                                data['sentiment'][ticker] = float(np.mean(scores))
                     except Exception:
-                        data['sentiment'][ticker] = 0.0
+                        # Abstain for this ticker (no fabricated neutral score).
+                        continue
                 logger.debug(f"Analyzed sentiment for {len(data['sentiment'])} tickers")
             except Exception as e:
                 logger.debug(f"Sentiment analysis skipped: {e}")
-                # Fallback neutral
-                for ticker in data['prices']:
-                    data['sentiment'][ticker] = 0.0
-        else:
-            # Fallback neutral if no sentiment analyzer
-            for ticker in data['prices']:
-                data['sentiment'][ticker] = 0.0
+        # No analyzer or no news -> data['sentiment'] stays empty and every ticker
+        # abstains from the sentiment component.
         
         return data
     
@@ -586,75 +584,69 @@ class LiveTradingPipeline:
                 signals[ticker] = 0.0
                 continue
             
-            # Component signals
-            tech_signal = 0.0
-            ml_signal = 0.0
-            sentiment_signal = 0.0
-            momentum_signal = 0.0
-            
-            # 1. Technical Indicators
+            # A component is only included when its source truly produced a value
+            # ("maximize what works" + abstain on stubs). Each carries a base
+            # weight; weights are renormalised over the AVAILABLE components, so a
+            # missing or stubbed source neither dilutes the decision with a
+            # fabricated 0.0 nor silently drops a real one.
+            components: List[Tuple[float, float]] = []  # (signal, base_weight)
+
+            # 1. Technical Indicators (RSI, MACD)
             if TechnicalFeatureEngine is not None:
                 try:
                     engine = TechnicalFeatureEngine()
                     features = engine.generate_features(df)
                     if not features.empty and len(features) > 0:
-                        # RSI signal
+                        tech_signal = 0.0
+                        tech_fired = False
                         if 'rsi_14' in features.columns:
                             rsi = float(features['rsi_14'].iloc[-1])
                             if rsi < 30:
                                 tech_signal += 0.5  # oversold
+                                tech_fired = True
                             elif rsi > 70:
                                 tech_signal -= 0.5  # overbought
-                        # MACD signal
+                                tech_fired = True
                         if 'macd' in features.columns and 'macd_signal' in features.columns:
                             macd = float(features['macd'].iloc[-1])
                             macd_sig = float(features['macd_signal'].iloc[-1])
-                            if macd > macd_sig:
-                                tech_signal += 0.3
-                            else:
-                                tech_signal -= 0.3
-                        tech_signal = np.clip(tech_signal, -1, 1)
+                            tech_signal += 0.3 if macd > macd_sig else -0.3
+                            tech_fired = True
+                        if tech_fired:
+                            components.append((float(np.clip(tech_signal, -1, 1)), 0.3))
                 except Exception as e:
                     logger.debug(f"Technical signal failed for {ticker}: {e}")
-            
-            # 2. ML Prediction (LSTM if available)
-            if LSTMPredictor is not None:
-                try:
-                    # Try to load pre-trained model
-                    predictor = LSTMPredictor(input_size=5, hidden_size=64, num_layers=2)
-                    # Placeholder: would need to load weights and predict
-                    # For now, skip if model not trained
-                    pass
-                except Exception:
-                    pass
-            
-            # 3. Sentiment (clé absente si la collecte sentiment est désactivée)
+
+            # 2. ML/LSTM prediction — no trained model is loaded, so this source
+            #    ABSTAINS rather than contributing a fabricated 0.0. Append a real
+            #    prediction with its weight here once a model exists; until then it
+            #    must not influence the decision.
+
+            # 3. Sentiment (FinBERT) — present only when really scored upstream.
             if ticker in data.get('sentiment', {}):
-                sentiment_signal = float(data['sentiment'][ticker])
-                sentiment_signal = np.clip(sentiment_signal, -1, 1)
-            
-            # 4. Momentum (always computed as fallback)
+                sentiment_signal = float(np.clip(data['sentiment'][ticker], -1, 1))
+                components.append((sentiment_signal, 0.2))
+
+            # 4. Momentum (20D) — real whenever enough history exists.
             try:
                 returns_20d = (df['close'].iloc[-1] / df['close'].iloc[-20] - 1)
-                momentum_signal = float(np.tanh(returns_20d * 10))
+                components.append((float(np.tanh(returns_20d * 10)), 0.3))
             except Exception:
-                momentum_signal = 0.0
-            
-            # Combine signals (weighted average)
-            weights = {
-                'technical': 0.3,
-                'ml': 0.2,
-                'sentiment': 0.2,
-                'momentum': 0.3
-            }
-            
-            combined = (
-                tech_signal * weights['technical'] +
-                ml_signal * weights['ml'] +
-                sentiment_signal * weights['sentiment'] +
-                momentum_signal * weights['momentum']
-            )
-            
+                pass
+
+            # Renormalised weighted combine over available components only.
+            if components:
+                weight_sum = sum(w for _, w in components)
+                combined = (
+                    sum(s * w for s, w in components) / weight_sum
+                    if weight_sum > 0
+                    else 0.0
+                )
+            else:
+                # No real signal source for this ticker -> abstain (no position).
+                combined = 0.0
+                logger.debug(f"{ticker}: no real signal source available; abstaining")
+
             signals[ticker] = float(np.clip(combined, -1, 1))
         
         logger.info(f"Generated signals for {len(signals)} tickers (Technical: {TechnicalFeatureEngine is not None}, Sentiment: {FinBERTEngine is not None})")

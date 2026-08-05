@@ -569,3 +569,48 @@ class TestStatusAndMetrics:
 
 
 # Run with: pytest tests/trading/test_live_trading_pipeline.py -v --cov
+
+
+class TestGenerateSignalsAbstention:
+    """P1: stub sources abstain (no fabricated 0.0); weights renormalise over
+    the signal sources that truly produced a value."""
+
+    @staticmethod
+    def _rising_df():
+        idx = pd.date_range("2024-01-01", periods=25, freq="D")
+        close = pd.Series(np.linspace(100.0, 120.0, 25), index=idx)
+        return pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": 1e6},
+            index=idx,
+        )
+
+    def _momentum(self, df):
+        returns_20d = df["close"].iloc[-1] / df["close"].iloc[-20] - 1
+        return float(np.tanh(returns_20d * 10))
+
+    def test_ml_stub_does_not_dilute(self, pipeline):
+        """With only momentum available, the signal equals the momentum signal
+        (renormalised to weight 1.0) — the dead ML source no longer scales it down."""
+        df = self._rising_df()
+        data = {"prices": {"AAPL": df}, "sentiment": {}}
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None
+        ):
+            signals = pipeline._generate_signals(data)
+        assert signals["AAPL"] == pytest.approx(self._momentum(df), abs=1e-9)
+
+    def test_sentiment_included_when_present(self, pipeline):
+        df = self._rising_df()
+        data = {"prices": {"AAPL": df}, "sentiment": {"AAPL": 0.5}}
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None
+        ):
+            signals = pipeline._generate_signals(data)
+        mom = self._momentum(df)
+        expected = (0.5 * 0.2 + mom * 0.3) / (0.2 + 0.3)
+        assert signals["AAPL"] == pytest.approx(expected, abs=1e-9)
+
+    def test_no_price_data_abstains(self, pipeline):
+        signals = pipeline._generate_signals({"prices": {}, "sentiment": {}})
+        for ticker in pipeline.tickers:
+            assert signals[ticker] == 0.0
