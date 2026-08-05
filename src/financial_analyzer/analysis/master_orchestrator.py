@@ -674,7 +674,8 @@ class MasterOrchestrator:
         from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
         from financial_analyzer.trading.account_monitor import AccountMonitor
         from financial_analyzer.trading.risk_guard import RiskGuard, CircuitBreakerTriggered, RiskLimitExceeded, InvalidOrderError
-        
+        from financial_analyzer.trading.order_gateway import OrderGateway
+
         # Initialize broker adapter
         adapter = AlpacaAdapter.from_env(mode=self.mode)
         adapter.connect()
@@ -690,6 +691,8 @@ class MasterOrchestrator:
             max_leverage=2.0,
             enable_circuit_breaker=True,
         )
+        # Single audited execution chokepoint shared with the live pipeline.
+        gateway = OrderGateway(adapter, risk_guard)
         portfolio_value_before = monitor.portfolio_value
         if dry_run:
             logger.info("DRY RUN: validating trades without submission")
@@ -716,9 +719,20 @@ class MasterOrchestrator:
                 if qty < 1:
                     continue
                 side = 'buy' if trade_weight > 0 else 'sell'
-                # Risk validation
+                order_record = {
+                    'symbol': symbol,
+                    'side': side,
+                    'qty': qty,
+                    'price': price,
+                    'trade_weight': float(trade_weight),
+                }
+                # Single audited chokepoint: mode-gate + risk validation +
+                # idempotence + audit, then submission (skipped in dry_run).
                 try:
-                    risk_guard.validate_order(symbol, qty=qty, side=side, price=price)
+                    order_resp = gateway.submit(
+                        symbol, qty, side=side, price=price,
+                        order_type='market', dry_run=dry_run,
+                    )
                 except CircuitBreakerTriggered as cb:
                     circuit_breakers_triggered.append(str(cb))
                     logger.error(f"Circuit breaker triggered – abort remaining orders: {cb}")
@@ -727,19 +741,9 @@ class MasterOrchestrator:
                     logger.warning(f"Order rejected by risk limits: {symbol} {side} qty={qty}: {re}")
                     orders_rejected.append({'symbol': symbol, 'side': side, 'qty': qty, 'reason': str(re)})
                     continue
-                order_record = {
-                    'symbol': symbol,
-                    'side': side,
-                    'qty': qty,
-                    'price': price,
-                    'trade_weight': float(trade_weight),
-                }
                 orders_submitted.append(order_record)
-                if not dry_run:
-                    # Submit order live
-                    order_resp = adapter.submit_order(symbol, qty, side=side, order_type='market')
-                    if order_resp:
-                        orders_executed.append(order_record)
+                if not dry_run and order_resp:
+                    orders_executed.append(order_record)
                 logger.info(f"Prepared order: {symbol} {side} qty={qty} (weight={trade_weight:.3%})")
             except Exception as e:
                 logger.error(f"Failed preparing order for {symbol}: {e}")

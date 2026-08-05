@@ -24,6 +24,14 @@ from financial_analyzer.trading.live_trading_pipeline import (
     TradingSchedule,
     create_demo_pipeline
 )
+from financial_analyzer.trading.order_gateway import OrderGateway
+from financial_analyzer.trading.safety import (
+    LiveTradingNotEnabledError,
+    TradingMode,
+    assert_live_allowed,
+    live_trading_enabled,
+    resolve_trading_mode,
+)
 
 __all__ = [
     'BrokerAdapter',
@@ -39,5 +47,11 @@ __all__ = [
     'InvalidOrderError',
     'LiveTradingPipeline',
     'TradingSchedule',
-    'create_demo_pipeline'
+    'create_demo_pipeline',
+    'OrderGateway',
+    'TradingMode',
+    'LiveTradingNotEnabledError',
+    'assert_live_allowed',
+    'live_trading_enabled',
+    'resolve_trading_mode',
 ]

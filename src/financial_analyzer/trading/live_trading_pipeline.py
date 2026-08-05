@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 from .broker_adapter import BrokerAdapter
 from .account_monitor import AccountMonitor
 from .risk_guard import RiskGuard, CircuitBreakerTriggered
+from .order_gateway import OrderGateway
 
 try:
     from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
@@ -253,7 +254,10 @@ class LiveTradingPipeline:
             account_monitor=self.monitor,
             **risk_config
         )
-        
+
+        # Single audited execution chokepoint (mode-gate + risk + idempotence).
+        self.order_gateway = OrderGateway(self.broker, self.risk_guard)
+
         # Schedule
         self.schedule = schedule_config or TradingSchedule()
         
@@ -843,22 +847,16 @@ class LiveTradingPipeline:
         
         for order in orders:
             try:
-                # Risk check
-                self.risk_guard.validate_order(
+                # Single audited chokepoint: mode-gate + risk check + idempotence
+                # + audit, then broker submission.
+                broker_result = self.order_gateway.submit(
                     symbol=order['symbol'],
                     qty=order['qty'],
                     side=order['side'],
-                    price=order['price']
+                    price=order['price'],
+                    order_type=order.get('order_type', 'market'),
                 )
-                
-                # Submit to broker
-                broker_result = self.broker.submit_order(
-                    symbol=order['symbol'],
-                    qty=order['qty'],
-                    side=order['side'],
-                    order_type=order.get('order_type', 'market')
-                )
-                
+
                 results.append({
                     'status': 'executed',
                     'order': order,
