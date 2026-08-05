@@ -614,3 +614,38 @@ class TestGenerateSignalsAbstention:
         signals = pipeline._generate_signals({"prices": {}, "sentiment": {}})
         for ticker in pipeline.tickers:
             assert signals[ticker] == 0.0
+
+
+class TestOptimizeBlackLitterman:
+    """P1: real signals tilt allocation via Black-Litterman views (existing
+    PortfolioOptimizer.optimize_black_litterman), not just Sharpe on prices."""
+
+    @staticmethod
+    def _prices(sym_to_last):
+        idx = pd.date_range("2024-01-01", periods=40, freq="D")
+        cols = {}
+        for sym, last in sym_to_last.items():
+            cols[sym] = pd.Series(np.linspace(100.0, last, 40), index=idx)
+        return {sym: pd.DataFrame({"close": s}) for sym, s in cols.items()}
+
+    def test_stronger_signal_gets_more_weight(self, pipeline):
+        # Two symbols, near-identical price paths so Sharpe alone wouldn't
+        # separate them; only the signal strength differs.
+        data = {"prices": self._prices({"AAPL": 118.0, "MSFT": 119.0})}
+        signals = {"AAPL": 0.9, "MSFT": 0.2}
+        # Force the PyPortfolioOpt path off so BL (or proportional) decides.
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.PyPortfolioOptOptimizer", None
+        ), patch(
+            "financial_analyzer.trading.live_trading_pipeline.RiskfolioOptimizer", None
+        ):
+            weights = pipeline._optimize_portfolio(signals, data)
+        assert weights, "expected non-empty weights"
+        assert weights["AAPL"] > weights["MSFT"]
+        assert abs(sum(weights.values()) - 1.0) < 1e-6
+
+    def test_negative_signals_excluded(self, pipeline):
+        data = {"prices": self._prices({"AAPL": 118.0, "MSFT": 119.0})}
+        signals = {"AAPL": 0.8, "MSFT": -0.5}
+        weights = pipeline._optimize_portfolio(signals, data)
+        assert "MSFT" not in weights  # long-only: negatives filtered out

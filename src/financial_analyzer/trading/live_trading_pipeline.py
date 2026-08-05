@@ -698,7 +698,41 @@ class LiveTradingPipeline:
             total_signal = sum(positive_signals.values())
             return {symbol: signal / total_signal for symbol, signal in positive_signals.items()}
         
-        # Try PyPortfolioOpt first (Max Sharpe)
+        # Primary: Black-Litterman. The signal magnitudes become expected-return
+        # views blended with the market prior, so the real signals actually tilt
+        # the weights. (Plain Max-Sharpe below ignores signal strength — it would
+        # optimise the same regardless of how strong each signal is.)
+        try:
+            from financial_analyzer.portfolio.optimizer import PortfolioOptimizer
+
+            returns_bl = prices_df.pct_change().dropna()
+            if len(returns_bl) >= 20:
+                max_view = 0.15  # a +1 signal -> +15% annual expected-return view
+                views = {
+                    sym: float(positive_signals[sym]) * max_view
+                    for sym in returns_bl.columns
+                    if sym in positive_signals
+                }
+                confidences = {
+                    sym: float(min(1.0, abs(positive_signals[sym]))) for sym in views
+                }
+                if views:
+                    optimizer = PortfolioOptimizer(returns=returns_bl)
+                    bl = optimizer.optimize_black_litterman(views, confidences=confidences)
+                    weights_dict = {
+                        k: max(0.0, float(v)) for k, v in bl["weights"].to_dict().items()
+                    }
+                    total = sum(weights_dict.values())
+                    if total > 0:
+                        weights_dict = {k: v / total for k, v in weights_dict.items()}
+                        logger.info(
+                            f"Optimized with Black-Litterman ({len(views)} signal views)"
+                        )
+                        return weights_dict
+        except Exception as e:
+            logger.warning(f"Black-Litterman failed: {e}; trying PyPortfolioOpt")
+
+        # Try PyPortfolioOpt (Max Sharpe)
         if PyPortfolioOptOptimizer is not None:
             try:
                 opt = PyPortfolioOptOptimizer(prices_df)
