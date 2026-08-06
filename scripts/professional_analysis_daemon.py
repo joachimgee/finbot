@@ -881,6 +881,7 @@ Configuration :
         from financial_analyzer.trading.account_monitor import AccountMonitor
         from financial_analyzer.trading.risk_guard import RiskGuard
         from financial_analyzer.trading.order_gateway import OrderGateway
+        from financial_analyzer.trading.journal import TradingJournal
         _monitor = AccountMonitor(adapter)
         _monitor.update()
         _equity_now = float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0)
@@ -894,7 +895,17 @@ Configuration :
             max_leverage=1.5,
             enable_circuit_breaker=True,
         )
-        gateway = OrderGateway(adapter, _risk_guard)
+        # Persistent execution journal (order audit trail + account snapshots for
+        # P&L / reconciliation). Every order routed through the gateway is recorded.
+        _journal = TradingJournal(f"logs/execution_journal_{datetime.now().strftime('%Y%m')}.jsonl")
+        _journal.record_snapshot(
+            equity=_equity_now,
+            cash=float(getattr(_monitor, 'cash', 0.0) or 0.0),
+            n_positions=len(getattr(_monitor, 'positions', []) or []),
+            event='run_start',
+            mode=adapter.mode,
+        )
+        gateway = OrderGateway(adapter, _risk_guard, journal=_journal)
 
         # ÉTAPE 1: Exécuter les ordres SELL pour positions à liquider
         if portfolio_decisions:

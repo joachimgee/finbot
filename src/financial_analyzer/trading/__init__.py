@@ -25,6 +25,7 @@ from financial_analyzer.trading.live_trading_pipeline import (
     create_demo_pipeline
 )
 from financial_analyzer.trading.order_gateway import OrderGateway
+from financial_analyzer.trading.journal import TradingJournal
 from financial_analyzer.trading.safety import (
     LiveTradingNotEnabledError,
     TradingMode,
@@ -49,6 +50,7 @@ __all__ = [
     'TradingSchedule',
     'create_demo_pipeline',
     'OrderGateway',
+    'TradingJournal',
     'TradingMode',
     'LiveTradingNotEnabledError',
     'assert_live_allowed',
