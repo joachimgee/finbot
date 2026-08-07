@@ -97,6 +97,10 @@ class TradingJournal:
         """Enregistre un rapport de réconciliation (déjà sérialisé en dict)."""
         self._append(report)
 
+    def record_manifest(self, manifest: dict[str, Any]) -> None:
+        """Enregistre un manifeste de run (commit git, versions, config…)."""
+        self._append(manifest)
+
     def read(self) -> list[dict[str, Any]]:
         """Relit tous les événements du journal (ordre chronologique d'écriture)."""
         if not self.path.exists():

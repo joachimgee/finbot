@@ -882,6 +882,7 @@ Configuration :
         from financial_analyzer.trading.risk_guard import RiskGuard
         from financial_analyzer.trading.order_gateway import OrderGateway
         from financial_analyzer.trading.journal import TradingJournal
+        from financial_analyzer.trading.run_manifest import build_run_manifest
         _monitor = AccountMonitor(adapter)
         _monitor.update()
         _equity_now = float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0)
@@ -898,6 +899,8 @@ Configuration :
         # Persistent execution journal (order audit trail + account snapshots for
         # P&L / reconciliation). Every order routed through the gateway is recorded.
         _journal = TradingJournal(f"logs/execution_journal_{datetime.now().strftime('%Y%m')}.jsonl")
+        # Manifeste de reproductibilité : commit git + versions + mode de ce run.
+        _journal.record_manifest(build_run_manifest(mode=adapter.mode))
         _journal.record_snapshot(
             equity=_equity_now,
             cash=float(getattr(_monitor, 'cash', 0.0) or 0.0),

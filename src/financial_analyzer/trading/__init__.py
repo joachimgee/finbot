@@ -30,6 +30,7 @@ from financial_analyzer.trading.reconciliation import (
     ReconciliationReport,
     reconcile_orders,
 )
+from financial_analyzer.trading.run_manifest import build_run_manifest
 from financial_analyzer.trading.safety import (
     LiveTradingNotEnabledError,
     TradingMode,
@@ -57,6 +58,7 @@ __all__ = [
     'TradingJournal',
     'ReconciliationReport',
     'reconcile_orders',
+    'build_run_manifest',
     'TradingMode',
     'LiveTradingNotEnabledError',
     'assert_live_allowed',
