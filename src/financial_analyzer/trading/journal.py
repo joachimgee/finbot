@@ -93,6 +93,10 @@ class TradingJournal:
             }
         )
 
+    def record_reconciliation(self, report: dict[str, Any]) -> None:
+        """Enregistre un rapport de réconciliation (déjà sérialisé en dict)."""
+        self._append(report)
+
     def read(self) -> list[dict[str, Any]]:
         """Relit tous les événements du journal (ordre chronologique d'écriture)."""
         if not self.path.exists():

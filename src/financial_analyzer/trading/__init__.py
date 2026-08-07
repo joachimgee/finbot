@@ -26,6 +26,10 @@ from financial_analyzer.trading.live_trading_pipeline import (
 )
 from financial_analyzer.trading.order_gateway import OrderGateway
 from financial_analyzer.trading.journal import TradingJournal
+from financial_analyzer.trading.reconciliation import (
+    ReconciliationReport,
+    reconcile_orders,
+)
 from financial_analyzer.trading.safety import (
     LiveTradingNotEnabledError,
     TradingMode,
@@ -51,6 +55,8 @@ __all__ = [
     'create_demo_pipeline',
     'OrderGateway',
     'TradingJournal',
+    'ReconciliationReport',
+    'reconcile_orders',
     'TradingMode',
     'LiveTradingNotEnabledError',
     'assert_live_allowed',

@@ -1074,7 +1074,38 @@ Configuration :
         print(f"\n✅ Ordres soumis: {orders_submitted}, Échecs: {orders_failed}")
         if drift_flag:
             print("⚠️  DRIFT MODEL SIGNALÉ PAR PRÉ-ANALYSE - RETRAIN RECOMMANDÉ")
-        
+
+        # Réconciliation post-exécution : ce qui a été journalisé vs ce qui existe
+        # réellement chez le broker. Un écart (ordre perdu, ou ordre présent chez
+        # le broker mais absent du journal = contournement du chokepoint) est
+        # journalisé et alerté.
+        try:
+            from financial_analyzer.trading.reconciliation import reconcile_orders
+            _broker_orders = adapter.get_orders(status='all', limit=200) or []
+            _recon = reconcile_orders(_journal.orders(), _broker_orders)
+            _journal.record_reconciliation(_recon.to_dict())
+            if _recon.ok:
+                print(f"  ✅ {_recon.summary()}")
+            else:
+                print(f"  🚨 ALERTE — {_recon.summary()}")
+                logger.error("Réconciliation en écart: %s", _recon.summary())
+        except Exception as _re:
+            logger.warning("Réconciliation impossible: %s", _re)
+
+        # Snapshot de fin de run (suivi P&L / réconciliation ultérieure).
+        try:
+            _monitor.update()
+            _journal.record_snapshot(
+                equity=float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0),
+                cash=float(getattr(_monitor, 'cash', 0.0) or 0.0),
+                n_positions=len(getattr(_monitor, 'positions', []) or []),
+                event='run_end',
+                orders_submitted=orders_submitted,
+                orders_failed=orders_failed,
+            )
+        except Exception as _se:
+            logger.warning("Snapshot de fin impossible: %s", _se)
+
         adapter.disconnect()
         return True
     
