@@ -124,9 +124,12 @@ def test_synthetic_deterministic_across_hashseed():
         print(round(float(d["MSFT"]["close"].iloc[-1]), 8))
         """
     )
+    # Propagate the parent's import path so the child can find financial_analyzer
+    # regardless of how it's installed (editable / CI layout).
+    child_pythonpath = os.pathsep.join(p for p in sys.path if p)
     outs = []
     for seed in ("0", "12345"):
-        env = {**os.environ, "PYTHONHASHSEED": seed}
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": child_pythonpath}
         r = subprocess.run(
             [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=False
         )
