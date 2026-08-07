@@ -22,6 +22,7 @@ Example:
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -112,7 +113,11 @@ class PITDataLoader:
         dates = pd.date_range(start=start_date, end=end_date, freq="B")
         data: dict[str, pd.DataFrame] = {}
         for sym in symbols:
-            seed = (hash(sym) + hash(start_date)) % (2**32)
+            # Hash stable (indépendant de PYTHONHASHSEED) pour un synthétique
+            # vraiment déterministe entre exécutions/environnements — la fonction
+            # built-in hash() sur des str est randomisée par processus.
+            digest = hashlib.sha256(f"{sym}|{start_date}".encode()).hexdigest()
+            seed = int(digest[:8], 16)
             rng = np.random.default_rng(seed)
             returns = rng.normal(0.0005, 0.02, len(dates))
             prices = 100 * np.exp(np.cumsum(returns))

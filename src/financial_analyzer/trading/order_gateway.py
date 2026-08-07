@@ -82,7 +82,7 @@ class OrderGateway:
     def submit(
         self,
         symbol: str,
-        qty: int,
+        qty: float,
         side: str,
         price: float | None = None,
         order_type: str = "market",
@@ -93,7 +93,9 @@ class OrderGateway:
 
         Args:
             symbol: Symbole (ex. ``'AAPL'``).
-            qty: Quantité (entier positif).
+            qty: Quantité positive. Les fractions sont acceptées (Alpaca supporte
+                les actions fractionnaires ; la liquidation d'une position passe
+                ``float(pos.qty)``).
             side: ``'buy'`` ou ``'sell'``.
             price: Prix attendu, pour le calcul de taille du RiskGuard.
             order_type: ``'market'`` ou ``'limit'``.

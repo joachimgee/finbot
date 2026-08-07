@@ -923,7 +923,7 @@ Configuration :
                             side='sell',
                             order_type='market',
                         )
-                        print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('id', 'N/A')})")
+                        print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('order_id', 'N/A')})")
                         print(f"       Raison: {', '.join(portfolio_decisions[sym]['reasons'])}")
                     except Exception as e:
                         print(f"    ❌ SELL {sym} échoué: {e}")

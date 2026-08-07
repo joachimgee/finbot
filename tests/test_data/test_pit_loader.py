@@ -106,3 +106,30 @@ def test_fetch_daily_ohlcv_parses_payload(monkeypatch):
     assert list(out["AAPL"].columns) == _OHLCV
     assert out["AAPL"]["close"].tolist() == [1.5, 2.0]
     assert len(out["AAPL"]) == 2
+
+
+def test_synthetic_deterministic_across_hashseed():
+    """Synthetic data must be reproducible across processes/environments — the
+    seed no longer depends on the per-process randomized built-in hash()."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent(
+        """
+        from financial_analyzer.data.pit_loader import PITDataLoader
+        d = PITDataLoader().load_prices(["AAPL", "MSFT"], "2020-01-01", "2020-02-01")
+        print(round(float(d["AAPL"]["close"].iloc[0]), 8))
+        print(round(float(d["MSFT"]["close"].iloc[-1]), 8))
+        """
+    )
+    outs = []
+    for seed in ("0", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        r = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, env=env, check=False
+        )
+        assert r.returncode == 0, r.stderr
+        outs.append(r.stdout.strip())
+    assert outs[0] == outs[1], f"non déterministe entre hashseeds:\n{outs[0]}\n{outs[1]}"
