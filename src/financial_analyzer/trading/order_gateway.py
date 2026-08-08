@@ -15,12 +15,15 @@ Responsabilité unique : router un ordre validé vers le broker, une seule fois.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from financial_analyzer.trading.broker_adapter import BrokerAdapter
 from financial_analyzer.trading.risk_guard import RiskGuard
 from financial_analyzer.trading.safety import assert_live_allowed
 from financial_analyzer.utils.helpers import get_logger
+
+if TYPE_CHECKING:
+    from financial_analyzer.trading.journal import TradingJournal
 
 logger = get_logger(__name__)
 
@@ -47,21 +50,39 @@ class OrderGateway:
     l'ordre sur dépassement de limite, etc.).
     """
 
-    def __init__(self, broker: BrokerAdapter, risk_guard: RiskGuard) -> None:
+    def __init__(
+        self,
+        broker: BrokerAdapter,
+        risk_guard: RiskGuard,
+        journal: TradingJournal | None = None,
+    ) -> None:
         """
         Args:
             broker: Adaptateur broker connecté (mécanisme de soumission).
             risk_guard: Garde de risque partagé (limites + circuit breaker).
+            journal: journal d'exécution optionnel ; si fourni, chaque issue
+                (soumission, dry-run, dédup, rejet) y est persistée. La
+                journalisation ne peut jamais interrompre le trading.
         """
         self.broker = broker
         self.risk_guard = risk_guard
+        self.journal = journal
         # Clés d'idempotence déjà soumises pendant cette session -> résultat broker.
         self._submitted: dict[str, dict[str, Any]] = {}
+
+    def _record(self, **fields: Any) -> None:
+        """Persiste un événement d'ordre si un journal est branché (best-effort)."""
+        if self.journal is None:
+            return
+        try:
+            self.journal.record_order(mode=getattr(self.broker, "mode", "paper"), **fields)
+        except Exception as je:  # noqa: BLE001 - journaling must never break trading
+            logger.warning("Journalisation d'ordre échouée: %s", je)
 
     def submit(
         self,
         symbol: str,
-        qty: int,
+        qty: float,
         side: str,
         price: float | None = None,
         order_type: str = "market",
@@ -72,7 +93,9 @@ class OrderGateway:
 
         Args:
             symbol: Symbole (ex. ``'AAPL'``).
-            qty: Quantité (entier positif).
+            qty: Quantité positive. Les fractions sont acceptées (Alpaca supporte
+                les actions fractionnaires ; la liquidation d'une position passe
+                ``float(pos.qty)``).
             side: ``'buy'`` ou ``'sell'``.
             price: Prix attendu, pour le calcul de taille du RiskGuard.
             order_type: ``'market'`` ou ``'limit'``.
@@ -91,18 +114,33 @@ class OrderGateway:
             CircuitBreakerTriggered / RiskLimitExceeded / InvalidOrderError:
                 Propagées telles quelles depuis le RiskGuard.
         """
-        # 1. Garde de mode : dernier verrou avant une action potentiellement live.
-        assert_live_allowed(getattr(self.broker, "mode", "paper"))
-
         key = idempotency_key or f"{symbol}:{side}:{qty}:{order_type}"
 
-        # 2. Idempotence : ne pas resoumettre une clé déjà passée cette session.
-        if key in self._submitted:
-            logger.warning("Ordre idempotent déjà soumis cette session (clé=%s) — ignoré.", key)
-            return self._submitted[key]
+        # 1-3. Garde de mode, idempotence et contrôle de risque. Toute issue de
+        # rejet est journalisée avant de remonter au caller.
+        try:
+            # 1. Garde de mode : dernier verrou avant une action potentiellement live.
+            assert_live_allowed(getattr(self.broker, "mode", "paper"))
 
-        # 3. Contrôle de risque (les exceptions remontent volontairement).
-        self.risk_guard.validate_order(symbol=symbol, qty=qty, side=side, price=price)
+            # 2. Idempotence : ne pas resoumettre une clé déjà passée cette session.
+            if key in self._submitted:
+                logger.warning(
+                    "Ordre idempotent déjà soumis cette session (clé=%s) — ignoré.", key
+                )
+                self._record(
+                    symbol=symbol, side=side, qty=qty, order_type=order_type,
+                    status="duplicate_skipped", price=price, dry_run=dry_run,
+                )
+                return self._submitted[key]
+
+            # 3. Contrôle de risque (les exceptions remontent volontairement).
+            self.risk_guard.validate_order(symbol=symbol, qty=qty, side=side, price=price)
+        except Exception as e:
+            self._record(
+                symbol=symbol, side=side, qty=qty, order_type=order_type,
+                status="rejected", price=price, reason=str(e), dry_run=dry_run,
+            )
+            raise
 
         # 4. Audit de l'intention.
         logger.info(
@@ -126,6 +164,10 @@ class OrderGateway:
                 "order_type": order_type,
             }
             logger.info("ORDER dry_run: non soumis au broker (%s %s %s).", side, qty, symbol)
+            self._record(
+                symbol=symbol, side=side, qty=qty, order_type=order_type,
+                status="dry_run", price=price, dry_run=True,
+            )
             return result
 
         result = self.broker.submit_order(
@@ -135,11 +177,19 @@ class OrderGateway:
             order_type=order_type,
         )
         self._submitted[key] = result
+        _is_dict = isinstance(result, dict)
         logger.info(
             "ORDER submitted: %s %s %s (order_id=%s)",
             side,
             qty,
             symbol,
-            result.get("order_id", "N/A") if isinstance(result, dict) else "N/A",
+            result.get("order_id", "N/A") if _is_dict else "N/A",
+        )
+        self._record(
+            symbol=symbol, side=side, qty=qty, order_type=order_type,
+            status=str(result.get("status", "submitted")) if _is_dict else "submitted",
+            order_id=result.get("order_id") if _is_dict else None,
+            filled_qty=result.get("filled_qty") if _is_dict else None,
+            price=price,
         )
         return result

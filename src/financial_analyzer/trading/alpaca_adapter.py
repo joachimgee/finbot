@@ -338,7 +338,13 @@ class AlpacaAdapter(BrokerAdapter):
         """
         if not self.connected or self.api is None:
             raise BrokerAPIError("Not connected to broker. Call connect() first.")
-        
+
+        # Defense-in-depth: refuse a live submission unless live is explicitly
+        # enabled — even for callers that bypass OrderGateway (legacy scripts).
+        # connect() already blocks a live connection; this is the last-line guard
+        # right before an irreversible order reaches the broker.
+        assert_live_allowed(self.mode)
+
         # Validate symbol
         self._validate_symbol(symbol)
         

@@ -1198,6 +1198,21 @@ Profil Risque :
 
 
 def main():
+    # DEPRECATED: this script submits orders directly, bypassing the OrderGateway
+    # safety chokepoint (mode-gate + RiskGuard + idempotence + audit). The
+    # canonical daily path is scripts/professional_analysis_daemon.py, which routes
+    # every order through OrderGateway. Refuse to run unless explicitly overridden.
+    import os as _os
+    import sys as _sys
+    if _os.environ.get("FINBOT_ALLOW_DEPRECATED_SCRIPTS") != "1":
+        print(
+            "DEPRECATED: professional_analysis.py bypasses the OrderGateway safety "
+            "chokepoint. Use scripts/professional_analysis_daemon.py instead. Set "
+            "FINBOT_ALLOW_DEPRECATED_SCRIPTS=1 to override (not recommended).",
+            file=_sys.stderr,
+        )
+        return 1
+
     # Parse args au top level
     parser = argparse.ArgumentParser(
         description='PROFESSIONAL MARKET ANALYSIS - Production Grade avec TOUS les modules',

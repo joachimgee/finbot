@@ -871,7 +871,45 @@ Configuration :
         
         adapter = AlpacaAdapter.from_env(mode='paper')
         adapter.connect()
-        
+
+        # Route TOUTE soumission d'ordres par le chokepoint unique audité
+        # (mode-gate + RiskGuard + idempotence + audit), au lieu d'appeler
+        # adapter.submit_order en direct. Les limites du RiskGuard sont calées
+        # sur l'equity et sur le nombre de positions visé par ce daemon (jusqu'à
+        # ~60) pour ne pas rejeter d'ordres légitimes, tout en gardant circuit
+        # breaker / drawdown / perte quotidienne.
+        from financial_analyzer.trading.account_monitor import AccountMonitor
+        from financial_analyzer.trading.risk_guard import RiskGuard
+        from financial_analyzer.trading.order_gateway import OrderGateway
+        from financial_analyzer.trading.journal import TradingJournal
+        from financial_analyzer.trading.run_manifest import build_run_manifest
+        _monitor = AccountMonitor(adapter)
+        _monitor.update()
+        _equity_now = float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0)
+        _risk_guard = RiskGuard(
+            account_monitor=_monitor,
+            max_position_size=max(_equity_now, 50000.0),
+            max_position_pct=0.35,
+            max_total_positions=100,
+            max_drawdown=-0.25,
+            max_daily_loss=max(_equity_now * 0.10, 1000.0),
+            max_leverage=1.5,
+            enable_circuit_breaker=True,
+        )
+        # Persistent execution journal (order audit trail + account snapshots for
+        # P&L / reconciliation). Every order routed through the gateway is recorded.
+        _journal = TradingJournal(f"logs/execution_journal_{datetime.now().strftime('%Y%m')}.jsonl")
+        # Manifeste de reproductibilité : commit git + versions + mode de ce run.
+        _journal.record_manifest(build_run_manifest(mode=adapter.mode))
+        _journal.record_snapshot(
+            equity=_equity_now,
+            cash=float(getattr(_monitor, 'cash', 0.0) or 0.0),
+            n_positions=len(getattr(_monitor, 'positions', []) or []),
+            event='run_start',
+            mode=adapter.mode,
+        )
+        gateway = OrderGateway(adapter, _risk_guard, journal=_journal)
+
         # ÉTAPE 1: Exécuter les ordres SELL pour positions à liquider
         if portfolio_decisions:
             sell_positions = [sym for sym, dec in portfolio_decisions.items() if dec['decision'] == 'SELL']
@@ -882,13 +920,13 @@ Configuration :
                     try:
                         pos = adapter.api.get_position(sym)
                         qty = float(pos.qty)
-                        order = adapter.submit_order(
+                        order = gateway.submit(
                             symbol=sym,
                             qty=qty,
                             side='sell',
-                            order_type='market'
+                            order_type='market',
                         )
-                        print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('id', 'N/A')})")
+                        print(f"    ✅ SELL {sym}: {qty} shares (ordre {order.get('order_id', 'N/A')})")
                         print(f"       Raison: {', '.join(portfolio_decisions[sym]['reasons'])}")
                     except Exception as e:
                         print(f"    ❌ SELL {sym} échoué: {e}")
@@ -1022,13 +1060,13 @@ Configuration :
                     if abs(delta) > 0:
                         if delta > 0:
                             # Buy
-                            order = adapter.submit_order(symbol, abs(delta), 'buy', order_type='market')
+                            order = gateway.submit(symbol, abs(delta), 'buy', price=float(price), order_type='market')
                             if order:
                                 orders_submitted += 1
                                 print(f"  ✅ BUY {symbol}: {abs(delta)} shares @ ${price:.2f}")
                         else:
                             # Sell
-                            order = adapter.submit_order(symbol, abs(delta), 'sell', order_type='market')
+                            order = gateway.submit(symbol, abs(delta), 'sell', price=float(price), order_type='market')
                             if order:
                                 orders_submitted += 1
                                 print(f"  ✅ SELL {symbol}: {abs(delta)} shares @ ${price:.2f}")
@@ -1039,7 +1077,38 @@ Configuration :
         print(f"\n✅ Ordres soumis: {orders_submitted}, Échecs: {orders_failed}")
         if drift_flag:
             print("⚠️  DRIFT MODEL SIGNALÉ PAR PRÉ-ANALYSE - RETRAIN RECOMMANDÉ")
-        
+
+        # Réconciliation post-exécution : ce qui a été journalisé vs ce qui existe
+        # réellement chez le broker. Un écart (ordre perdu, ou ordre présent chez
+        # le broker mais absent du journal = contournement du chokepoint) est
+        # journalisé et alerté.
+        try:
+            from financial_analyzer.trading.reconciliation import reconcile_orders
+            _broker_orders = adapter.get_orders(status='all', limit=200) or []
+            _recon = reconcile_orders(_journal.orders(), _broker_orders)
+            _journal.record_reconciliation(_recon.to_dict())
+            if _recon.ok:
+                print(f"  ✅ {_recon.summary()}")
+            else:
+                print(f"  🚨 ALERTE — {_recon.summary()}")
+                logger.error("Réconciliation en écart: %s", _recon.summary())
+        except Exception as _re:
+            logger.warning("Réconciliation impossible: %s", _re)
+
+        # Snapshot de fin de run (suivi P&L / réconciliation ultérieure).
+        try:
+            _monitor.update()
+            _journal.record_snapshot(
+                equity=float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0),
+                cash=float(getattr(_monitor, 'cash', 0.0) or 0.0),
+                n_positions=len(getattr(_monitor, 'positions', []) or []),
+                event='run_end',
+                orders_submitted=orders_submitted,
+                orders_failed=orders_failed,
+            )
+        except Exception as _se:
+            logger.warning("Snapshot de fin impossible: %s", _se)
+
         adapter.disconnect()
         return True
     

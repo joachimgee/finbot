@@ -566,7 +566,9 @@ class MasterOrchestrator:
         from financial_analyzer.data.pit_loader import PITDataLoader
         
         # Load price data
-        loader = PITDataLoader()
+        # Real adjusted prices when Alpaca credentials are present; degrades to
+        # synthetic (loudly) otherwise so offline/CI analysis still runs.
+        loader = PITDataLoader(source="alpaca")
         # Use last 252 days for optimization
         from datetime import timedelta
         end = datetime.now()
