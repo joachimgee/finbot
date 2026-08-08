@@ -686,3 +686,30 @@ class TestExecuteOrdersLifecycle:
         results = pipeline._execute_orders_with_risk_checks(self._orders())
         assert results[0]["status"] == "executed"
         assert results[0]["filled_qty"] == 4
+
+
+class TestValidatedMomentumSignal:
+    """P2: with enough history the momentum component uses the OOS-validated 12-1
+    factor; with short history it falls back to the 20-day proxy."""
+
+    @staticmethod
+    def _rising(n):
+        idx = pd.date_range("2022-01-01", periods=n, freq="B")
+        close = pd.Series(np.linspace(100.0, 200.0, n), index=idx)
+        return pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1e6}, index=idx)
+
+    def test_uses_12_1_momentum_when_history_long(self, pipeline):
+        df = self._rising(300)
+        data = {"prices": {"AAPL": df}, "sentiment": {}}
+        with patch("financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None):
+            signals = pipeline._generate_signals(data)
+        mom = df["close"].iloc[-21] / df["close"].iloc[-252] - 1
+        assert signals["AAPL"] == pytest.approx(float(np.tanh(mom * 3)), abs=1e-9)
+
+    def test_falls_back_to_20d_when_history_short(self, pipeline):
+        df = self._rising(30)  # < 252 rows
+        data = {"prices": {"AAPL": df}, "sentiment": {}}
+        with patch("financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None):
+            signals = pipeline._generate_signals(data)
+        r20 = df["close"].iloc[-1] / df["close"].iloc[-20] - 1
+        assert signals["AAPL"] == pytest.approx(float(np.tanh(r20 * 10)), abs=1e-9)

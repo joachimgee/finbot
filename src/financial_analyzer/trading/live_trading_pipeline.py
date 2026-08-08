@@ -434,9 +434,11 @@ class LiveTradingPipeline:
             'sentiment': {}
         }
         
-        # Fetch prices (last 60 days for indicators)
+        # Fetch ~14 months of history: enough calendar days (~420) to leave 252
+        # trading days for the validated 12-1 momentum factor, plus the shorter
+        # windows (RSI/MACD, 20-day momentum) used by the other components.
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=60)
+        start_date = end_date - timedelta(days=420)
         
         # Prefer batched fetching when available (reduces API calls, better for 1000+ tickers)
         if hasattr(self.broker, 'get_bars_multi'):
@@ -627,10 +629,17 @@ class LiveTradingPipeline:
                 sentiment_signal = float(np.clip(data['sentiment'][ticker], -1, 1))
                 components.append((sentiment_signal, 0.2))
 
-            # 4. Momentum (20D) — real whenever enough history exists.
+            # 4. Momentum. Prefer the OOS-validated 12-1 factor (12-month return
+            #    excluding the last month) — the most robust, lowest-turnover
+            #    signal in factor validation — when enough history exists; else
+            #    fall back to the 20-day proxy.
             try:
-                returns_20d = (df['close'].iloc[-1] / df['close'].iloc[-20] - 1)
-                components.append((float(np.tanh(returns_20d * 10)), 0.3))
+                if len(df) >= 252:
+                    mom = df['close'].iloc[-21] / df['close'].iloc[-252] - 1  # 12-1
+                    components.append((float(np.tanh(mom * 3)), 0.3))
+                else:
+                    returns_20d = (df['close'].iloc[-1] / df['close'].iloc[-20] - 1)
+                    components.append((float(np.tanh(returns_20d * 10)), 0.3))
             except Exception:
                 pass
 
