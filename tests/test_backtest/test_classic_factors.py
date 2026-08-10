@@ -27,10 +27,40 @@ def test_returns_shape_and_first_nan():
 def test_factor_panels_present_and_aligned():
     p = _prices()
     f = compute_classic_factors(p)
-    assert set(f) == {"momentum_12_1", "reversal_5", "low_vol"}
+    assert set(f) == {
+        "momentum_12_1",
+        "momentum_6_1",
+        "reversal_5",
+        "reversal_21",
+        "low_vol",
+        "low_vol_60",
+        "max_lottery",
+        "high_52w",
+    }
     for panel in f.values():
         assert panel.shape == p.shape
         assert list(panel.columns) == list(p.columns)
+
+
+def test_high_52w_in_unit_range():
+    """La proximité au plus-haut 52 semaines est dans (0, 1] (prix / plus-haut)."""
+    p = _prices(n_dates=400, seed=3)
+    h = compute_classic_factors(p)["high_52w"]
+    vals = h.values[~np.isnan(h.values)]
+    assert (vals > 0).all()
+    assert (vals <= 1.0 + 1e-9).all()
+
+
+def test_max_lottery_sign():
+    """max_lottery doit être plus bas (plus négatif) pour l'actif à gros pic."""
+    dates = pd.date_range("2020-01-01", periods=60, freq="B")
+    steady = pd.Series(100 * np.exp(np.cumsum(np.full(60, 0.0005))), index=dates)
+    spikes = np.full(60, 0.0005)
+    spikes[50] = 0.20  # rendement « loterie », dans la fenêtre 21j du dernier jour
+    lottery = pd.Series(100 * np.exp(np.cumsum(spikes)), index=dates)
+    p = pd.DataFrame({"STEADY": steady, "LOTTERY": lottery})
+    ml = compute_classic_factors(p)["max_lottery"].iloc[-1]
+    assert ml["LOTTERY"] < ml["STEADY"]
 
 
 def test_factors_only_use_past():
