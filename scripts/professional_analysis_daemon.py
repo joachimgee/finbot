@@ -558,23 +558,29 @@ Configuration :
 
         # 6. Calcul scores professionnels (300+ facteurs) + FUSION MULTI-SOURCES
         print(f"\n🧠 Calcul scores professionnels (~300+ facteurs par symbole)...")
-        print(f"🔗 Fusion signaux multi-sources: Technical + Fundamental + Sentiment + ML + RL")
-        
+        print(f"🔗 Fusion signaux multi-sources: Technical + Sentiment (sources réelles)")
+
         # Initialize fusion engine
         # Historique de performance (placeholder) pour reweighting evidence-based
         # Dans une version future, charger depuis stockage persistant.
         performance_history = None
+        # N.B. On ne pondère QUE les sources réellement câblées (technical +
+        # sentiment). Les sources fundamental / ml_lstm / ml_factor / rl
+        # s'abstiennent tant qu'aucun modèle validé/entraîné n'est branché (voir
+        # SignalFusionEngine.ABSTAINING_SOURCES) : leur passer un poids ici ne
+        # ferait que documenter un signal qui n'existe pas encore.
+        # fallback_mode=False : on n'accepte un signal fusionné QUE si au moins
+        # `min_sources` sources réelles concordent. Sinon la fusion s'abstient
+        # pour ce symbole et le score professionnel (compute_professional_score,
+        # ~300 facteurs IC-pondérés) reste seul maître — pas de trade sur une
+        # source technique isolée maintenant que le rembourrage stub a disparu.
         fusion_engine = SignalFusionEngine(
             source_weights={
-                'technical': 0.20,
-                'fundamental': 0.25,
-                'sentiment': 0.15,
-                'ml_lstm': 0.20,
-                'ml_factor': 0.10,
-                'rl': 0.10,
+                'technical': 0.55,
+                'sentiment': 0.45,
             },
             min_sources=2,
-            fallback_mode=True,
+            fallback_mode=False,
             weighting_history=performance_history,
             auto_reweight=True,
         )
@@ -591,26 +597,38 @@ Configuration :
         fusion_stats = fusion_engine.get_stats()
         print(f"  ✅ Sources actives: {', '.join(fusion_stats['active_sources'])}")
         print(f"  ✅ Signaux fusionnés: {len(fused_signals_df)}")
-        
+
+        # Index sûr des symboles fusionnés. Avec l'abstention des sources stub,
+        # la fusion peut légitimement ne rien produire (DataFrame vide, sans
+        # colonne 'symbol') si < min_sources réelles sont disponibles — on évite
+        # donc tout accès direct à fused_signals_df['symbol'] qui lèverait alors.
+        fused_by_symbol = (
+            {row['symbol']: row for _, row in fused_signals_df.iterrows()}
+            if not fused_signals_df.empty and 'symbol' in fused_signals_df.columns
+            else {}
+        )
+
         # Calcul scores professionnels originaux (backup/enrichment)
         signals = []
-        
+
         for idx, symbol in enumerate(prices.columns):
             if idx % 50 == 0 and idx > 0:
                 print(f"  Progress scores pro: {idx}/{len(prices.columns)}")
-            
+
             signal_data = compute_professional_score(
                 symbol=symbol,
                 bars=bars_dict.get(symbol, pd.DataFrame()),
                 weighting_method=weighting
             )
-            
+
             # Merger avec signal fusionné si disponible
-            if symbol in fused_signals_df['symbol'].values:
-                fused_row = fused_signals_df[fused_signals_df['symbol'] == symbol].iloc[0]
+            if symbol in fused_by_symbol:
+                fused_row = fused_by_symbol[symbol]
                 signal_data['fused_score'] = fused_row['composite_score']
                 signal_data['fused_confidence'] = fused_row['confidence']
-                # Copier sous-scores des sources
+                # Copier sous-scores des sources réellement présentes. Les sources
+                # abstentionnistes (fundamental/ml_lstm/ml_factor/rl) n'émettent
+                # aucune colonne : le garde `in fused_row` les ignore proprement.
                 for source in ['technical', 'fundamental', 'sentiment', 'ml_lstm', 'ml_factor', 'rl']:
                     if f'{source}_score' in fused_row:
                         signal_data[f'{source}_score'] = fused_row[f'{source}_score']

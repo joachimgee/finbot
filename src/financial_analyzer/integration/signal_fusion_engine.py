@@ -99,7 +99,22 @@ class SignalFusionEngine:
         'ml_factor': 0.10,
         'rl': 0.10,
     }
-    
+
+    # Sources dont le contenu n'est PAS encore un vrai signal validé/entraîné.
+    # Elles s'abstiennent (retournent None) au lieu d'injecter une constante 0.5
+    # qui, une fois pondérée, tirerait le score composite vers le neutre sans
+    # apporter d'information — c'est du bruit déguisé en signal. Tant qu'un
+    # modèle réel (fondamentaux point-in-time, LSTM entraîné, factor/RL models)
+    # n'est pas câblé, ces sources restent silencieuses et la fusion renormalise
+    # sur les seules sources réelles (technical, sentiment). Voir
+    # docs/SYSTEM_ASSESSMENT_AND_ROADMAP.md (P0).
+    ABSTAINING_SOURCES = {
+        'fundamental': "aucun modèle fondamental point-in-time câblé (placeholder constant)",
+        'ml_lstm': "aucun LSTM entraîné chargé (proxy momentum 5j non validé)",
+        'ml_factor': "aucun modèle factor/news entraîné (placeholder constant)",
+        'rl': "aucune policy RL entraînée chargée (placeholder constant)",
+    }
+
     def __init__(
         self,
         source_weights: Optional[Dict[str, float]] = None,
@@ -130,6 +145,8 @@ class SignalFusionEngine:
         self.fallback_mode = fallback_mode
         self.cache_ttl_minutes = cache_ttl_minutes
         self.cache: Dict[str, Tuple[FusedSignal, datetime]] = {}
+        # Sources déjà signalées comme abstentionnistes (log une seule fois).
+        self._abstained_logged: set[str] = set()
         
         # Initialize sub-engines (lazy loading)
         self._technical_engine = None
@@ -184,6 +201,21 @@ class SignalFusionEngine:
             logger.warning(f"⚠️ update_weights_from_history échoué: {e}")
             return self.source_weights
     
+    def _abstain(self, source: str) -> None:
+        """Fait abstenir une source stub (retourne None), en journalisant une fois.
+
+        Injecter une constante (0.5) pour une source sans vrai modèle revient à
+        diluer le signal composite avec du bruit neutre. On préfère l'abstention
+        explicite : la fusion renormalise alors sur les seules sources réelles.
+        """
+        if source not in self._abstained_logged:
+            reason = self.ABSTAINING_SOURCES.get(source, "source non implémentée")
+            logger.warning(
+                f"⏸️  Source '{source}' s'abstient (poids retiré de la fusion) : {reason}"
+            )
+            self._abstained_logged.add(source)
+        return None
+
     def _init_technical_engine(self):
         """Lazy init TechnicalFeatureEngine."""
         if self._technical_engine is None:
@@ -353,27 +385,12 @@ class SignalFusionEngine:
         Returns:
             SignalComponent ou None si échec
         """
-        engine = self._init_fundamental_engine()
-        if engine is None or fundamental_data is None:
-            return None
-        
-        try:
-            # Placeholder: normaliser ratios fondamentaux
-            # Dans production, utiliser FundamentalFeatureEngine.compute()
-            score = 0.5  # Neutre par défaut
-            confidence = 0.5
-            
-            return SignalComponent(
-                source='fundamental',
-                score=score,
-                confidence=confidence,
-                weight=self.source_weights.get('fundamental', 1.0),
-                metadata={}
-            )
-        
-        except Exception as e:
-            logger.debug(f"Fundamental signal failed for {symbol}: {e}")
-            return None
+        # Abstention : aucun modèle fondamental point-in-time n'est câblé ici.
+        # L'ancienne implémentation renvoyait un score constant 0.5 (neutre), ce
+        # qui injectait du bruit pondéré dans la fusion sans aucune information.
+        # Tant que FundamentalFeatureEngine.compute() n'est pas branché sur des
+        # ratios réels et point-in-time, cette source reste silencieuse.
+        return self._abstain('fundamental')
     
     def _get_sentiment_signal(
         self,
@@ -431,28 +448,13 @@ class SignalFusionEngine:
         Returns:
             SignalComponent ou None si échec
         """
-        predictor = self._init_lstm_predictor()
-        if predictor is None or len(price_data) < 60:
-            return None
-        
-        try:
-            # Placeholder: dans production, utiliser modèle pré-entraîné
-            # Ici: signal aléatoire avec légère persistance
-            recent_returns = price_data['close'].pct_change().tail(5).mean()
-            score = 0.5 + np.clip(float(recent_returns) * 10, -0.3, 0.3)
-            confidence = 0.65
-            
-            return SignalComponent(
-                source='ml_lstm',
-                score=score,
-                confidence=confidence,
-                weight=self.source_weights.get('ml_lstm', 1.0),
-                metadata={'recent_momentum': float(recent_returns)}
-            )
-        
-        except Exception as e:
-            logger.debug(f"LSTM signal failed for {symbol}: {e}")
-            return None
+        # Abstention : le LSTMPredictor est construit mais jamais entraîné ni
+        # chargé depuis des poids. L'ancien code n'utilisait même pas le modèle —
+        # il renvoyait un proxy de momentum 5 jours (score = 0.5 + returns*10),
+        # étiqueté « ml_lstm » et pondéré à 20 %. Ce proxy court-terme n'est pas
+        # validé (nos survivants OOS sont momentum_12_1 et reversion_sma_200d).
+        # On s'abstient jusqu'à ce qu'un vrai modèle entraîné soit chargé.
+        return self._abstain('ml_lstm')
     
     def _get_ml_factor_signal(
         self,
@@ -467,26 +469,9 @@ class SignalFusionEngine:
         Returns:
             SignalComponent ou None si échec
         """
-        engine = self._init_ml_factor_engine()
-        if engine is None:
-            return None
-        
-        try:
-            # Placeholder
-            score = 0.5
-            confidence = 0.55
-            
-            return SignalComponent(
-                source='ml_factor',
-                score=score,
-                confidence=confidence,
-                weight=self.source_weights.get('ml_factor', 1.0),
-                metadata={}
-            )
-        
-        except Exception as e:
-            logger.debug(f"ML factor signal failed for {symbol}: {e}")
-            return None
+        # Abstention : aucun modèle factor/news entraîné n'est câblé. L'ancien
+        # code renvoyait un score constant 0.5 — du bruit neutre pondéré à 10 %.
+        return self._abstain('ml_factor')
     
     def _get_rl_signal(
         self,
@@ -503,26 +488,9 @@ class SignalFusionEngine:
         Returns:
             SignalComponent ou None si échec
         """
-        pipeline = self._init_rl_pipeline()
-        if pipeline is None:
-            return None
-        
-        try:
-            # Placeholder
-            score = 0.5
-            confidence = 0.70
-            
-            return SignalComponent(
-                source='rl',
-                score=score,
-                confidence=confidence,
-                weight=self.source_weights.get('rl', 1.0),
-                metadata={}
-            )
-        
-        except Exception as e:
-            logger.debug(f"RL signal failed for {symbol}: {e}")
-            return None
+        # Abstention : aucune policy RL entraînée n'est chargée. L'ancien code
+        # renvoyait un score constant 0.5 — du bruit neutre pondéré à 10 %.
+        return self._abstain('rl')
     
     def generate_signal(
         self,

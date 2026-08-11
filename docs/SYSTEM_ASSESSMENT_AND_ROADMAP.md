@@ -94,10 +94,16 @@ Sous-systèmes **non câblés au chemin de décision réel** (orphelins ou quasi
 
 Signaux stub **dans le chemin réel** (grave) :
 
-- [ ] **`SignalFusionEngine`** pondère ≈ **50 % sur des sources stub** :
+- [x] **`SignalFusionEngine`** pondérait ≈ **50 % sur des sources stub** :
   `ml_lstm` (0.20, proxy momentum déguisé), `ml_factor` (0.10, constante ~0.5),
   `rl` (≈ 0.20, constante ~0.5). Seuls `technical` (0.20) et `sentiment` (0.15)
-  sont potentiellement réels. **Le daemon trade en partie sur du bruit constant.**
+  étaient réels. **Corrigé (P0)** : les quatre sources sans modèle validé/entraîné
+  (`fundamental`, `ml_lstm`, `ml_factor`, `rl`) **s'abstiennent** désormais
+  (retour `None` + log une fois via `ABSTAINING_SOURCES`) au lieu d'injecter une
+  constante ; la fusion renormalise sur les seules sources réelles. Le daemon ne
+  pondère plus que `technical`/`sentiment` et exige ≥ 2 sources réelles
+  (`fallback_mode=False`), sinon `compute_professional_score` reste seul maître.
+  Verrouillé par `tests/test_integration/test_signal_fusion_abstention.py`.
 
 ### 1.4 Redondances structurelles
 
@@ -175,13 +181,16 @@ rebalancement** (levier turnover/coûts) pour devenir rentables.
 Le trou n°1 : le daemon trade via un fusion engine stub-lourd, pendant que les
 bonnes corrections vivent sur un pipeline orphelin.
 
-- [ ] **Décider du chemin canonique unique** : soit (a) faire du `LiveTradingPipeline`
-  (déjà corrigé, testé) le moteur de décision du daemon, soit (b) porter les
-  corrections dans `SignalFusionEngine` + step-10. Recommandé : **(a)** — un seul
-  moteur signaux→allocation→ordres, déjà durci.
-- [ ] **Quarantaine des sources stub du `SignalFusionEngine`** (si (b) retenu) :
-  `ml_lstm`/`ml_factor`/`rl` s'abstiennent (poids 0 + log) au lieu d'injecter des
-  constantes ; renormaliser sur les sources réelles.
+- [x] **Quarantaine des sources stub du `SignalFusionEngine`** *(fait)* :
+  `fundamental`/`ml_lstm`/`ml_factor`/`rl` s'abstiennent (retour `None` + log une
+  fois) au lieu d'injecter des constantes ; la fusion renormalise sur les seules
+  sources réelles (`technical`, `sentiment`). Daemon durci : `fallback_mode=False`
+  + `min_sources=2` (≥ 2 sources réelles ou abstention pour le symbole), garde
+  anti-crash sur fusion vide. Testé (`test_signal_fusion_abstention.py`).
+- [ ] **Décider du chemin canonique unique** : le daemon reste le chemin exécuté
+  (fusion purgée ci-dessus + `compute_professional_score`). Reste à trancher le
+  sort du `LiveTradingPipeline` (orphelin mais corrigé/testé) : le fusionner comme
+  moteur alternatif du daemon, ou le retirer du chemin d'import de prod.
 - [ ] **Supprimer le double moteur** : un seul chemin signaux→ordres exécuté par le
   daemon ; l'autre est retiré du chemin d'import de prod (ou supprimé).
 - [ ] **Tests bout-en-bout du daemon** (broker mocké) : le signal réel n'est jamais
