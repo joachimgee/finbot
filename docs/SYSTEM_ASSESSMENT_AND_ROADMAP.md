@@ -294,10 +294,26 @@ bonnes corrections vivent sur un pipeline orphelin.
 
 - [ ] **Univers point-in-time** (anti biais de survie) : membres *historiques*, pas
   courants ; inclure les delistings.
-- [ ] **Fondamentaux point-in-time** (fournisseur as-of : Polygon/FMP/…), même
-  contrat fail-safe que `pit_loader` (pas de source réelle → abstention/erreur).
-- [ ] Une fois les fondamentaux réels : **facteurs value/quality** validés OOS, puis
-  intégrés au mérite.
+- [x] **Fondamentaux point-in-time** *(fait — `data/polygon_fundamentals.py`,
+  `data/fundamentals_pit_loader.py`)*. Source réelle **Polygon** avec ``filing_date``
+  (une valeur n'est connue qu'à sa date de dépôt). Anti-look-ahead **structurel** :
+  `build_asof_panel` fait un `merge_asof` backward sur la date de dépôt → à t, on ne
+  voit que les dépôts `filing_date ≤ t`, jamais un restatement publié plus tard.
+  Même contrat fail-safe que `pit_loader` (Polygon réel, ou synthétique déterministe,
+  ou abstention `RealDataUnavailableError`). Flux → TTM (4 trimestres) ; stocks as-of.
+  Test central : *aucun look-ahead* (NaN avant le dépôt). Le lag réel mesuré est de
+  ~24-34 j après la fin de période.
+- [x] **Facteurs value/quality validés OOS** *(fait —
+  `backtest/fundamental_factors.py`, `scripts/validate_fundamental_factors_alpaca.py`)*.
+  E/P, B/P, ROE, GP/A calculés sur prix Alpaca + fondamentaux PIT Polygon, passés au
+  portail (coûts calibrés). **Résultat (50 large-caps US, 2020-2026)** : *aucun
+  survivant* — IC t non significatifs, Sharpe nets négatifs (ou positif mais IC non
+  significatif pour B/P, correctement rejeté par le double critère). Conclusion
+  honnête, fidèle à l'éthos du projet : **posséder des fondamentaux ≠ edge
+  tradeable** sur cet univers/période. Le registre `VALIDATED_SIGNALS` reste donc
+  inchangé (momentum_12_1 seul). *À réessayer sur univers plus large / small-caps
+  (où le value a plus de dispersion) — l'infra est prête, seul le quota Polygon
+  5 req/min bride l'échelle.*
 
 ### P3 — Élaguer la cathédrale *(réduire la surface de bug)*
 
