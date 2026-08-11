@@ -248,8 +248,18 @@ bonnes corrections vivent sur un pipeline orphelin.
   reste un outil de recherche/baseline. C'est la preuve par l'exemple qu'un Sharpe
   net *seul* ne suffit pas à valider un signal → d'où le portail à double critère
   ci-dessous (IC t > 2 **ET** Sharpe net > 0), que le combinateur échoue bien.
-- [ ] **Portail de validation** : *aucun* facteur/source n'entre dans la décision
-  réelle sans IC t > 2 **et** Sharpe net > 0 OOS. En faire une règle vérifiée.
+- [x] **Portail de validation — règle vérifiée** *(fait —
+  `src/financial_analyzer/backtest/validation_gate.py`)*. Double critère
+  **directionnel** : `IC t > 2` **ET** `Sharpe net > 0` OOS. `evaluate_signal_gate`
+  passe un panel au portail (walk-forward, coûts) ; `VALIDATED_SIGNALS` est le
+  **registre** (source unique de vérité de « ce qui a le droit de trader »), et
+  `require_validated` en fait une garde. Les deux pièges du projet sont encodés en
+  test : le combinateur (IC t = −3.07, Sharpe +0.50) est **rejeté** (échec IC), et
+  un facteur à IC ok mais Sharpe net < 0 est **rejeté** (échec coûts) — seul
+  `momentum_12_1` (IC t 2.56, Sharpe net 0.73 @ reb=10) est enregistré. **Câblé au
+  chemin canonique** : le `LiveTradingPipeline` n'utilise le momentum 12-1 que s'il
+  figure au registre, et l'ancien repli « momentum 20 j » *non validé* a été
+  **retiré**. Verrouillé par `tests/test_backtest/test_validation_gate.py` (19 tests).
 - [ ] **Calibrer le modèle de coûts** aux frais/slippage réels d'Alpaca.
 
 ### P2 — Intégrité des données *(débloque value/quality)*

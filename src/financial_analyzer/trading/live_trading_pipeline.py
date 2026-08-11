@@ -85,6 +85,16 @@ try:
 except Exception:
     MLPredictor = None
 
+# Portail de validation (P1) : source de vérité des signaux autorisés à décider.
+# Import gardé pour éviter tout couplage dur si le module bouge.
+try:
+    from financial_analyzer.backtest.validation_gate import VALIDATED_SIGNALS, is_validated
+except Exception:  # pragma: no cover - dégradation gracieuse
+    VALIDATED_SIGNALS = {}
+
+    def is_validated(_name: str) -> bool:
+        return False
+
 
 @dataclass
 class TradingSchedule:
@@ -672,19 +682,18 @@ class LiveTradingPipeline:
                 sentiment_signal = float(np.clip(data['sentiment'][ticker], -1, 1))
                 components.append((sentiment_signal, 0.2))
 
-            # 4. Momentum. Prefer the OOS-validated 12-1 factor (12-month return
-            #    excluding the last month) — the most robust, lowest-turnover
-            #    signal in factor validation — when enough history exists; else
-            #    fall back to the 20-day proxy.
-            try:
-                if len(df) >= 252:
+            # 4. Momentum — UNIQUEMENT le facteur 12-1 validé OOS (rendement 12 mois
+            #    hors dernier mois), et seulement s'il figure au registre du portail
+            #    de validation (VALIDATED_SIGNALS) avec assez d'historique (≥252 j).
+            #    L'ancien repli « momentum 20 jours » était NON validé : conformément
+            #    au portail P1 (aucun signal non validé ne décide), il est retiré —
+            #    un titre à historique court s'abstient simplement de cette source.
+            if is_validated("momentum_12_1") and len(df) >= 252:
+                try:
                     mom = df['close'].iloc[-21] / df['close'].iloc[-252] - 1  # 12-1
                     components.append((float(np.tanh(mom * 3)), 0.3))
-                else:
-                    returns_20d = (df['close'].iloc[-1] / df['close'].iloc[-20] - 1)
-                    components.append((float(np.tanh(returns_20d * 10)), 0.3))
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
             # Renormalised weighted combine over available components only.
             if components:
@@ -701,7 +710,12 @@ class LiveTradingPipeline:
 
             signals[ticker] = float(np.clip(combined, -1, 1))
         
-        logger.info(f"Generated signals for {len(signals)} tickers (Technical: {TechnicalFeatureEngine is not None}, Sentiment: {FinBERTEngine is not None})")
+        logger.info(
+            f"Generated signals for {len(signals)} tickers "
+            f"(Technical: {TechnicalFeatureEngine is not None}, "
+            f"Sentiment: {FinBERTEngine is not None}, "
+            f"validated signals: {sorted(VALIDATED_SIGNALS)})"
+        )
         return signals
     
     def _optimize_portfolio(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
