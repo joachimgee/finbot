@@ -18,7 +18,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from financial_analyzer.trading.live_trading_pipeline import LiveTradingPipeline
+from financial_analyzer.trading.live_trading_pipeline import (
+    LiveTradingPipeline,
+    _cap_and_renormalize,
+)
 
 
 def _price_df(daily_drift: float, n: int = 260, seed: int = 0) -> pd.DataFrame:
@@ -138,6 +141,33 @@ def test_run_reuses_compute_target_weights(monkeypatch) -> None:
     result = pipe.run(force=True)
     assert called.get("hit") is True
     assert result["status"] in {"success", "failed"}  # exécution mockée, cœur appelé
+
+
+def test_cap_and_renormalize_respects_cap_and_sums_to_one() -> None:
+    """Un poids au-dessus du cap est plafonné et l'excédent redistribué (somme=1)."""
+    capped = _cap_and_renormalize(
+        {"JNJ": 0.32, "GOOGL": 0.14, "XOM": 0.13, "AAPL": 0.11, "NVDA": 0.10,
+         "KO": 0.08, "CVX": 0.06, "JPM": 0.05, "AMZN": 0.01}, 0.25)
+    assert max(capped.values()) <= 0.25 + 1e-9
+    assert sum(capped.values()) == pytest.approx(1.0, abs=1e-9)
+    assert capped["JNJ"] == pytest.approx(0.25, abs=1e-9)
+
+
+def test_cap_leaves_cash_when_too_few_names() -> None:
+    """Si cap*n < 1, tout est au cap et le reste demeure en cash (limite respectée)."""
+    capped = _cap_and_renormalize({"A": 0.5, "B": 0.3, "C": 0.2}, 0.25)
+    assert all(v <= 0.25 + 1e-9 for v in capped.values())
+    assert sum(capped.values()) == pytest.approx(0.75, abs=1e-9)
+
+
+def test_compute_target_weights_applies_concentration_cap() -> None:
+    """compute_target_weights ne renvoie aucun poids au-dessus du cap du RiskGuard."""
+    pipe, _, risk = _make_pipeline(["UP"])
+    risk.max_position_pct = 0.25
+    pipe._generate_signals = lambda data: {}  # type: ignore[assignment]
+    pipe._optimize_portfolio = lambda signals, data: {"A": 0.6, "B": 0.25, "C": 0.15}  # type: ignore[assignment]
+    weights, _ = pipe.compute_target_weights(data={"prices": {}})
+    assert max(weights.values()) <= 0.25 + 1e-9
 
 
 def test_dry_run_flows_through_to_gateway(monkeypatch) -> None:

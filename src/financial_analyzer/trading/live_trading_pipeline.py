@@ -96,6 +96,39 @@ except Exception:  # pragma: no cover - dégradation gracieuse
         return False
 
 
+def _cap_and_renormalize(
+    weights: Dict[str, float], cap: float, max_iter: int = 100
+) -> Dict[str, float]:
+    """Plafonne chaque poids à ``cap`` et redistribue l'excédent aux non-plafonnés.
+
+    Itère car redistribuer peut à son tour pousser d'autres poids au-dessus du cap.
+    Si ``cap * n < 1`` (trop peu de noms pour tout investir sous le cap), tous les
+    poids finissent au cap et la somme reste < 1 (le reste demeure en cash) — c'est
+    le comportement correct : on ne viole jamais la limite de concentration.
+
+    Args:
+        weights: poids positifs (somme ≈ 1) issus de l'optimiseur.
+        cap: poids maximal par position (ex. 0.25 = 25 %).
+    """
+    w = {k: float(v) for k, v in weights.items() if v > 0}
+    if not w:
+        return {}
+    for _ in range(max_iter):
+        over = {k: v for k, v in w.items() if v > cap + 1e-12}
+        if not over:
+            break
+        excess = sum(v - cap for v in over.values())
+        for k in over:
+            w[k] = cap
+        under = {k: v for k, v in w.items() if v < cap - 1e-12}
+        under_sum = sum(under.values())
+        if under_sum <= 0:
+            break  # tout est au cap : impossible d'investir davantage sans violer
+        for k in under:
+            w[k] += excess * (w[k] / under_sum)
+    return w
+
+
 @dataclass
 class TradingSchedule:
     """
@@ -471,6 +504,13 @@ class LiveTradingPipeline:
             data = self._fetch_data()
         signals = self._generate_signals(data)
         target_weights = self._optimize_portfolio(signals, data)
+        # Plafonner chaque poids au cap de concentration du RiskGuard et
+        # redistribuer l'excédent : sinon la position la plus convaincue dépasse la
+        # limite et se fait REJETER à l'exécution (on perd le meilleur signal). Le
+        # plafonnement en amont respecte la limite tout en déployant le capital.
+        cap = getattr(self.risk_guard, "max_position_pct", None)
+        if isinstance(cap, (int, float)) and 0.0 < cap < 1.0 and target_weights:
+            target_weights = _cap_and_renormalize(target_weights, float(cap))
         return target_weights, data
 
     def _fetch_data(self) -> Dict:
