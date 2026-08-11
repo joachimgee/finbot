@@ -79,6 +79,40 @@ def test_daemon_routes_orders_through_gateway() -> None:
     assert submits_via_gateway, "le daemon doit soumettre via gateway.submit(...)"
 
 
+# --- Invariant 1bis : cadence de rééquilibrage câblée -----------------------
+
+def test_daemon_wires_rebalance_cadence_gate() -> None:
+    """Le déploiement de nouvelles positions est gaté par la cadence validée.
+
+    Vérifie statiquement que le daemon (a) construit une RebalanceGate, (b) calcule
+    un `rebalance_due`, et (c) ré-arme la cadence via `.record(...)`. Sans ce
+    câblage, le book momentum serait rééquilibré chaque jour et paierait un
+    turnover que l'edge validé ne rembourse pas (reb=10 bat le quotidien).
+    """
+    src = _daemon_source()
+    tree = ast.parse(src, filename=str(_DAEMON_PATH))
+
+    builds_gate = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "from_validated_signal"
+        for node in ast.walk(tree)
+    ) or "RebalanceGate(" in src
+    assigns_due = any(
+        isinstance(node, ast.Name) and node.id == "rebalance_due"
+        for node in ast.walk(tree)
+    )
+    records = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record"
+        for node in ast.walk(tree)
+    )
+    assert builds_gate, "le daemon doit construire une RebalanceGate"
+    assert assigns_due, "le daemon doit calculer rebalance_due"
+    assert records, "le daemon doit ré-armer la cadence via gate.record(...)"
+
+
 # --- Invariant 2 : le score de décision n'est pas une constante -------------
 
 def _force_two_real_sources(engine: SignalFusionEngine, tech: float, sent: float) -> None:

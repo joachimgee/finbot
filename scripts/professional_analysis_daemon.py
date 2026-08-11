@@ -23,11 +23,17 @@ Date: 2025-01-20
 import os
 import sys
 import argparse
+import logging
 import time
 import signal
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
+
+# Journal du module. Utilisé dans les blocs de gestion d'erreur (réconciliation,
+# snapshots, allocation) : sans cette définition, y accéder lèverait NameError et
+# masquerait l'exception d'origine.
+logger = logging.getLogger("professional_analysis_daemon")
 
 # Setup path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -951,9 +957,25 @@ Configuration :
             else:
                 print(f"\n  ℹ️  Aucune position à vendre")
         
+        # Cadence de rééquilibrage (P1) : le book piloté par le momentum 12-1
+        # validé n'est rééquilibré que tous les `rebalance_every` jours ouvrés
+        # (config validée OOS — reb=10 bat le quotidien net de coûts). Entre deux,
+        # on TIENT le book : aucun nouvel ordre BUY, aucun turnover. Les SELL de
+        # risque (ÉTAPE 1 ci-dessus) ne sont volontairement PAS gatés — la gestion
+        # du risque n'attend pas la cadence.
+        from financial_analyzer.trading.rebalance_gate import RebalanceGate
+        _rebal_gate = RebalanceGate.from_validated_signal("logs/rebalance_state.json")
+        _today = datetime.now().date()
+        rebalance_due = _rebal_gate.is_due(_today)
+        if not rebalance_due:
+            print(f"\n  ⏸️  CADENCE RÉÉQUILIBRAGE: HOLD — prochain rééquilibrage dans "
+                  f"{_rebal_gate.sessions_until_due(_today)} j ouvrés "
+                  f"(cadence={_rebal_gate.rebalance_every} ; dernier: "
+                  f"{_rebal_gate.sessions_since(_today)} j ouvrés). Pas de nouveau BUY.")
+
         # ÉTAPE 2: Calculer nouvelles allocations (excluant positions HOLD et BUY_MORE)
         print(f"\n  🔄 CALCUL NOUVELLES ALLOCATIONS...")
-        
+
         account = adapter.get_account()
         equity = float(account.get('equity', 0))
         
@@ -964,6 +986,10 @@ Configuration :
         
         # Filtrer top_syms pour exclure les positions existantes (sauf BUY_MORE)
         new_candidates = [sym for sym in top_syms if sym not in existing_symbols or sym in buy_more_symbols]
+        # Hors cadence : on ne déploie aucune nouvelle position aujourd'hui (le book
+        # est tenu). L'allocation ci-dessous calcule alors 0 candidat.
+        if not rebalance_due:
+            new_candidates = []
         
         # ALLOCATION ADAPTATIVE BASÉE SUR LE RISQUE ET LA QUALITÉ
         print(f"\n  📊 CALCUL ALLOCATION ADAPTATIVE...")
@@ -1129,6 +1155,12 @@ Configuration :
         print(f"\n✅ Ordres soumis: {orders_submitted}, Échecs: {orders_failed}")
         if drift_flag:
             print("⚠️  DRIFT MODEL SIGNALÉ PAR PRÉ-ANALYSE - RETRAIN RECOMMANDÉ")
+
+        # Enregistrer le rééquilibrage : ré-arme la cadence (prochain BUY autorisé
+        # dans `rebalance_every` jours ouvrés). On enregistre dès que le run était
+        # « dû » — même à 0 ordre — pour ne pas re-tenter chaque jour.
+        if rebalance_due:
+            _rebal_gate.record(_today)
 
         # Réconciliation post-exécution : ce qui a été journalisé vs ce qui existe
         # réellement chez le broker. Un écart (ordre perdu, ou ordre présent chez

@@ -225,9 +225,18 @@ bonnes corrections vivent sur un pipeline orphelin.
   de −0.46 (quotidien, mangé par les coûts) à +0.39 à 21 j ; (2) `momentum_12_1`
   gagne à espacer (+0.61→+0.73 à 10 j) ; (3) seuls **3 facteurs** sur 8 sont
   net-positifs. **Config canonique retenue : `momentum_12_1 @ rebalance_every=10`.**
-  Reste à câbler cette cadence côté exécution (aujourd'hui le daemon tourne
-  quotidiennement ; il faut ne rééquilibrer le book momentum que ~tous les 10 j —
-  cache de poids cibles, ou garde de cadence dans le pipeline).
+- [x] **Cadence de rééquilibrage câblée en exécution** *(fait —
+  `src/financial_analyzer/trading/rebalance_gate.py`)*. `RebalanceGate` **persiste**
+  la date du dernier rééquilibrage (fichier d'état JSON, survit aux redémarrages) et
+  n'autorise un nouveau déploiement/rééquilibrage du book momentum que tous les
+  `rebalance_every` **jours ouvrés** — valeur lue depuis le registre validé (10),
+  pas un « 10 » magique. Câblée au daemon : les nouveaux BUY (ÉTAPE 2/3) sont gatés
+  par `rebalance_due` ; entre deux, le book est tenu (aucun turnover). Les **SELL de
+  risque ne sont pas gatés** (le risque n'attend pas la cadence). Dégradation
+  gracieuse (état absent/corrompu → rééquilibrage autorisé). Testé
+  (`test_rebalance_gate.py`, 9 tests ; wiring verrouillé dans
+  `test_daemon_safety_invariants.py`). *En passant : correction d'un `NameError`
+  latent — `logger` non défini dans le daemon, utilisé dans 4 blocs `except`.*
 - [x] **Anomalie du combinateur — élucidée** *(fait)*. Reproduite sur univers large
   (203 titres survivants) : combinateur ridge **IC = −0.0161 (t = −3.07, négatif
   *significatif*)** mais **Sharpe net = +0.50**. Diagnostic par déciles du signal
