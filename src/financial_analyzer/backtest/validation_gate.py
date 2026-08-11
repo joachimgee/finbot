@@ -138,6 +138,10 @@ def evaluate_signal_gate(
         ValidationVerdict — ``passed`` vrai seulement si IC t > seuil ET Sharpe
         net > seuil sur l'agrégat OOS.
     """
+    # Coût par défaut = modèle Alpaca calibré (commission 0, slippage ~2.5 bps),
+    # pas le défaut générique de CostModel (25 bps) : le portail juge de la
+    # tradabilité réelle sur Alpaca.
+    cost_model = cost_model or CostModel.alpaca_equities()
     out = walk_forward_evaluate(
         scores, returns, n_splits=n_splits, cost_model=cost_model,
         quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
@@ -195,9 +199,10 @@ VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {
         name="momentum_12_1",
         rebalance_every=10,
         ic_t_stat=2.56,
-        net_sharpe=0.73,
+        net_sharpe=0.76,
         evidence="run_rebalance_sweep_alpaca.py — 80 US large-caps, 5 fenêtres OOS, "
-                 "coûts 5+3 bps : meilleur à reb=10.",
+                 "coûts Alpaca calibrés (commission 0 + slippage 2.5 bps) : "
+                 "meilleur à reb=10 (Sharpe net +0.76).",
     ),
 }
 

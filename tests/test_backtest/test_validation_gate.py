@@ -28,7 +28,7 @@ from financial_analyzer.backtest.validation_gate import (
 @pytest.mark.parametrize(
     "ic_t, net_sharpe, expected",
     [
-        (2.56, 0.73, True),    # momentum_12_1 : passe les deux
+        (2.56, 0.76, True),    # momentum_12_1 (coûts Alpaca calibrés) : passe les deux
         (3.00, 0.50, True),    # franc positif
         (2.01, 0.01, True),    # juste au-dessus des deux seuils
         (-3.07, 0.50, False),  # PIÈGE combinateur : IC négatif, Sharpe positif -> rejet

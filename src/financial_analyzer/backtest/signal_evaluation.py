@@ -58,6 +58,26 @@ class CostModel:
         """Coût total par unité de turnover (fraction, aller simple)."""
         return (self.commission_bps + self.slippage_bps) / 1e4
 
+    @classmethod
+    def alpaca_equities(cls) -> CostModel:
+        """Modèle de coûts **calibré** pour Alpaca actions US.
+
+        Calibration empirique (``scripts/calibrate_cost_model_alpaca.py``) sur des
+        cotations bid/ask réelles de large-caps US liquides :
+
+        * **commission = 0 bps** — Alpaca est sans commission sur les actions US
+          (les frais réglementaires SEC/TAF côté vente sont < 0.3 bps, négligés).
+        * **slippage ≈ 2.5 bps** (aller simple) — demi-spread effectif médian
+          mesuré ≈ 1.45 bps + ~1 bp d'impact de marché. (Le spread effectif médian
+          aller-retour mesuré est ≈ 2.9 bps.)
+
+        C'est le modèle à utiliser par défaut pour toute validation ciblant
+        l'exécution réelle sur Alpaca — bien plus fidèle que l'ancien réglage en
+        dur (5 + 3 bps, dont une commission fictive) ou le défaut générique
+        (20 + 5 bps).
+        """
+        return cls(commission_bps=0.0, slippage_bps=2.5)
+
 
 @dataclass
 class SignalEvalResult:

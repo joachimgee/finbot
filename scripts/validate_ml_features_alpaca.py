@@ -81,7 +81,7 @@ def main() -> None:
     factor_names = sorted(set().union(*[set(f.columns) for f in per_ticker.values()]))
     print(f"{len(factor_names)} facteurs sur {returns.shape[1]} titres, {len(dates)} jours.\n")
 
-    cost = CostModel(commission_bps=5, slippage_bps=3)
+    cost = CostModel.alpaca_equities()
     rows = []
     for fac in factor_names:
         panel = pd.DataFrame(

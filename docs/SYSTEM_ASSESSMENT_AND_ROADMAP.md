@@ -211,20 +211,32 @@ bonnes corrections vivent sur un pipeline orphelin.
 - [ ] **Câbler `momentum_12_1` validé comme source du chemin canonique** (fait dans
   le pipeline ; à propager au chemin réellement exécuté selon la décision P0).
 - [x] **Sweep de période de rebalancement** *(fait — `scripts/run_rebalance_sweep_alpaca.py`)*.
-  `rebalance_every ∈ {1,5,10,21}`, 80 large-caps US, OOS 5 fenêtres, coûts inclus
-  (5+3 bps). Résultats (Sharpe **net**) :
+  `rebalance_every ∈ {1,5,10,21}`, 80 large-caps US, OOS 5 fenêtres, **coûts Alpaca
+  calibrés** (commission 0 + slippage 2.5 bps, cf. item suivant). Résultats
+  (Sharpe **net**) :
 
   | facteur        | reb=1 | reb=5 | reb=10 | reb=21 | retenu |
   |----------------|------:|------:|-------:|-------:|--------|
-  | momentum_12_1  | +0.61 | +0.65 | **+0.73** | +0.55 | **reb=10** (turnover 0.03) |
-  | high_52w       | −0.46 | −0.03 | +0.31  | **+0.39** | reb=21 (0.04) |
-  | momentum_6_1   | +0.21 | +0.30 | **+0.37** | +0.19 | reb=10 (0.05) |
-  | reversal_5/21, low_vol(_60), max_lottery | — | — | — | — | **net-négatifs partout → écartés** |
+  | momentum_12_1  | +0.71 | +0.69 | **+0.76** | +0.57 | **reb=10** (turnover 0.03) |
+  | high_52w       | −0.18 | +0.08 | +0.38  | **+0.43** | reb=21 (0.04) |
+  | momentum_6_1   | +0.39 | +0.38 | **+0.42** | +0.23 | reb=10 (0.05) |
+  | reversal_5/21, low_vol(_60), max_lottery | — | — | — | — | **net-négatifs (ou ≈0) → écartés** |
 
   Enseignements : (1) la période de rebalance change le verdict — `high_52w` passe
-  de −0.46 (quotidien, mangé par les coûts) à +0.39 à 21 j ; (2) `momentum_12_1`
-  gagne à espacer (+0.61→+0.73 à 10 j) ; (3) seuls **3 facteurs** sur 8 sont
+  de −0.18 (quotidien) à +0.43 à 21 j ; (2) `momentum_12_1` gagne à espacer
+  (+0.71→+0.76 à 10 j) ; (3) seuls **3 facteurs** sur 8 sont franchement
   net-positifs. **Config canonique retenue : `momentum_12_1 @ rebalance_every=10`.**
+- [x] **Modèle de coûts calibré sur Alpaca** *(fait —
+  `src/financial_analyzer/backtest/cost_calibration.py`, `CostModel.alpaca_equities()`)*.
+  Alpaca actions US est **sans commission** ; le coût réel = franchissement du
+  spread. Mesuré sur **cotations bid/ask réelles** (écart effectif médian ≈ 2.9 bps,
+  demi-spread ≈ 1.45 bps ; cotations périmées du feed IEX écrêtées) →
+  **commission 0 + slippage 2.5 bps** (aller simple), vs l'ancien 5+3 (commission
+  fictive) et le défaut générique 20+5. *Constat méthodo : l'estimateur high-low de
+  Corwin-Schultz sur barres quotidiennes donne ≈ 83 bps — il confond volatilité et
+  spread et surestime massivement ; conservé comme borne haute indicative seulement.*
+  Câblé par défaut dans le portail de validation et tous les scripts OOS. Testé
+  (`test_cost_calibration.py`).
 - [x] **Cadence de rééquilibrage câblée en exécution** *(fait —
   `src/financial_analyzer/trading/rebalance_gate.py`)*. `RebalanceGate` **persiste**
   la date du dernier rééquilibrage (fichier d'état JSON, survit aux redémarrages) et
@@ -269,7 +281,8 @@ bonnes corrections vivent sur un pipeline orphelin.
   chemin canonique** : le `LiveTradingPipeline` n'utilise le momentum 12-1 que s'il
   figure au registre, et l'ancien repli « momentum 20 j » *non validé* a été
   **retiré**. Verrouillé par `tests/test_backtest/test_validation_gate.py` (19 tests).
-- [ ] **Calibrer le modèle de coûts** aux frais/slippage réels d'Alpaca.
+- [x] **Calibrer le modèle de coûts** aux frais/slippage réels d'Alpaca *(fait — voir
+  `CostModel.alpaca_equities()` : commission 0 + slippage 2.5 bps, mesuré sur cotations réelles)*.
 
 ### P2 — Intégrité des données *(débloque value/quality)*
 

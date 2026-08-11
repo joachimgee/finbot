@@ -86,7 +86,7 @@ def main() -> None:
 
     factors = compute_classic_factors(prices)
     returns = daily_returns(prices)
-    cost = CostModel(commission_bps=5, slippage_bps=3)  # ~0.08%/turnover
+    cost = CostModel.alpaca_equities()
     out = walk_forward_combine(factors, returns, n_splits=args.splits, cost_model=cost)
 
     print("=" * 74)

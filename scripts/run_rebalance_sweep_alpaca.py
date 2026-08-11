@@ -87,9 +87,7 @@ def main() -> None:
 
     factors = compute_classic_factors(prices)
     returns = daily_returns(prices)
-    cost = CostModel(commission_bps=5, slippage_bps=3)
-
-    # net_sharpe[factor][rebalance] et turnover[factor][rebalance]
+    cost = CostModel.alpaca_equities()
     ns: dict[str, dict[int, float]] = {}
     tov: dict[str, dict[int, float]] = {}
     for name, panel in factors.items():
