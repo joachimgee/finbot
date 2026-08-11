@@ -21,6 +21,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import pandas as pd
+
 from financial_analyzer.backtest.classic_factors import daily_returns
 from financial_analyzer.backtest.fundamental_factors import (
     FUNDAMENTAL_FACTORS,
@@ -62,6 +64,8 @@ def main() -> None:
     ap.add_argument("--broad", type=int, default=0)
     ap.add_argument("--limit", type=int, default=0,
                     help="Cape l'univers (utile pour le quota Polygon 5 req/min).")
+    ap.add_argument("--fund-cache", default="/tmp/polygon_fundamentals.parquet",
+                    help="Cache disque des fondamentaux (évite de refetcher). Vide pour désactiver.")
     ap.add_argument("--rebalance", type=int, nargs="+", default=[1, 21],
                     help="Cadences testées (les facteurs value sont lents).")
     args = ap.parse_args()
@@ -80,8 +84,17 @@ def main() -> None:
     print(f"Panel prix: {prices.shape[0]} jours × {prices.shape[1]} titres")
 
     print(f"Fondamentaux Polygon (avec dates de dépôt) depuis {args.fund_start}…")
-    loader = FundamentalsPITLoader(source="polygon", allow_synthetic_fallback=False)
-    fundamentals = loader.load(list(prices.columns), start=args.fund_start, end=args.end)
+    # Cache disque : Polygon (free tier, 5 req/min) est lent — on ne refetch pas.
+    fund_cache = Path(args.fund_cache) if args.fund_cache else None
+    if fund_cache and fund_cache.exists():
+        fundamentals = pd.read_parquet(fund_cache)
+        print(f"  (cache: {fund_cache})")
+    else:
+        loader = FundamentalsPITLoader(source="polygon", allow_synthetic_fallback=False)
+        fundamentals = loader.load(list(prices.columns), start=args.fund_start, end=args.end)
+        if fund_cache is not None:
+            fund_cache.parent.mkdir(parents=True, exist_ok=True)
+            fundamentals.to_parquet(fund_cache)
     print(f"{len(fundamentals)} dépôts, {fundamentals['ticker'].nunique()} titres avec fondamentaux.\n")
 
     factors = compute_fundamental_factors(prices, fundamentals)

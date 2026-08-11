@@ -65,6 +65,17 @@ def test_ttm_is_rolling_four_quarters() -> None:
     assert ttm[4] == pytest.approx(20 + 30 + 40 + 50)  # fenêtre glissante
 
 
+def test_asof_handles_tz_aware_dates() -> None:
+    """Index de prix timezone-aware (Alpaca=UTC) vs filing_date naïf : pas d'erreur
+    de merge, et l'alignement PIT reste correct (régression du MergeError)."""
+    dates = pd.date_range("2022-01-01", "2022-12-31", freq="B", tz="UTC")
+    panel = build_asof_panel(_long(), dates, "equity")
+    assert str(panel.index.tz) == "UTC" and not panel.empty
+    cut = pd.Timestamp("2022-05-01", tz="UTC")
+    assert panel.loc[panel.index < cut, "AAA"].isna().all()
+    assert (panel.loc[panel.index >= cut, "AAA"].dropna() > 0).all()
+
+
 def test_empty_panel_is_safe() -> None:
     panel = build_asof_panel(pd.DataFrame(), pd.date_range("2022-01-01", periods=3), "equity")
     assert panel.empty or panel.isna().all().all()

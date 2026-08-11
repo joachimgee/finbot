@@ -70,19 +70,27 @@ def build_asof_panel(
     Pour chaque date t et ticker, la valeur est celle du dépôt le plus récent tel
     que ``filing_date ≤ t``. Avant le premier dépôt disponible : ``NaN``.
     """
-    dates = pd.DatetimeIndex(sorted(pd.DatetimeIndex(dates).unique()))
+    orig = pd.DatetimeIndex(sorted(pd.DatetimeIndex(dates).unique()))
     if long_df.empty or field not in long_df.columns:
-        return pd.DataFrame(index=dates)
-    left = pd.DataFrame({"date": dates})
+        return pd.DataFrame(index=orig)
+    # merge_asof exige des clés de même dtype. Les prix Alpaca sont timezone-aware
+    # (UTC), les dates de dépôt Polygon sont naïves : on fait la jointure en naïf
+    # des deux côtés, mais on renvoie le panel indexé par les dates d'origine (pour
+    # rester aligné sur le panel de prix de l'appelant).
+    naive = orig.tz_localize(None) if orig.tz is not None else orig
+    left = pd.DataFrame({"date": naive})
     cols: dict[str, np.ndarray] = {}
     for tk, g in long_df.groupby("ticker"):
         g = g.dropna(subset=[field, "filing_date"]).sort_values("filing_date")
         if g.empty:
             continue
-        right = g[["filing_date", field]].rename(columns={"filing_date": "date"})
+        fd = pd.to_datetime(g["filing_date"])
+        if fd.dt.tz is not None:
+            fd = fd.dt.tz_localize(None)
+        right = pd.DataFrame({"date": fd.to_numpy(), field: g[field].to_numpy()}).sort_values("date")
         merged = pd.merge_asof(left, right, on="date", direction="backward")
         cols[tk] = merged[field].to_numpy()
-    return pd.DataFrame(cols, index=dates)
+    return pd.DataFrame(cols, index=orig)
 
 
 @dataclass
