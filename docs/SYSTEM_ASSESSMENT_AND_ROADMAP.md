@@ -228,9 +228,26 @@ bonnes corrections vivent sur un pipeline orphelin.
   Reste à câbler cette cadence côté exécution (aujourd'hui le daemon tourne
   quotidiennement ; il faut ne rééquilibrer le book momentum que ~tous les 10 j —
   cache de poids cibles, ou garde de cadence dans le pipeline).
-- [ ] **Investiguer l'anomalie du combinateur** (IC négatif / Sharpe net positif) :
-  bug de construction du portefeuille combiné ? surapprentissage ? sign-flip ?
-  Ne pas déployer le combinateur avant résolution.
+- [x] **Anomalie du combinateur — élucidée** *(fait)*. Reproduite sur univers large
+  (203 titres survivants) : combinateur ridge **IC = −0.0161 (t = −3.07, négatif
+  *significatif*)** mais **Sharpe net = +0.50**. Diagnostic par déciles du signal
+  combiné OOS (rendement forward moyen par décile de score) :
+
+  | décile | D0 | D1 | … | D7 | **D8** | D9 |
+  |--------|----|----|---|----|--------|----|
+  | bps/j  | +14.7 | +9.6 | … | +3.5 | **+91.1** | +11.2 |
+
+  Spearman(décile, rdt) ≈ **+0.006** (≈ nul, non-monotone). **Ce n'est ni un bug
+  ni un edge** : IC et portefeuille utilisent des conventions cohérentes ; l'IC
+  négatif est réel (le gros du cross-section est inversé/bruité), et le Sharpe net
+  positif est un **artefact de queue épaisse** — un unique décile aberrant (D8,
+  +91 bps/j : quelques titres à mouvements extrêmes tombés dans le quantile long)
+  fabrique le spread long/short. Les poids ridge sont quasi nuls (shrinkage L2 sur
+  un échantillon empilé énorme) → sur-apprentissage à du bruit. **Décision : le
+  combinateur n'est pas tradeable et ne doit jamais entrer dans la décision.** Il
+  reste un outil de recherche/baseline. C'est la preuve par l'exemple qu'un Sharpe
+  net *seul* ne suffit pas à valider un signal → d'où le portail à double critère
+  ci-dessous (IC t > 2 **ET** Sharpe net > 0), que le combinateur échoue bien.
 - [ ] **Portail de validation** : *aucun* facteur/source n'entre dans la décision
   réelle sans IC t > 2 **et** Sharpe net > 0 OOS. En faire une règle vérifiée.
 - [ ] **Calibrer le modèle de coûts** aux frais/slippage réels d'Alpaca.
