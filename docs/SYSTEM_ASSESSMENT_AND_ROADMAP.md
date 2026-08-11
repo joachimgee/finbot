@@ -292,8 +292,18 @@ bonnes corrections vivent sur un pipeline orphelin.
 
 ### P2 — Intégrité des données *(débloque value/quality)*
 
-- [ ] **Univers point-in-time** (anti biais de survie) : membres *historiques*, pas
-  courants ; inclure les delistings.
+- [x] **Univers point-in-time** *(fait — `data/polygon_universe.py`,
+  `data/pit_universe.py`, `scripts/measure_survivorship_bias.py`)*. Membres
+  *historiques* via Polygon (`as_of_universe(date)`, delistings datés,
+  `ticker_lifespans`), et masque d'appartenance `build_membership_mask` (True
+  seulement entre `list_date` et `delisted_utc` → exclut le pré-IPO et le
+  post-radiation), contrat fail-safe. **Biais quantifié sur données réelles** :
+  des **4542** common stocks US cotés au 2020-06-30, **1670 (36.8 %) ont disparu**
+  en 6 ans (radiations ~174-639/an). Un backtest sur l'univers *actuel* ignore
+  donc plus d'un tiers de l'univers d'alors — biais majeur. **Limite data honnête**
+  : une validation *pleinement* sans biais exige EN PLUS les **prix des delistés**
+  (Polygon 403 sur ce tier ; Alpaca ne les porte pas) → seul blocage restant, l'infra
+  d'appartenance étant prête. Testé (`test_pit_universe.py`).
 - [x] **Fondamentaux point-in-time** *(fait — `data/polygon_fundamentals.py`,
   `data/fundamentals_pit_loader.py`)*. Source réelle **Polygon** avec ``filing_date``
   (une valeur n'est connue qu'à sa date de dépôt). Anti-look-ahead **structurel** :
