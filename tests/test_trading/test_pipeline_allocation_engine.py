@@ -138,3 +138,24 @@ def test_run_reuses_compute_target_weights(monkeypatch) -> None:
     result = pipe.run(force=True)
     assert called.get("hit") is True
     assert result["status"] in {"success", "failed"}  # exécution mockée, cœur appelé
+
+
+def test_dry_run_flows_through_to_gateway(monkeypatch) -> None:
+    """run(dry_run=True) fait passer dry_run jusqu'au gateway (aucune soumission réelle)."""
+    pipe, monitor, risk = _make_pipeline(["UP"])
+    monitor.portfolio_value = 100000.0
+    monitor.daily_pnl = 0.0
+    monitor.positions = []
+    risk.circuit_breaker_active = False
+
+    monkeypatch.setattr(pipe, "compute_target_weights", lambda data=None: (
+        {"UP": 1.0},
+        {"prices": {"UP": _price_df(0.004, seed=7)}, "fundamentals": {}, "news": {}, "sentiment": {}},
+    ))
+    monkeypatch.setattr(pipe.broker, "is_market_open", lambda: True, raising=False)
+    submit = MagicMock(return_value={"status": "dry_run"})
+    pipe.order_gateway.submit = submit
+
+    pipe.run(force=True, dry_run=True)
+    assert submit.called, "un ordre aurait dû atteindre le gateway"
+    assert all(call.kwargs.get("dry_run") is True for call in submit.call_args_list)

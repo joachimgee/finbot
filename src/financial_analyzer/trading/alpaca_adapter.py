@@ -492,15 +492,28 @@ class AlpacaAdapter(BrokerAdapter):
             logger.debug("Fetching account information...")
             
             account = self.api.get_account()
-            
+
+            # Accès défensif : selon le type de compte (cash vs margin) et la
+            # version de l'API, certains champs (marges, daytrade_count) peuvent
+            # être absents — l'entité alpaca lève alors AttributeError. On lit via
+            # getattr avec défaut pour ne jamais casser la lecture du compte
+            # (bloquerait tout le chemin monétaire).
+            def _f(attr: str, default: float = 0.0) -> float:
+                val = getattr(account, attr, None)
+                return float(val) if val is not None else default
+
+            def _i(attr: str, default: int = 0) -> int:
+                val = getattr(account, attr, None)
+                return int(val) if val is not None else default
+
             result = {
-                'cash': float(account.cash),
-                'equity': float(account.equity),
-                'buying_power': float(account.buying_power),
-                'portfolio_value': float(account.portfolio_value),
-                'initial_margin': float(account.initial_margin),
-                'maintenance_margin': float(account.maintenance_margin),
-                'daytrade_count': int(account.daytrade_count)
+                'cash': _f('cash'),
+                'equity': _f('equity'),
+                'buying_power': _f('buying_power'),
+                'portfolio_value': _f('portfolio_value'),
+                'initial_margin': _f('initial_margin'),
+                'maintenance_margin': _f('maintenance_margin'),
+                'daytrade_count': _i('daytrade_count'),
             }
             
             logger.debug(

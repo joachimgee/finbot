@@ -327,10 +327,17 @@ class LiveTradingPipeline:
             'enable_circuit_breaker': True
         }
     
-    def run(self, force: bool = False) -> Dict:
+    def run(self, force: bool = False, dry_run: bool = False) -> Dict:
         """
         Execute trading pipeline (single run).
-        
+
+        Args:
+            force: Force execution even if schedule/market says no.
+            dry_run: If True, run the FULL chain (data -> signals -> allocation ->
+                orders -> gateway) but the gateway applies everything (mode-gate,
+                risk, audit) EXCEPT the real broker submission. Use it to validate
+                the whole path end-to-end without placing orders.
+
         Steps:
         1. Check if market is open
         2. Check schedule (unless force=True)
@@ -400,8 +407,9 @@ class LiveTradingPipeline:
             
             logger.info(f"Generated {len(orders)} orders")
             
-            # 8. Validate & Execute orders
-            execution_results = self._execute_orders_with_risk_checks(orders)
+            # 8. Validate & Execute orders (dry_run applique tout sauf la
+            #    soumission réelle au broker).
+            execution_results = self._execute_orders_with_risk_checks(orders, dry_run=dry_run)
             
             # 9. Update monitor after execution
             self.monitor.update()
@@ -916,37 +924,40 @@ class LiveTradingPipeline:
         
         return orders
     
-    def _execute_orders_with_risk_checks(self, orders: List[Dict]) -> List[Dict]:
+    def _execute_orders_with_risk_checks(self, orders: List[Dict], dry_run: bool = False) -> List[Dict]:
         """
         Execute orders with risk validation.
-        
+
         Args:
             orders: List of order dicts
-        
+            dry_run: If True, the gateway applies mode-gate + risk + audit but does
+                NOT submit to the broker (returns a 'dry_run' result).
+
         Returns:
             List of execution results:
             - status: 'executed', 'rejected', 'failed'
             - order: Original order
             - result: Broker result (if executed)
             - reason: Rejection/failure reason
-        
+
         Example:
             >>> orders = [{'symbol': 'AAPL', 'qty': 10, 'side': 'buy', 'price': 150.0}]
             >>> results = pipeline._execute_orders_with_risk_checks(orders)
             >>> print(results[0]['status'])  # 'executed' or 'rejected'
         """
         results = []
-        
+
         for order in orders:
             try:
                 # Single audited chokepoint: mode-gate + risk check + idempotence
-                # + audit, then broker submission.
+                # + audit, then broker submission (skipped when dry_run).
                 broker_result = self.order_gateway.submit(
                     symbol=order['symbol'],
                     qty=order['qty'],
                     side=order['side'],
                     price=order['price'],
                     order_type=order.get('order_type', 'market'),
+                    dry_run=dry_run,
                 )
 
                 # Classify by the broker's actual order status rather than
