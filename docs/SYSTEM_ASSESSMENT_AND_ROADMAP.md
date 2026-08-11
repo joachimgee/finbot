@@ -197,12 +197,18 @@ bonnes corrections vivent sur un pipeline orphelin.
   aussi). Repli en poids égal si le pipeline s'abstient partout. Le calcul de
   deltas et la soumission restent côté daemon (aucune liquidation de masse
   importée). Testé (`test_pipeline_allocation_engine.py`).
-- [ ] **Supprimer le double moteur (suite)** : le pipeline est maintenant *câblé*
-  au daemon (moteur d'allocation), plus orphelin. Étape restante, à valider en
-  paper live : promouvoir le `run()` complet du pipeline (fetch→signaux→BL→ordres
-  via son gateway) comme chemin d'exécution unique, en remplacement de la boucle
-  d'ordres du daemon — nécessite une validation Alpaca paper de bout en bout
-  (comportement « fermer les positions hors cible » à cadrer sur l'univers).
+- [x] **Validation Alpaca paper de bout en bout** *(fait —
+  `scripts/validate_paper_pipeline_alpaca.py`)*. Le `run()` complet du pipeline
+  (fetch → signaux validés → Black-Litterman → **plafonnement concentration** →
+  ordres → OrderGateway) a tourné contre le vrai compte paper ($100k). `run()`
+  gagne un mode `dry_run` (chaîne complète, gateway applique garde+risque+audit,
+  sans soumission). Résultat : 10 positions cibles BL, JNJ **plafonné à 25 %** (au
+  lieu d'être rejeté), 8 ordres → **8 acceptés par le broker**, réconciliation
+  **OK (8 appariés, 0 écart)**. *Bugs réels révélés et corrigés : `get_account()`
+  plantait sur `daytrade_count` absent (compte cash) ; l'allocation ne plafonnait
+  pas au cap de concentration.* Reste (hors P0) : promouvoir ce `run()` comme
+  chemin d'exécution **unique** du daemon (remplacer sa boucle d'ordres), après
+  avoir cadré le comportement « fermer les positions hors cible » sur l'univers.
 - [ ] **Tests bout-en-bout du daemon** (broker mocké) : le signal réel n'est jamais
   une constante ; chaque ordre passe par `OrderGateway`.
 
