@@ -210,8 +210,24 @@ bonnes corrections vivent sur un pipeline orphelin.
 
 - [ ] **Câbler `momentum_12_1` validé comme source du chemin canonique** (fait dans
   le pipeline ; à propager au chemin réellement exécuté selon la décision P0).
-- [ ] **Sweep de période de rebalancement** (`rebalance_every` = 5/10/21) sur les 7
-  facteurs significatifs → retenir la config *tradeable* (Sharpe net > 0). Documenter.
+- [x] **Sweep de période de rebalancement** *(fait — `scripts/run_rebalance_sweep_alpaca.py`)*.
+  `rebalance_every ∈ {1,5,10,21}`, 80 large-caps US, OOS 5 fenêtres, coûts inclus
+  (5+3 bps). Résultats (Sharpe **net**) :
+
+  | facteur        | reb=1 | reb=5 | reb=10 | reb=21 | retenu |
+  |----------------|------:|------:|-------:|-------:|--------|
+  | momentum_12_1  | +0.61 | +0.65 | **+0.73** | +0.55 | **reb=10** (turnover 0.03) |
+  | high_52w       | −0.46 | −0.03 | +0.31  | **+0.39** | reb=21 (0.04) |
+  | momentum_6_1   | +0.21 | +0.30 | **+0.37** | +0.19 | reb=10 (0.05) |
+  | reversal_5/21, low_vol(_60), max_lottery | — | — | — | — | **net-négatifs partout → écartés** |
+
+  Enseignements : (1) la période de rebalance change le verdict — `high_52w` passe
+  de −0.46 (quotidien, mangé par les coûts) à +0.39 à 21 j ; (2) `momentum_12_1`
+  gagne à espacer (+0.61→+0.73 à 10 j) ; (3) seuls **3 facteurs** sur 8 sont
+  net-positifs. **Config canonique retenue : `momentum_12_1 @ rebalance_every=10`.**
+  Reste à câbler cette cadence côté exécution (aujourd'hui le daemon tourne
+  quotidiennement ; il faut ne rééquilibrer le book momentum que ~tous les 10 j —
+  cache de poids cibles, ou garde de cadence dans le pipeline).
 - [ ] **Investiguer l'anomalie du combinateur** (IC négatif / Sharpe net positif) :
   bug de construction du portefeuille combiné ? surapprentissage ? sign-flip ?
   Ne pas déployer le combinateur avant résolution.
