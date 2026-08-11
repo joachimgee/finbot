@@ -187,12 +187,22 @@ bonnes corrections vivent sur un pipeline orphelin.
   sources réelles (`technical`, `sentiment`). Daemon durci : `fallback_mode=False`
   + `min_sources=2` (≥ 2 sources réelles ou abstention pour le symbole), garde
   anti-crash sur fusion vide. Testé (`test_signal_fusion_abstention.py`).
-- [ ] **Décider du chemin canonique unique** : le daemon reste le chemin exécuté
-  (fusion purgée ci-dessus + `compute_professional_score`). Reste à trancher le
-  sort du `LiveTradingPipeline` (orphelin mais corrigé/testé) : le fusionner comme
-  moteur alternatif du daemon, ou le retirer du chemin d'import de prod.
-- [ ] **Supprimer le double moteur** : un seul chemin signaux→ordres exécuté par le
-  daemon ; l'autre est retiré du chemin d'import de prod (ou supprimé).
+- [x] **Fusionner le `LiveTradingPipeline` comme moteur d'allocation du daemon**
+  *(fait)* : le daemon délègue désormais la **taille** des positions au pipeline
+  via l'API publique `compute_target_weights` (signaux validés momentum 12-1 +
+  abstention, inclinaison **Black-Litterman**) au lieu du poids égal `1/N` qui
+  ignorait la force du signal. Injection de dépendance : le pipeline **partage**
+  l'adaptateur, le moniteur, le `RiskGuard` et le **journal** du run → un seul
+  chokepoint audité, une seule logique de décision (celle que `run()` exécute
+  aussi). Repli en poids égal si le pipeline s'abstient partout. Le calcul de
+  deltas et la soumission restent côté daemon (aucune liquidation de masse
+  importée). Testé (`test_pipeline_allocation_engine.py`).
+- [ ] **Supprimer le double moteur (suite)** : le pipeline est maintenant *câblé*
+  au daemon (moteur d'allocation), plus orphelin. Étape restante, à valider en
+  paper live : promouvoir le `run()` complet du pipeline (fetch→signaux→BL→ordres
+  via son gateway) comme chemin d'exécution unique, en remplacement de la boucle
+  d'ordres du daemon — nécessite une validation Alpaca paper de bout en bout
+  (comportement « fermer les positions hors cible » à cadrer sur l'univers).
 - [ ] **Tests bout-en-bout du daemon** (broker mocké) : le signal réel n'est jamais
   une constante ; chaque ordre passe par `OrderGateway`.
 

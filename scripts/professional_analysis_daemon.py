@@ -1044,26 +1044,60 @@ Configuration :
         print(f"    • Target optimal: {optimal_total_positions} positions (risk_factor={risk_factor:.1f}, equity_factor={equity_factor:.1f}, conf_factor={confidence_factor:.1f})")
         print(f"    • 🎯 Nouvelles positions à acheter: {len(best_candidates)} / {len(new_candidates)} candidats disponibles")
         
-        # ÉTAPE 3: Soumettre ordres BUY pour TOUS les candidats
+        # ÉTAPE 3: Allocation pilotée par les SIGNAUX (Black-Litterman), puis BUY.
+        #
+        # Fusion du moteur : au lieu d'un poids égal 1/N (qui ignore la force des
+        # signaux), on délègue l'allocation au LiveTradingPipeline — le moteur
+        # signaux→allocation canonique (momentum 12-1 validé + abstention des
+        # sources stub, inclinaison Black-Litterman). Il partage l'adaptateur, le
+        # moniteur, le RiskGuard et le journal de ce run (injection de dépendance),
+        # de sorte que la décision de taille provient d'un seul et même moteur
+        # testé. Le calcul de deltas et la soumission restent ici, via l'unique
+        # gateway audité (aucune liquidation de masse importée).
         print(f"\n  🟢 SOUMISSION ORDRES BUY ({len(best_candidates)} positions)...")
-        
-        weight_per_position = 1.0 / len(best_candidates) if best_candidates else 0
-        cash_per_position = equity * weight_per_position
-        
-        print(f"    • Cash par position: ${cash_per_position:,.2f}")
-        
+
+        # Poids cibles par symbole (somme≈1 sur les signaux positifs). Repli en
+        # poids égal si le pipeline s'abstient partout (aucun signal positif) ou
+        # échoue, pour ne pas bloquer le déploiement de capital.
+        equal_weight = 1.0 / len(best_candidates) if best_candidates else 0.0
+        bl_weights: dict[str, float] = {}
+        if best_candidates:
+            try:
+                from financial_analyzer.trading.live_trading_pipeline import LiveTradingPipeline
+                _alloc_engine = LiveTradingPipeline(
+                    broker_adapter=adapter,
+                    tickers=best_candidates,
+                    strategy='factor_ensemble',
+                    account_monitor=_monitor,
+                    risk_guard=_risk_guard,
+                    journal=_journal,
+                )
+                bl_weights, _ = _alloc_engine.compute_target_weights()
+                n_tilted = sum(1 for s in best_candidates if bl_weights.get(s, 0.0) > 0)
+                print(f"    • Allocation Black-Litterman: {n_tilted}/{len(best_candidates)} "
+                      f"positions inclinées par signal (repli poids égal sinon)")
+            except Exception as _ae:
+                print(f"    ⚠️  Allocation pipeline indisponible ({_ae}); repli poids égal")
+                logger.warning("Allocation Black-Litterman indisponible: %s", _ae)
+
+        def _weight_for(sym: str) -> float:
+            """Poids du symbole : Black-Litterman si présent (>0), sinon poids égal."""
+            w = bl_weights.get(sym, 0.0)
+            return w if w > 0 else equal_weight
+
         orders_submitted = 0
         orders_failed = 0
-        
+
         for symbol in best_candidates:  # Seulement les MEILLEURS
             try:
                 # Get current price
                 last_bars = adapter.get_bars(symbol, datetime.now() - timedelta(days=5), datetime.now(), timeframe='1Day')
                 if last_bars.empty:
                     continue
-                
+
                 price = last_bars['close'].iloc[-1]
-                qty = int(cash_per_position / price)
+                cash_for_symbol = equity * _weight_for(symbol)
+                qty = int(cash_for_symbol / price)
                 
                 if qty > 0:
                     # Check position exists

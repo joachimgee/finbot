@@ -26,7 +26,7 @@ Architecture:
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Literal, Callable, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Literal, Callable, Tuple
 from datetime import datetime, time as dt_time, timedelta
 from dataclasses import dataclass
 import pandas as pd
@@ -41,6 +41,9 @@ from .broker_adapter import BrokerAdapter
 from .account_monitor import AccountMonitor
 from .risk_guard import RiskGuard, CircuitBreakerTriggered
 from .order_gateway import OrderGateway
+
+if TYPE_CHECKING:
+    from .journal import TradingJournal
 
 try:
     from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
@@ -206,11 +209,14 @@ class LiveTradingPipeline:
         strategy: str = 'factor_ensemble',
         risk_config: Optional[Dict] = None,
         schedule_config: Optional[TradingSchedule] = None,
-        enable_logging: bool = True
+        enable_logging: bool = True,
+        account_monitor: Optional[AccountMonitor] = None,
+        risk_guard: Optional[RiskGuard] = None,
+        journal: Optional[TradingJournal] = None,
     ) -> None:
         """
         Initialize live trading pipeline.
-        
+
         Args:
             broker_adapter: Connected BrokerAdapter instance
             tickers: List of ticker symbols to trade
@@ -219,10 +225,19 @@ class LiveTradingPipeline:
             risk_config: Risk limits config (default: conservative)
             schedule_config: Execution schedule config
             enable_logging: Enable detailed logging
-        
+            account_monitor: Moniteur de compte pré-construit à réutiliser (DI).
+                Si None, un ``AccountMonitor`` est créé. Permet à un orchestrateur
+                (ex. le daemon) de partager un moniteur déjà mis à jour.
+            risk_guard: ``RiskGuard`` pré-construit à réutiliser (DI). Si None, un
+                garde conservateur est créé depuis ``risk_config``. Partager le
+                garde garantit des limites cohérentes sur tout le book.
+            journal: journal d'exécution optionnel (``TradingJournal``) branché sur
+                le chokepoint : chaque ordre routé par le gateway y est audité.
+                Préserve la piste d'audit quand le daemon délègue l'allocation.
+
         Raises:
             ValueError: If broker_adapter not connected or tickers empty
-        
+
         Example:
             >>> adapter = AlpacaAdapter(api_key='...', api_secret='...', paper=True)
             >>> pipeline = LiveTradingPipeline(
@@ -233,30 +248,34 @@ class LiveTradingPipeline:
         """
         if not broker_adapter.connected:
             raise ValueError("BrokerAdapter must be connected. Call connect() first.")
-        
+
         if not tickers:
             raise ValueError("Tickers list cannot be empty")
-        
+
         self.broker = broker_adapter
         self.tickers = tickers
         self.strategy = strategy
-        
-        # Initialize AccountMonitor
-        self.monitor = AccountMonitor(
+
+        # AccountMonitor : injecté (partagé) ou construit par défaut.
+        self.monitor = account_monitor or AccountMonitor(
             broker_adapter=broker_adapter,
             initial_capital=initial_capital,
             track_history=True
         )
-        
-        # Initialize RiskGuard with config
-        risk_config = risk_config or self._default_risk_config()
-        self.risk_guard = RiskGuard(
-            account_monitor=self.monitor,
-            **risk_config
-        )
 
-        # Single audited execution chokepoint (mode-gate + risk + idempotence).
-        self.order_gateway = OrderGateway(self.broker, self.risk_guard)
+        # RiskGuard : injecté (partagé) ou construit depuis la config conservatrice.
+        if risk_guard is not None:
+            self.risk_guard = risk_guard
+        else:
+            risk_config = risk_config or self._default_risk_config()
+            self.risk_guard = RiskGuard(
+                account_monitor=self.monitor,
+                **risk_config
+            )
+
+        # Single audited execution chokepoint (mode-gate + risk + idempotence +
+        # audit). Le journal partagé, s'il est fourni, persiste chaque ordre.
+        self.order_gateway = OrderGateway(self.broker, self.risk_guard, journal=journal)
 
         # Schedule
         self.schedule = schedule_config or TradingSchedule()
@@ -359,18 +378,12 @@ class LiveTradingPipeline:
                 f"Positions: {len(self.monitor.positions)}"
             )
             
-            # 4. Fetch data
+            # 4-6. Data -> signaux (validés, avec abstention) -> allocation
+            # Black-Litterman. Cœur signal→allocation exposé publiquement via
+            # compute_target_weights (réutilisé par le daemon comme moteur d'alloc).
             logger.info(f"Fetching data for {len(self.tickers)} tickers...")
-            data = self._fetch_data()
-            
-            # 5. Generate signals
-            logger.info(f"Generating signals (strategy={self.strategy})...")
-            signals = self._generate_signals(data)
-            
-            # 6. Optimize portfolio
-            logger.info("Optimizing portfolio...")
-            target_weights = self._optimize_portfolio(signals, data)
-            
+            target_weights, data = self.compute_target_weights()
+
             # 7. Generate orders
             logger.info("Generating orders...")
             orders = self._generate_orders(target_weights, data)
@@ -412,6 +425,36 @@ class LiveTradingPipeline:
             logger.error(f"Execution failed: {e}", exc_info=True)
             return self._result('failed', str(e))
     
+    def compute_target_weights(
+        self,
+        data: Optional[Dict] = None,
+    ) -> Tuple[Dict[str, float], Dict]:
+        """Cœur signal→allocation, sans exécution : poids cibles Black-Litterman.
+
+        C'est l'API publique qui fait de ce pipeline un **moteur d'allocation**
+        réutilisable : un orchestrateur (le daemon) peut obtenir des poids pilotés
+        par les signaux *validés* (momentum 12-1, abstention des sources stub) et
+        inclinés par Black-Litterman, sans passer par la génération/soumission
+        d'ordres du pipeline. ``run()`` s'appuie sur la même méthode, garantissant
+        que le chemin exécuté et le chemin délégué partagent exactement la même
+        logique de décision.
+
+        Args:
+            data: Données de marché déjà récupérées (format de ``_fetch_data``).
+                Si None, les données sont récupérées pour ``self.tickers``.
+
+        Returns:
+            ``(target_weights, data)`` — un dict {symbole: poids ∈ [0,1], somme≈1}
+            sur les seuls signaux positifs (long-only), et les données utilisées
+            (pour un éventuel calcul d'ordres en aval). ``target_weights`` est vide
+            si aucun signal positif n'émerge (abstention → pas de position).
+        """
+        if data is None:
+            data = self._fetch_data()
+        signals = self._generate_signals(data)
+        target_weights = self._optimize_portfolio(signals, data)
+        return target_weights, data
+
     def _fetch_data(self) -> Dict:
         """
         Fetch latest market data for all tickers.
