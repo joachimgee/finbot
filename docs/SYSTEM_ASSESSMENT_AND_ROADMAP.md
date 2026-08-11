@@ -333,12 +333,13 @@ Prudemment, sans casser le chemin canonique. Chaque suppression = tests verts.
   `recommendations/`, `backtesting/` — 0 LOC, **0 import entrant** (vérifié), plus
   leurs stubs de test vides (`tests/api`, `tests/dashboard`). Collection des 2192
   tests propre + 658 tests du chemin canonique verts après suppression.
-- [ ] **Orphelins purs (à trancher, mesuré)** : `async_pipeline/` (269 LOC) et
-  `database/` (270 LOC) ne sont importés que par **un seul test de perf**
-  (`test_performance_new_modules.py`), zéro usage prod → candidats à la suppression
-  *sur confirmation*. ⚠️ **`ml_features/` N'EST PAS un orphelin** : **10 imports
-  entrants** (scripts de validation + tests) — l'assessment initial se trompait ;
-  à conserver.
+- [x] **Orphelins purs — tranché : CONSERVÉS** (décision utilisateur).
+  `async_pipeline/` (269 LOC) et `database/` (270 LOC) ne sont importés que par
+  **un seul test de perf** (`test_performance_new_modules.py`), zéro usage prod ;
+  gardés hors chemin de prod pour une réactivation éventuelle (async fetch multi-
+  tickers face aux quotas ; persistance DB pour P&L/cache). ⚠️ **`ml_features/`
+  N'EST PAS un orphelin** : **10 imports entrants** (scripts de validation +
+  tests) — l'assessment initial se trompait ; à conserver.
 - [ ] **Redondances (mesuré → risque élevé, différer)** : `portfolio` (15 imports,
   dont 2 dans le chemin canonique) **et** `portfolio_optimization` (28 imports,
   2 canoniques) sont **tous deux** lourdement utilisés et dans le money path →
