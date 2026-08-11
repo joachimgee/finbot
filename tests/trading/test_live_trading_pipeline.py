@@ -577,16 +577,18 @@ class TestGenerateSignalsAbstention:
 
     @staticmethod
     def _rising_df():
-        idx = pd.date_range("2024-01-01", periods=25, freq="D")
-        close = pd.Series(np.linspace(100.0, 120.0, 25), index=idx)
+        # >=252 jours : le seul momentum autorisé est le 12-1 validé (portail P1).
+        idx = pd.date_range("2023-01-01", periods=260, freq="B")
+        close = pd.Series(np.linspace(100.0, 140.0, 260), index=idx)
         return pd.DataFrame(
             {"open": close, "high": close, "low": close, "close": close, "volume": 1e6},
             index=idx,
         )
 
     def _momentum(self, df):
-        returns_20d = df["close"].iloc[-1] / df["close"].iloc[-20] - 1
-        return float(np.tanh(returns_20d * 10))
+        # Facteur 12-1 validé (rendement 12 mois hors dernier mois).
+        mom = df["close"].iloc[-21] / df["close"].iloc[-252] - 1
+        return float(np.tanh(mom * 3))
 
     def test_ml_stub_does_not_dilute(self, pipeline):
         """With only momentum available, the signal equals the momentum signal
@@ -689,8 +691,10 @@ class TestExecuteOrdersLifecycle:
 
 
 class TestValidatedMomentumSignal:
-    """P2: with enough history the momentum component uses the OOS-validated 12-1
-    factor; with short history it falls back to the 20-day proxy."""
+    """P1/P2: la seule source momentum autorisée est le facteur 12-1 validé, et
+    seulement s'il figure au registre du portail de validation. Avec un historique
+    court (<252 j), la source s'ABSTIENT — l'ancien repli « 20 jours » non validé
+    a été retiré (aucun signal non validé ne décide)."""
 
     @staticmethod
     def _rising(n):
@@ -706,10 +710,25 @@ class TestValidatedMomentumSignal:
         mom = df["close"].iloc[-21] / df["close"].iloc[-252] - 1
         assert signals["AAPL"] == pytest.approx(float(np.tanh(mom * 3)), abs=1e-9)
 
-    def test_falls_back_to_20d_when_history_short(self, pipeline):
+    def test_abstains_from_momentum_when_history_short(self, pipeline):
+        """<252 j : pas de 12-1 possible, et pas de repli non validé -> abstention
+        de la source momentum. Sans autre source réelle, le signal est 0.0."""
         df = self._rising(30)  # < 252 rows
         data = {"prices": {"AAPL": df}, "sentiment": {}}
         with patch("financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None):
             signals = pipeline._generate_signals(data)
-        r20 = df["close"].iloc[-1] / df["close"].iloc[-20] - 1
-        assert signals["AAPL"] == pytest.approx(float(np.tanh(r20 * 10)), abs=1e-9)
+        assert signals["AAPL"] == 0.0
+
+    def test_momentum_source_gated_by_registry(self, pipeline):
+        """Si momentum_12_1 est retiré du registre, le chemin canonique ne
+        l'utilise plus, même avec assez d'historique -> abstention."""
+        df = self._rising(300)
+        data = {"prices": {"AAPL": df}, "sentiment": {}}
+        with patch(
+            "financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None
+        ), patch(
+            "financial_analyzer.trading.live_trading_pipeline.is_validated",
+            return_value=False,
+        ):
+            signals = pipeline._generate_signals(data)
+        assert signals["AAPL"] == 0.0
