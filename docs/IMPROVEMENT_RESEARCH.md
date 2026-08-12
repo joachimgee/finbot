@@ -163,6 +163,34 @@ biais de survie type Sharadar/CRSP, +10 ans, small-caps), pas par une n-ième
 variante. Les trois modules restent comme **infrastructure testée**, prêts à être
 re-passés au portail dès qu'un tel dataset est disponible.
 
+### ✅ Fait (Tier 2 quater) — sentiment FinBERT (vraie famille décorrélée), REJETÉ mais prometteur
+
+Le test de sentiment initial (IC t = −0.93) notait le champ `insight` **brut** de
+Polygon (±1/0). On a refait le test **proprement** : **112 082 articles réels**
+(titre+description, 80 large-caps, 2023-08→2026-07) notés par **FinBERT**
+(ProsusAI/finbert) → panel point-in-time (fenêtre 7 j) → même portail.
+(`data/polygon_news_sentiment.py` + `scripts/run_finbert_sentiment_alpaca.py`.)
+
+| grandeur | valeur | lecture |
+|---|---|---|
+| couverture panel non-NaN | 87 % | données denses (vs sentiment natif clairsemé) |
+| IC t-stat | **−0.69** | ≈ 0 : aucun edge cross-section |
+| Sharpe net | +0.17 | quasi nul |
+| PSR (P[Sharpe>0]) | 0.61 | faible |
+| **corrélation OOS ↔ momentum** | **+0.24** | ✅ **vraiment décorrélé** (vs +0.72/+0.85 des variantes prix) |
+
+**Non inscrit** — mais le résultat est *le plus encourageant des candidats breadth*.
+La corrélation **+0.24** confirme que le sentiment est une **famille réellement
+décorrélée** (là où TSMOM/résiduel restaient collés au momentum). Le problème n'est
+donc pas la famille mais la **construction** : le *niveau* moyen de sentiment sur 7 j
+n'a pas d'edge (il est vraisemblablement **déjà price-in**). La théorie (et la
+littérature event-study) dit que ce qui bouge les prix, c'est l'**innovation** de
+sentiment (surprise = niveau − moyenne glissante), pas le niveau ; et l'horizon
+compte (l'impact news décroît en quelques jours, parfois avec **reversal**). C'est
+**une** alternative motivée *ex-ante* (pas du p-hacking) — à tester une fois, en la
+comptant honnêtement dans le DSR, avant toute inscription. Le module FinBERT +
+fetch d'articles (avec retries/checkpoint) reste comme **infrastructure testée**.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
