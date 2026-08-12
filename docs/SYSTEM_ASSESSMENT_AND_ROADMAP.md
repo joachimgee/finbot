@@ -398,8 +398,13 @@ l'alerting fail-safe, et un runbook paper→live avec kill-switch testé. Voir
 **Ce qui reste (au-delà de la feuille de route initiale) :**
 
 - **Élargir le registre validé** : *un seul* signal validé (`momentum_12_1`).
-  Chercher d'autres edges (univers small-cap, autres facteurs) **via le portail** —
-  aucun raccourci.
+  Testés via le portail sur données réelles et **écartés** (pas d'edge OOS net) :
+  value/quality (E/P, B/P, ROE, GP/A) ; **sentiment de presse** (Polygon PIT,
+  22 504 articles notés 2024-26 : IC t −0.93, Sharpe net < 0). L'infra sentiment
+  point-in-time (`data/polygon_news_sentiment.py`,
+  `scripts/validate_sentiment_factor_alpaca.py`) est prête pour des variantes
+  (sentiment *surprise*/événementiel, fenêtres, univers plus large). Chercher
+  d'autres edges **via le portail** — aucun raccourci.
 - **Blocages data (tier payant)** : prix des delistés (validation sans biais de
   survie complète) ; échelle Polygon (5 req/min).
 - **Fusions P3 différées** : `portfolio` + `portfolio_optimization` (toutes deux
