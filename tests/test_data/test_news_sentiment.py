@@ -8,8 +8,23 @@ import pytest
 from financial_analyzer.data.pit_loader import RealDataUnavailableError
 from financial_analyzer.data.polygon_news_sentiment import (
     NewsSentimentLoader,
+    article_text,
     build_sentiment_panel,
 )
+
+
+def test_article_text_combines_title_and_description() -> None:
+    assert article_text(
+        {"title": "Apple beats", "description": "Revenue up 10% on iPhone"}
+    ) == "Apple beats. Revenue up 10% on iPhone"
+
+
+def test_article_text_dedupes_and_handles_missing() -> None:
+    # Description répétant le titre -> pas de duplication.
+    assert article_text({"title": "Apple beats", "description": "apple beats"}) == "Apple beats"
+    assert article_text({"title": "Only title"}) == "Only title"
+    assert article_text({"description": "Only desc"}) == "Only desc"
+    assert article_text({}) == ""
 
 
 def _articles():

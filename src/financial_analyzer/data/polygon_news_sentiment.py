@@ -32,7 +32,83 @@ logger = get_logger(__name__)
 _NEWS_URL = "https://api.polygon.io/v2/reference/news"
 _SENTIMENT_MAP = {"positive": 1.0, "negative": -1.0, "neutral": 0.0}
 
-__all__ = ["NewsSentimentLoader", "build_sentiment_panel", "fetch_news_sentiment"]
+__all__ = [
+    "NewsSentimentLoader",
+    "article_text",
+    "build_sentiment_panel",
+    "fetch_news_articles",
+    "fetch_news_sentiment",
+]
+
+
+def article_text(art: dict) -> str:
+    """Texte notable d'un article = titre + description (ce que FinBERT lit).
+
+    Pur (testable sans réseau). Concatène ``title`` et ``description`` en évitant
+    la duplication si la description répète le titre. Chaîne vide si rien d'exploitable.
+    """
+    title = (art.get("title") or "").strip()
+    desc = (art.get("description") or "").strip()
+    if desc and desc.lower() not in title.lower():
+        return f"{title}. {desc}".strip(". ").strip() if title else desc
+    return title
+
+
+def fetch_news_articles(
+    tickers: list[str],
+    start: str,
+    end: str | None = None,
+    *,
+    api_key: str | None = None,
+    max_pages_per_ticker: int = 4,
+) -> pd.DataFrame:
+    """Récupère les **articles avec leur texte** (titre+description) par ticker.
+
+    Contrairement à :func:`fetch_news_sentiment` (qui ne garde que les articles
+    porteurs d'un ``insight`` Polygon), on garde **tout article ayant du texte** —
+    c'est FinBERT qui notera le sentiment en aval, sans dépendre du champ natif.
+
+    Returns:
+        DataFrame long ``[ticker, published_utc, text]`` (une ligne par article
+        avec du texte exploitable).
+    """
+    key = _api_key(api_key)
+    end = end or pd.Timestamp.today().strftime("%Y-%m-%d")
+    rows: list[dict] = []
+    for tk in tickers:
+        params = {
+            "ticker": tk, "published_utc.gte": start, "published_utc.lte": end,
+            "order": "asc", "sort": "published_utc", "limit": 1000, "apiKey": key,
+        }
+        url = _NEWS_URL
+        for _ in range(max_pages_per_ticker):
+            resp = None
+            for attempt in range(5):
+                resp = requests_get(url, params if url == _NEWS_URL else {"apiKey": key})
+                if resp.status_code == 429:
+                    time.sleep(13 + attempt * 2)
+                    continue
+                break
+            if resp is None or resp.status_code != 200:
+                logger.warning("Polygon news %s: %s", tk, getattr(resp, "status_code", "n/a"))
+                break
+            j = resp.json()
+            for art in j.get("results", []):
+                txt = article_text(art)
+                if not txt:
+                    continue
+                rows.append({
+                    "ticker": tk,
+                    "published_utc": pd.to_datetime(art.get("published_utc")).tz_localize(None),
+                    "text": txt,
+                })
+            url = j.get("next_url")
+            if not url:
+                break
+    cols = ["ticker", "published_utc", "text"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(rows).sort_values(["ticker", "published_utc"]).reset_index(drop=True)
 
 
 def _api_key(explicit: str | None) -> str:
