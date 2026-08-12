@@ -10,7 +10,24 @@ from financial_analyzer.data.polygon_news_sentiment import (
     NewsSentimentLoader,
     article_text,
     build_sentiment_panel,
+    build_sentiment_surprise_panel,
 )
+
+
+def test_surprise_is_fast_minus_slow_pit() -> None:
+    """La surprise = niveau récent − norme longue, sans look-ahead, NaN si pas d'article récent."""
+    df = pd.DataFrame([
+        {"ticker": "AAA", "published_utc": pd.Timestamp("2024-01-01"), "sentiment": 1.0},
+        {"ticker": "AAA", "published_utc": pd.Timestamp("2024-01-02"), "sentiment": 1.0},
+        {"ticker": "AAA", "published_utc": pd.Timestamp("2024-03-01"), "sentiment": -1.0},
+    ])
+    dates = pd.date_range("2024-01-01", "2024-03-05", freq="D")
+    # slow assez large pour englober l'historique positif de janvier -> vraie norme.
+    surprise = build_sentiment_surprise_panel(df, dates, fast_days=3, slow_days=90)
+    # Au 1er mars : sentiment récent −1 bien en dessous de la norme (positive) -> surprise < 0.
+    assert surprise.loc[pd.Timestamp("2024-03-01"), "AAA"] < 0
+    # Une date sans article récent (mi-février) -> pas de surprise fabriquée.
+    assert pd.isna(surprise.loc[pd.Timestamp("2024-02-14"), "AAA"])
 
 
 def test_article_text_combines_title_and_description() -> None:

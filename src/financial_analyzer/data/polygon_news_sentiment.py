@@ -36,6 +36,7 @@ __all__ = [
     "NewsSentimentLoader",
     "article_text",
     "build_sentiment_panel",
+    "build_sentiment_surprise_panel",
     "fetch_news_articles",
     "fetch_news_sentiment",
 ]
@@ -223,6 +224,26 @@ def build_sentiment_panel(
                 vals[i] = float(sent[mask].mean())
         cols[tk] = vals
     return pd.DataFrame(cols, index=idx)
+
+
+def build_sentiment_surprise_panel(
+    long_df: pd.DataFrame, dates: pd.DatetimeIndex,
+    fast_days: int = 3, slow_days: int = 30,
+) -> pd.DataFrame:
+    """Panel de **surprise** de sentiment (innovation), point-in-time.
+
+    ``surprise[t] = niveau_récent(fast) − norme_glissante(slow)`` : la déviation du
+    sentiment récent par rapport à sa moyenne longue. Motivation event-study : le
+    *niveau* de sentiment est en grande partie price-in ; c'est l'**innovation** qui
+    bouge les prix. Les deux fenêtres n'agrègent que des articles ``≤ t`` (aucun
+    look-ahead), donc leur différence non plus. ``NaN`` là où le niveau récent manque.
+    """
+    fast = build_sentiment_panel(long_df, dates, window_days=fast_days)
+    slow = build_sentiment_panel(long_df, dates, window_days=slow_days)
+    fast, slow = fast.align(slow, join="outer")
+    surprise = fast - slow
+    # Là où il n'y a pas d'article récent (fast NaN), pas de surprise fabriquée.
+    return surprise.where(fast.notna())
 
 
 @dataclass

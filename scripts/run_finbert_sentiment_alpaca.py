@@ -43,6 +43,7 @@ from financial_analyzer.backtest.validation_gate import evaluate_signal_gate
 from financial_analyzer.data.alpaca_history import load_or_fetch
 from financial_analyzer.data.polygon_news_sentiment import (
     build_sentiment_panel,
+    build_sentiment_surprise_panel,
     fetch_news_articles,
 )
 
@@ -121,6 +122,10 @@ def main() -> None:
     ap.add_argument("--scored-cache", default="/tmp/finbert_scored.parquet")
     ap.add_argument("--refetch", action="store_true")
     ap.add_argument("--fetch-only", action="store_true", help="Ne fait que l'étape fetch.")
+    ap.add_argument("--signal", choices=["level", "surprise"], default="level",
+                    help="'level' = sentiment moyen ; 'surprise' = innovation (récent − norme).")
+    ap.add_argument("--fast", type=int, default=3, help="Fenêtre récente (surprise).")
+    ap.add_argument("--slow", type=int, default=30, help="Norme glissante (surprise).")
     args = ap.parse_args()
 
     articles = _load_articles(args)
@@ -147,17 +152,23 @@ def main() -> None:
     returns = daily_returns(prices)
     cost = CostModel.alpaca_equities()
 
-    panel = build_sentiment_panel(scored, prices.index, window_days=args.window)
+    if args.signal == "surprise":
+        panel = build_sentiment_surprise_panel(
+            scored, prices.index, fast_days=args.fast, slow_days=args.slow)
+        desc = f"SURPRISE (innovation {args.fast}j vs norme {args.slow}j)"
+    else:
+        panel = build_sentiment_panel(scored, prices.index, window_days=args.window)
+        desc = f"NIVEAU (fenêtre {args.window}j)"
     panel = panel.reindex(columns=prices.columns)
     cov = float(panel.notna().mean().mean())
-    print(f"Panel sentiment : {prices.shape[0]} jours × {panel.shape[1]} titres, "
-          f"couverture non-NaN={cov:.0%}\n")
+    print(f"Panel sentiment [{args.signal}] : {prices.shape[0]} jours × {panel.shape[1]} "
+          f"titres, couverture non-NaN={cov:.0%}\n")
 
     print("=" * 74)
-    print(f"SENTIMENT FinBERT — portail (reb={args.rebalance}, fenêtre {args.window}j)")
+    print(f"SENTIMENT FinBERT {desc} — portail (reb={args.rebalance})")
     print("=" * 74)
     verdict = evaluate_signal_gate(
-        "finbert_sentiment", panel, returns, cost_model=cost,
+        f"finbert_{args.signal}", panel, returns, cost_model=cost,
         rebalance_every=args.rebalance, n_splits=args.splits,
     )
     print("\n  " + verdict.summary())

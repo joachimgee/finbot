@@ -191,6 +191,28 @@ compte (l'impact news décroît en quelques jours, parfois avec **reversal**). C
 comptant honnêtement dans le DSR, avant toute inscription. Le module FinBERT +
 fetch d'articles (avec retries/checkpoint) reste comme **infrastructure testée**.
 
+**Suivi (1 test, comme promis) — surprise de sentiment, aussi REJETÉ.** On a testé
+l'innovation `surprise = niveau(3j) − norme(30j)`, reb=3 (`--signal surprise`) :
+
+| grandeur | niveau (7j) | **surprise (3j/30j)** |
+|---|---|---|
+| IC t-stat | −0.69 | **−0.60** (≈ 0) |
+| Sharpe net | +0.17 | **−1.30** (turnover 0.55 → mangé par les coûts) |
+| PSR | 0.61 | 0.02 |
+| corrélation ↔ momentum | +0.24 | +0.07 |
+
+Ni le niveau ni l'innovation n'ont d'edge cross-section : sur ces 80 large-caps, à
+horizon jour/semaine et sur 3 ans, **il n'y a pas de relation sentiment→rendement
+exploitable**. La famille est bien décorrélée (breadth potentielle réelle) mais le
+signal n'existe pas *ici*. Raisons honnêtes probables : (1) les large-caps sont les
+titres les plus **efficients et saturés de news** — l'edge sentiment vit plutôt sur
+des small-caps sous-couvertes ; (2) 3 ans d'échantillon ; (3) le sentiment EOD rate
+le drift **intraday**. **On s'arrête** : sweeper d'autres fenêtres/horizons serait
+du multiple-testing. Conclusion inchangée et désormais *robuste sur 4 familles*
+(TSMOM, univers large, résiduel, sentiment) : **le levier restant est la donnée**
+(univers profond sans biais de survie, idéalement small-caps — là où sentiment *et*
+value ont de la place), pas une variante de plus sur ce même échantillon.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
