@@ -1,0 +1,142 @@
+# FinBot — Pistes d'amélioration (recherche externe → code réel)
+
+> Recherche sur des systèmes/repos reconnus et la littérature performante, mappée
+> sur l'**état réel** de FinBot (cf. [`CANONICAL_ARCHITECTURE.md`](CANONICAL_ARCHITECTURE.md)) :
+> **un seul** signal validé (`momentum_12_1`, cross-sectionnel, reb=10, Sharpe net
+> +0.76), portail `IC t>2 ET Sharpe net>0` en walk-forward, univers ~12-80
+> large-caps, allocation Black-Litterman + cap de concentration. Priorisé par
+> **impact × faisabilité**.
+
+---
+
+## Tier 1 — Améliorer le SEUL edge prouvé (impact immédiat, faible risque)
+
+### 1.1 Momentum piloté par la volatilité (*risk-managed momentum*)
+**Constat externe.** Barroso & Santa-Clara (2015, *Momentum has its Moments*) :
+le risque du momentum est prévisible par sa **propre variance réalisée** ; scaler
+la position par l'inverse de la vol réalisée (cible ~12 % annualisée) **élimine
+quasiment les krachs de momentum et fait passer le Sharpe de 0.53 à 0.97** (≈ ×2).
+Même principe chez Moskowitz-Ooi-Pedersen (*Time Series Momentum*) et AQR (scaler à
+vol constante 10 %).
+
+**Chez FinBot.** Le momentum 12-1 est utilisé **brut** (`tanh(mom*3)`), sans
+gestion de vol, dans `live_trading_pipeline._generate_signals`. Le drawdown paper
+n'est pas maîtrisé.
+
+**Action concrète.** Multiplier le poids/score du signal momentum par
+`vol_cible / vol_réalisée_récente` (vol EWMA 3-6 mois), plafonné. À faire côté
+allocation (`compute_target_weights`) ou signal. **Re-valider par le portail** —
+attendu : Sharpe net ↑ et drawdown ↓. *Le plus haut ratio valeur/effort du lot.*
+
+### 1.2 Ciblage de volatilité au niveau du portefeuille + overlay risk-off
+**Externe.** AQR (*Trends Everywhere*, *Macro Momentum*) : scaler l'exposition
+totale à une vol cible ; les stratégies trend réduisent l'exposition en régime
+adverse. Overlay classique : réduire l'exposition quand l'indice est sous sa
+moyenne 200 j.
+
+**Chez FinBot.** Exposition ≈ pleinement investie (somme des poids ≈ 1), pas de
+régulation de vol ni de filtre de régime.
+
+**Action.** Un `TargetVolSizer` : échelle l'exposition brute pour viser ~10 % de
+vol ex-ante ; un filtre de tendance marché (SPY vs 200 j) réduit l'exposition en
+risk-off. Câbler dans l'allocation, avant l'`OrderGateway`.
+
+---
+
+## Tier 2 — Augmenter la *breadth* (loi fondamentale de la gestion active)
+
+**Externe.** Grinold-Kahn : **IR ≈ IC × √Breadth**. Un IR élevé exige soit un IC
+plus fort, soit **plus de paris indépendants** (nombre de titres × nombre de
+signaux décorrélés). Attention : accroître la breadth peut baisser l'IC (bruit) —
+c'est un compromis.
+
+**Chez FinBot (le vrai plafond).** **1** signal lent sur ~12-80 large-caps →
+breadth faible → IR structurellement plafonné. Cela **explique honnêtement**
+pourquoi value/quality et sentiment n'ont pas passé le portail : ce ne sont pas
+juste de « mauvais facteurs », c'est aussi que l'espace de paris est étroit.
+
+**Actions.**
+- **Ajouter des signaux *indépendants* validés** (chacun via le portail) :
+  *time-series momentum* (ensemble 1/3/12 mois, vol-scalé — cf. 1.1),
+  *momentum résiduel/idiosyncratique* (Blitz : plus robuste que le momentum brut),
+  *reversal court terme* proprement construit. Chaque signal qui passe le portail
+  est combiné par **risk-weighting** (pas le combinateur ridge, écarté — cf.
+  anomalie P1).
+- **Élargir l'univers** (mid/small-caps) : plus de titres = plus de breadth *et*
+  plus de dispersion (là où value a un edge). **Bloqué** par les prix des delistés
+  (biais de survie 36.8 % mesuré) → nécessite un dataset sans biais (Sharadar/CRSP).
+
+---
+
+## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
+
+**Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
+le Sharpe pour (a) le **biais de sélection sous tests multiples** et (b) la
+non-normalité ; la **Probability of Backtest Overfitting (PBO)** quantifie le
+risque de sur-ajustement ; la **Purged/Combinatorial Purged Cross-Validation
+(CPCV)** supprime la fuite d'information aux frontières de folds et donne une
+*distribution* de Sharpe OOS.
+
+**Chez FinBot.** Le portail utilise `IC t > 2` (or j'ai déjà noté que le t-stat de
+l'IC est **gonflé en cross-section large** — un IC nul sort « significatif ») +
+walk-forward simple (5 fenêtres). Pas de correction de tests multiples, pas de
+purge/embargo.
+
+**Actions** (implémenter les formules *directement* — `mlfinlab` est désormais
+payant/fermé) :
+- **DSR dans le portail** : ajouter le Sharpe *déflaté* (fonction du nombre d'essais
+  et de la non-normalité) comme critère, à côté de l'IC t et du Sharpe net.
+- **Purged K-fold + embargo** dans `walk_forward_evaluate` : purger les
+  observations chevauchant la fenêtre de test, embargo après. Donne une PBO.
+- **Compter les essais** : le sweep teste N configs (facteurs × rebalance) ; le
+  DSR doit connaître N pour déflater correctement.
+
+*Impact : moins de faux positifs — mais probablement moins de « survivants » encore.
+C'est le prix de l'honnêteté statistique.*
+
+---
+
+## Tier 4 — Maturité plateforme (inspiration Qlib / QuantConnect-LEAN)
+
+- **Couche de données PIT formalisée** (Qlib : *DataHandler*/loaders point-in-time,
+  modules faiblement couplés). FinBot a déjà des loaders PIT (prix/fondamentaux/
+  univers/sentiment) ; les unifier derrière une interface commune type Qlib
+  faciliterait l'ajout de signaux.
+- **Meta-labeling** (López de Prado) au lieu du combinateur ridge (échoué) : un
+  modèle *secondaire* décide **la taille/le filtrage** des paris du signal primaire
+  (momentum), pas la direction. Plus discipliné, moins sujet aux artefacts de queue.
+- **Model zoo léger** (Qlib) : si un jour on entraîne (GBDT sur features validées),
+  garder l'entraînement **hors** chemin de décision tant qu'il n'a pas passé le
+  portail — jamais par défaut.
+- **Exécution** (LEAN) : ordres limit / TWAP vs market. *Faible priorité* au niveau
+  de capital et de liquidité actuels (large-caps) — le slippage mesuré est ~2.5 bps.
+
+---
+
+## Ce que la recherche confirme sur l'approche déjà tenue
+
+- **Coûts nets et walk-forward OOS** comme filtre : aligné avec la pratique.
+- **Abstention plutôt que constantes**, **portail avant décision** : va dans le
+  sens de la lutte anti-overfitting (DSR/PBO) — il faut juste la *renforcer* (Tier 3).
+- **Un seul edge prouvé assumé** : cohérent avec la loi fondamentale — mieux vaut
+  1 vrai signal bien géré (Tier 1) que 100 facteurs non validés.
+
+---
+
+## Ordre recommandé
+
+1. **1.1 Momentum vol-scalé** (re-validé) — meilleur ratio impact/effort, agit sur
+   le seul edge prouvé.
+2. **1.2 Ciblage de vol + risk-off** — maîtrise du drawdown avant tout live.
+3. **Tier 3 (DSR + purged CV)** — durcir le portail *avant* d'ajouter des signaux,
+   pour ne pas empiler des faux positifs.
+4. **Tier 2 (signaux indépendants + univers)** — la vraie montée en IR, une fois le
+   portail durci ; l'univers élargi dépend d'un dataset sans biais de survie.
+
+## Sources
+
+- Barroso & Santa-Clara, *Momentum has its Moments* (2015).
+- Moskowitz, Ooi & Pedersen, *Time Series Momentum* ; AQR, *Trends Everywhere* / *Macro Momentum*.
+- Grinold & Kahn, *Active Portfolio Management* (loi fondamentale, IR = IC·√Breadth).
+- Bailey & López de Prado, *The Deflated Sharpe Ratio* ; *The Probability of Backtest Overfitting* ; *Advances in Financial ML* (purged/combinatorial CV, meta-labeling).
+- Microsoft **Qlib** (github.com/microsoft/qlib) — couche PIT, model zoo, modules découplés.
