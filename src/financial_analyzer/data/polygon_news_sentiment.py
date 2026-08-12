@@ -82,13 +82,7 @@ def fetch_news_articles(
         }
         url = _NEWS_URL
         for _ in range(max_pages_per_ticker):
-            resp = None
-            for attempt in range(5):
-                resp = requests_get(url, params if url == _NEWS_URL else {"apiKey": key})
-                if resp.status_code == 429:
-                    time.sleep(13 + attempt * 2)
-                    continue
-                break
+            resp = robust_get(url, params if url == _NEWS_URL else {"apiKey": key})
             if resp is None or resp.status_code != 200:
                 logger.warning("Polygon news %s: %s", tk, getattr(resp, "status_code", "n/a"))
                 break
@@ -175,6 +169,32 @@ def requests_get(url: str, params: dict):
     import requests
 
     return requests.get(url, params=params, timeout=30)
+
+
+def robust_get(url: str, params: dict, *, tries: int = 6):
+    """GET tolérant : réessaie sur 429 **et** sur les aléas réseau/proxy (timeouts).
+
+    Le proxy sortant peut avoir des hoquets transitoires (handshake TLS qui expire).
+    Un backoff exponentiel évite qu'un seul aléa ne fasse tout perdre. Renvoie la
+    dernière réponse HTTP obtenue, ou ``None`` si toutes les tentatives échouent.
+    """
+    import requests
+
+    delay = 4.0
+    resp = None
+    for attempt in range(tries):
+        try:
+            resp = requests_get(url, params)
+        except requests.exceptions.RequestException as e:  # proxy/timeout/connexion
+            logger.warning("Polygon news réseau (essai %d/%d): %s", attempt + 1, tries, e)
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
+            continue
+        if resp.status_code == 429:  # quota free tier
+            time.sleep(13 + attempt * 2)
+            continue
+        return resp
+    return resp
 
 
 def build_sentiment_panel(

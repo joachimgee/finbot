@@ -61,17 +61,30 @@ DEFAULT_UNIVERSE = sorted(
 
 
 def _load_articles(args) -> pd.DataFrame:
+    """Fetch **par ticker avec checkpoint** : un aléa proxy ne perd pas tout, et un
+    re-lancement reprend là où on s'était arrêté (tickers déjà en cache sautés)."""
     cache = Path(args.article_cache)
-    if cache.exists() and not args.refetch:
-        df = pd.read_parquet(cache)
-        print(f"Articles (cache) : {len(df)} lignes, {df['ticker'].nunique()} tickers")
-        return df
-    print(f"Fetch articles Polygon (5 req/min, {len(DEFAULT_UNIVERSE)} tickers)…")
-    df = fetch_news_articles(DEFAULT_UNIVERSE, args.start, args.end,
-                             max_pages_per_ticker=args.max_pages)
-    df.to_parquet(cache)
-    print(f"  {len(df)} articles avec texte -> {cache}")
-    return df
+    done: pd.DataFrame = pd.read_parquet(cache) if cache.exists() else pd.DataFrame(
+        columns=["ticker", "published_utc", "text"])
+    have = set(done["ticker"].unique()) if not done.empty else set()
+    if args.refetch:
+        done, have = done.iloc[0:0], set()
+    todo = [t for t in DEFAULT_UNIVERSE if t not in have]
+    if not todo:
+        print(f"Articles (cache complet) : {len(done)} lignes, {len(have)} tickers")
+        return done
+    print(f"Fetch Polygon (5 req/min) : {len(todo)} tickers restants "
+          f"({len(have)} déjà en cache)…")
+    parts = [done] if not done.empty else []
+    for i, tk in enumerate(todo, 1):
+        one = fetch_news_articles([tk], args.start, args.end,
+                                  max_pages_per_ticker=args.max_pages)
+        parts.append(one)
+        # Checkpoint après chaque ticker : la progression survit à un crash.
+        pd.concat(parts, ignore_index=True).to_parquet(cache)
+        print(f"  [{i}/{len(todo)}] {tk}: +{len(one)} articles "
+              f"(total {sum(len(p) for p in parts)})")
+    return pd.concat(parts, ignore_index=True)
 
 
 def _score_finbert(df: pd.DataFrame, batch_size: int) -> pd.DataFrame:
