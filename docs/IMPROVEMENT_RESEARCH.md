@@ -94,6 +94,40 @@ une n-ième variante de trend. Le module reste comme **infrastructure testée**,
 prêt à être re-testé sur un univers large sans biais de survie ; il n'entre pas
 dans la décision tant qu'il n'a pas franchi le portail.
 
+### ✅ Fait (Tier 2 bis) — test de breadth empirique : le nombre de titres ≠ breadth
+
+On a *testé l'hypothèse breadth elle-même* : univers étendu de 80 à **475 titres
+liquides** (top dollar-volume, fonds exclus, via `data/alpaca_universe_liquid.py`
++ `run_breadth_test_alpaca.py`), puis re-passage du **même portail**.
+
+| grandeur | 80 titres | 475 titres | attendu si breadth×5.9 |
+|---|---|---|---|
+| momentum_12_1 IC t-stat | +2.56 | **+2.70** | ~×2.4 → ≈ +6 |
+| momentum_12_1 Sharpe net | +0.76 | +0.81 | ↑ franc |
+| momentum_12_1 DSR | 0.13 | **0.06** | ↑ |
+| TSMOM↔momentum corrélation | +0.72 | +0.74 | ↓ (plus indépendant) |
+| autres facteurs passant le portail | 0 | **0** | quelques-uns |
+
+**Résultat net : multiplier les titres par ~6 n'a *pas* relevé l'edge.** Le t-stat
+de l'IC est passé de 2.56 à 2.70 — au lieu du ×√6 (≈ +6) qu'impliquerait une vraie
+breadth ×6. La leçon, centrale : **le nombre de titres n'est pas le nombre de paris
+*indépendants***. 475 large/mid-caps partagent d'énormes expositions communes
+(marché, secteurs) → la breadth *effective* n'augmente presque pas, la corrélation
+TSMOM reste ~0.74, et aucun autre facteur n'émerge. Le levier n'est donc **pas de
+compter plus de tickers** mais la **décorrélation** :
+
+1. une *autre famille* de signaux vraiment orthogonale (fondamentaux PIT, résiduel
+   idiosyncratique à la Blitz — retirer β marché/secteur *avant* de trier) ;
+2. un univers plus **profond et dispersé** (small-caps), là où les paris sont moins
+   redondants — mais cela **exige** un dataset sans biais de survie (Sharadar/CRSP),
+   toujours le vrai blocage. ⚠️ Le test ci-dessus est lui-même survivor-biased
+   (Alpaca = titres encore cotés) : il mesure l'effet breadth, pas un rendement
+   absolu.
+
+Autrement dit, la recherche confirme la théorie (Grinold-Kahn) *et* montre
+empiriquement que l'implémenter demande de la **décorrélation**, pas du volume de
+tickers. C'est la direction du travail suivant (momentum résiduel).
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
