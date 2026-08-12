@@ -340,11 +340,15 @@ Prudemment, sans casser le chemin canonique. Chaque suppression = tests verts.
   tickers face aux quotas ; persistance DB pour P&L/cache). ⚠️ **`ml_features/`
   N'EST PAS un orphelin** : **10 imports entrants** (scripts de validation +
   tests) — l'assessment initial se trompait ; à conserver.
-- [ ] **Redondances (mesuré → risque élevé, différer)** : `portfolio` (15 imports,
-  dont 2 dans le chemin canonique) **et** `portfolio_optimization` (28 imports,
-  2 canoniques) sont **tous deux** lourdement utilisés et dans le money path →
-  fusion risquée, à faire isolément et prudemment. `strategy` (3)/`strategies` (1)
-  hors chemin canonique mais non triviaux. `backtesting` (vide) déjà supprimé.
+- [x] **Redondance `portfolio_optimization` → `portfolio` fusionnée** *(fait)*.
+  `portfolio_optimization/` n'était que **3 enveloppes de bibliothèques**
+  (`BlackLittermanModel`, `PyPortfolioOptOptimizer`, `RiskfolioOptimizer`) ;
+  déplacées dans `portfolio/` (le package riche : optimizer/constraints/metrics/
+  rebalancer), **~40 sites d'import mis à jour** (y compris les cibles de
+  `@patch` des tests) et l'ancien package supprimé. Un seul package d'optimisation
+  désormais. 256 tests portfolio/pipeline verts, collection des 2206 tests propre.
+  *Reste (différé)* : `strategy` (3)/`strategies` (1), hors chemin canonique mais
+  non triviaux.
 - [ ] **Unifier les systèmes de features** : un seul moteur de facteurs
   (`backtest/classic_factors` validé + le nécessaire de `features`/`ml`), retirer
   les 3 autres ou les marquer expérimentaux hors chemin de prod.

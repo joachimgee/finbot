@@ -31,7 +31,7 @@ import numpy as np
 
 from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
 from financial_analyzer.data.market_data import MarketDataFetcher
-from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 from financial_analyzer.risk.var_backtest import backtest_multi_methods
 
 # Import scoring function from professional_analysis

@@ -26,7 +26,6 @@ CORE_MODULES = [
     'integration.signal_fusion_engine',
     'integration.weighting_engine',
     'portfolio',
-    'portfolio_optimization',
     'risk',
     'features.technical',
     'features.fundamental',
@@ -35,7 +34,6 @@ CORE_MODULES = [
     'deep_learning.lstm_predictor',
     'rl.rl_trading_pipeline',
     'trading.alpaca_adapter',
-    'backtesting',
     'universe',
 ]
 

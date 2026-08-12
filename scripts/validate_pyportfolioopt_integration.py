@@ -60,7 +60,7 @@ def test_optimize_100_assets(tickers: List[str]) -> bool:
     """Test optimization with 100 assets."""
     print("\n✅ Test 3: Optimize 100-Asset Portfolio")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         # Generate synthetic data for speed
         np.random.seed(42)
@@ -111,7 +111,7 @@ def test_multi_sector_constraints(tickers: List[str]) -> bool:
     """Test multi-sector optimization with constraints."""
     print("\n✅ Test 4: Multi-Sector Constraints")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         from financial_analyzer.portfolio.constraints import PortfolioConstraints
         
         # Use 30 tickers for faster test
@@ -178,7 +178,7 @@ def test_black_litterman(tickers: List[str]) -> bool:
     """Test Black-Litterman optimization."""
     print("\n✅ Test 5: Black-Litterman with Views")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         # Use 20 tickers
         np.random.seed(42)
@@ -225,7 +225,7 @@ def test_discrete_allocation(tickers: List[str]) -> bool:
     """Test discrete allocation."""
     print("\n✅ Test 6: Discrete Allocation")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         # Use 15 tickers
         np.random.seed(42)

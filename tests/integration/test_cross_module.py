@@ -25,7 +25,7 @@ import pytest
 from financial_analyzer.sentiment import SentimentAggregator
 from financial_analyzer.strategy import SignalFusion, EnsembleAllocator
 from financial_analyzer.deep_learning import LSTMPredictor
-from financial_analyzer.portfolio_optimization import RiskfolioOptimizer
+from financial_analyzer.portfolio import RiskfolioOptimizer
 from financial_analyzer.pipeline.order_executor import OrderExecutor
 from financial_analyzer.analytics.performance_analyzer import PerformanceAnalyzer
 from financial_analyzer.analytics.report_generator import ReportGenerator

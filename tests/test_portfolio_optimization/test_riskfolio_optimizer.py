@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from financial_analyzer.portfolio_optimization import RiskfolioOptimizer
+from financial_analyzer.portfolio import RiskfolioOptimizer
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def test_init_empty(caplog):
     assert "empty returns" in caplog.text.lower()
 
 
-@patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.Portfolio")
+@patch("financial_analyzer.portfolio.riskfolio_optimizer.Portfolio")
 def test_optimize_mean_cvar_basic(mock_portfolio, returns_df):
     mock_inst = MagicMock()
     mock_portfolio.return_value = mock_inst
@@ -43,7 +43,7 @@ def test_optimize_mean_cvar_basic(mock_portfolio, returns_df):
     assert all(a in w.index for a in returns_df.columns)
 
 
-@patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.Portfolio")
+@patch("financial_analyzer.portfolio.riskfolio_optimizer.Portfolio")
 def test_optimize_mean_cdar_basic(mock_portfolio, returns_df):
     mock_inst = MagicMock()
     mock_portfolio.return_value = mock_inst
@@ -53,7 +53,7 @@ def test_optimize_mean_cdar_basic(mock_portfolio, returns_df):
     assert pytest.approx(float(w.sum())) == 1.0
 
 
-@patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.HCPortfolio")
+@patch("financial_analyzer.portfolio.riskfolio_optimizer.HCPortfolio")
 def test_optimize_nco(mock_hc, returns_df):
     mock_inst = MagicMock()
     mock_hc.return_value = mock_inst
@@ -63,7 +63,7 @@ def test_optimize_nco(mock_hc, returns_df):
     assert pytest.approx(float(w.sum())) == 1.0
 
 
-@patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.HCPortfolio")
+@patch("financial_analyzer.portfolio.riskfolio_optimizer.HCPortfolio")
 def test_optimize_hrp(mock_hc, returns_df):
     mock_inst = MagicMock()
     mock_hc.return_value = mock_inst
@@ -110,21 +110,21 @@ def test_risk_decomposition(returns_df):
 def test_classic_optimization_error_fallback(returns_df):
     opt = RiskfolioOptimizer(returns_df)
     # Force error: mock Portfolio to raise
-    with patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.Portfolio", side_effect=Exception("fail")):
+    with patch("financial_analyzer.portfolio.riskfolio_optimizer.Portfolio", side_effect=Exception("fail")):
         w = opt.optimize_mean_cvar()
     assert pytest.approx(float(w.sum())) == 1.0  # equal weight fallback
 
 
 def test_nco_error_fallback(returns_df):
     opt = RiskfolioOptimizer(returns_df)
-    with patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.HCPortfolio", side_effect=Exception("fail")):
+    with patch("financial_analyzer.portfolio.riskfolio_optimizer.HCPortfolio", side_effect=Exception("fail")):
         w = opt.optimize_nco()
     assert pytest.approx(float(w.sum())) == 1.0
 
 
 def test_hrp_error_fallback(returns_df):
     opt = RiskfolioOptimizer(returns_df)
-    with patch("financial_analyzer.portfolio_optimization.riskfolio_optimizer.HCPortfolio", side_effect=Exception("fail")):
+    with patch("financial_analyzer.portfolio.riskfolio_optimizer.HCPortfolio", side_effect=Exception("fail")):
         w = opt.optimize_hrp()
     assert pytest.approx(float(w.sum())) == 1.0
 

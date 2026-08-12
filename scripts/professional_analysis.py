@@ -71,7 +71,7 @@ warnings.filterwarnings('ignore')
 
 # Core modules
 from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
-from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 from financial_analyzer.portfolio.optimizer import PortfolioOptimizer
 from financial_analyzer.portfolio.constraints import PortfolioConstraints
 from financial_analyzer.trading.account_monitor import AccountMonitor
@@ -737,7 +737,7 @@ Profil Risque :
         elif args.riskfolio != 'off' and not (args.sector_caps or args.turnover_limit):
             # Utiliser Riskfolio-Lib (vendored)
             try:
-                from financial_analyzer.portfolio_optimization.riskfolio_optimizer import RiskfolioOptimizer
+                from financial_analyzer.portfolio.riskfolio_optimizer import RiskfolioOptimizer
                 rets = sel_prices.pct_change().dropna()
                 rpo = RiskfolioOptimizer(rets)
                 if args.riskfolio == 'cvar':

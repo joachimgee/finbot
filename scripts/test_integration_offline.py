@@ -144,8 +144,8 @@ def test_portfolio_optimization():
     """Test PyPortfolioOpt + Riskfolio."""
     print("\n[5/5] Test Portfolio Optimization...")
     try:
-        from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
-        from financial_analyzer.portfolio_optimization.riskfolio_optimizer import RiskfolioOptimizer
+        from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio.riskfolio_optimizer import RiskfolioOptimizer
         
         # Create sample price data (not returns!)
         dates = pd.date_range('2024-01-01', periods=100, freq='D')

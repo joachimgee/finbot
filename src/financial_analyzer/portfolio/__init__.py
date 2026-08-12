@@ -42,6 +42,11 @@ from .metrics import (
     calculate_diversification_ratio,
     calculate_herfindahl_index,
 )
+# Optimiseurs enveloppant des bibliothèques externes, fusionnés depuis l'ancien
+# package `portfolio_optimization` (P3 : suppression de la redondance).
+from .black_litterman import BlackLittermanModel
+from .pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from .riskfolio_optimizer import RiskfolioOptimizer
 
 __all__ = [
     # Optimizer
@@ -71,4 +76,8 @@ __all__ = [
     "calculate_cvar",
     "calculate_diversification_ratio",
     "calculate_herfindahl_index",
+    # Optimiseurs à base de bibliothèques externes (ex-portfolio_optimization)
+    "BlackLittermanModel",
+    "PyPortfolioOptOptimizer",
+    "RiskfolioOptimizer",
 ]

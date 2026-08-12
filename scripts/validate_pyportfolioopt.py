@@ -38,7 +38,7 @@ def validate_import():
     """Validate module imports."""
     print("🔍 Validation 1: Module Import")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         print("   ✅ PyPortfolioOptOptimizer imported successfully")
         return True
     except Exception as e:
@@ -50,7 +50,7 @@ def validate_max_sharpe():
     """Validate max Sharpe optimization."""
     print("\n🔍 Validation 2: Max Sharpe Optimization")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         prices = generate_test_prices()
         opt = PyPortfolioOptOptimizer(prices, risk_free_rate=0.01)
@@ -73,7 +73,7 @@ def validate_min_volatility():
     """Validate min volatility optimization."""
     print("\n🔍 Validation 3: Min Volatility Optimization")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         prices = generate_test_prices()
         opt = PyPortfolioOptOptimizer(prices)
@@ -93,7 +93,7 @@ def validate_constraints():
     """Validate constraints are respected."""
     print("\n🔍 Validation 4: Constraints Respect")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         from financial_analyzer.portfolio.constraints import PortfolioConstraints
         
         prices = generate_test_prices()
@@ -136,7 +136,7 @@ def validate_black_litterman():
     """Validate Black-Litterman optimization."""
     print("\n🔍 Validation 5: Black-Litterman Optimization")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         prices = generate_test_prices()
         opt = PyPortfolioOptOptimizer(prices)
@@ -159,7 +159,7 @@ def validate_discrete_allocation():
     """Validate discrete allocation."""
     print("\n🔍 Validation 6: Discrete Allocation")
     try:
-        from financial_analyzer.portfolio_optimization import PyPortfolioOptOptimizer
+        from financial_analyzer.portfolio import PyPortfolioOptOptimizer
         
         prices = generate_test_prices()
         opt = PyPortfolioOptOptimizer(prices)

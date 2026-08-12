@@ -61,7 +61,7 @@ from financial_analyzer.data.universe import UniverseSelector
 from financial_analyzer.strategy import SignalFusion, EnsembleAllocator
 from financial_analyzer.sentiment import SentimentAggregator
 from financial_analyzer.deep_learning import LSTMPredictor
-from financial_analyzer.portfolio_optimization import RiskfolioOptimizer
+from financial_analyzer.portfolio import RiskfolioOptimizer
 
 logger = get_logger(__name__)
 

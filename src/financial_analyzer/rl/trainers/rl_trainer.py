@@ -13,7 +13,7 @@ Integration:
     - financial_analyzer.rl.environments.TradingEnvironment
     - financial_analyzer.rl.agents (PPO, DQN, DDPG, A2C)
     - financial_analyzer.backtest.validation.walk_forward.WalkForwardAnalyzer
-    - financial_analyzer.portfolio_optimization (PyPortfolioOpt baselines)
+    - financial_analyzer.portfolio (PyPortfolioOpt baselines)
 
 Architecture:
     1. Data split (walk-forward windows)

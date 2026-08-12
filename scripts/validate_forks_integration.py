@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from financial_analyzer.data.universe import UniverseSelector
 from financial_analyzer.universe.market_selector import MarketSelector
 from financial_analyzer.data.market_data import MarketDataFetcher
-from financial_analyzer.portfolio_optimization.riskfolio_optimizer import RiskfolioOptimizer
+from financial_analyzer.portfolio.riskfolio_optimizer import RiskfolioOptimizer
 from financial_analyzer.utils.helpers import get_logger
 
 # Configure logging pour affichage immédiat

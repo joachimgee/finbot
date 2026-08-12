@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from financial_analyzer.portfolio_optimization import BlackLittermanModel
+from financial_analyzer.portfolio import BlackLittermanModel
 
 
 @pytest.fixture

@@ -52,7 +52,7 @@ warnings.filterwarnings('ignore')
 
 # Core modules
 from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
-from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 from financial_analyzer.trading.account_monitor import AccountMonitor
 from financial_analyzer.trading.risk_guard import RiskGuard
 

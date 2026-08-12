@@ -46,12 +46,12 @@ if TYPE_CHECKING:
     from .journal import TradingJournal
 
 try:
-    from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+    from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 except Exception:
     PyPortfolioOptOptimizer = None
 
 try:
-    from financial_analyzer.portfolio_optimization.riskfolio_optimizer import RiskfolioOptimizer
+    from financial_analyzer.portfolio.riskfolio_optimizer import RiskfolioOptimizer
 except Exception:
     RiskfolioOptimizer = None
 

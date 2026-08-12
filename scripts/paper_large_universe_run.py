@@ -33,7 +33,7 @@ try:
 except Exception:
     Equities = None
 
-from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 
 
 def select_universe(limit: int) -> List[str]:

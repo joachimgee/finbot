@@ -122,7 +122,7 @@ print("=" * 80)
 try:
     # Import notre wrapper qui gère les edge cases
     sys.path.insert(0, 'src')
-    from financial_analyzer.portfolio_optimization.riskfolio_optimizer import RiskfolioOptimizer
+    from financial_analyzer.portfolio.riskfolio_optimizer import RiskfolioOptimizer
     
     # Générer returns synthétiques (20 assets, 252 days)
     np.random.seed(42)

@@ -18,7 +18,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
 from financial_analyzer.portfolio.constraints import PortfolioConstraints
 
 
@@ -701,7 +701,7 @@ def test_efficient_frontier_performance(sample_prices: pd.DataFrame) -> None:
 
 def test_module_all_exports() -> None:
     """Test that __all__ exports are correct."""
-    from financial_analyzer.portfolio_optimization import pyportfolioopt_optimizer
+    from financial_analyzer.portfolio import pyportfolioopt_optimizer
 
     assert hasattr(pyportfolioopt_optimizer, "__all__")
     assert "PyPortfolioOptOptimizer" in pyportfolioopt_optimizer.__all__
@@ -709,7 +709,7 @@ def test_module_all_exports() -> None:
 
 def test_module_logger_created() -> None:
     """Test that module logger is created."""
-    from financial_analyzer.portfolio_optimization import pyportfolioopt_optimizer
+    from financial_analyzer.portfolio import pyportfolioopt_optimizer
 
     assert pyportfolioopt_optimizer.logger is not None
 

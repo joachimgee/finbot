@@ -18,7 +18,7 @@ References:
 
 Example:
     >>> import pandas as pd
-    >>> from financial_analyzer.portfolio_optimization.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
+    >>> from financial_analyzer.portfolio.pyportfolioopt_optimizer import PyPortfolioOptOptimizer
     >>> prices = pd.DataFrame(...)  # Historical prices
     >>> opt = PyPortfolioOptOptimizer(prices)
     >>> weights = opt.optimize_max_sharpe()
