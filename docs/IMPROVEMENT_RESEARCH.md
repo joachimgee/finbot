@@ -66,6 +66,34 @@ juste de « mauvais facteurs », c'est aussi que l'espace de paris est étroit.
   plus de dispersion (là où value a un edge). **Bloqué** par les prix des delistés
   (biais de survie 36.8 % mesuré) → nécessite un dataset sans biais (Sharadar/CRSP).
 
+### ✅ Fait (Tier 2) — time-series momentum testé, et REJETÉ honnêtement
+
+Implémenté `backtest/timeseries_momentum.py` (`tsmom_ensemble_score` : ensemble
+1/3/12 mois des rendements propres, **vol-normalisé** — un t-stat de tendance
+comparable entre actifs, sans look-ahead) et passé par EXACTEMENT le portail
+(`run_tsmom_validation_alpaca.py`, mêmes coûts Alpaca, reb=10, 5 fenêtres OOS,
++ DSR avec 33 essais comptés).
+
+**Verdict réel** (753 j × 80 large-caps, 2023-08→2026-07) :
+
+| critère | valeur | seuil | passe ? |
+|---|---|---|---|
+| IC t-stat | **+1.01** | > 2 | ❌ |
+| Sharpe net | +0.27 | > 0 | ✅ |
+| DSR (33 essais) | **0.03** | ≥ 0.95 | ❌ |
+| corrélation OOS vs `momentum_12_1` | **+0.72** | (breadth) | ❌ peu indépendant |
+
+**Non inscrit.** Sur cet univers de large-caps liquides, le TSMOM vol-normalisé
+se comporte comme un cousin **bruité et fortement corrélé** (ρ=+0.72) du momentum
+cross-section : il n'apporte quasi aucune *breadth* et son IC n'est pas
+significatif. C'est le résultat attendu de la loi de Grinold-Kahn : sur ~80 titres
+très corrélés, l'espace de paris indépendants est étroit. La vraie breadth exige
+d'**élargir l'univers** (bloqué par le biais de survie, cf. ci-dessus) ou des
+signaux d'une *autre* famille (fondamentaux PIT, résiduel idiosyncratique) — pas
+une n-ième variante de trend. Le module reste comme **infrastructure testée**,
+prêt à être re-testé sur un univers large sans biais de survie ; il n'entre pas
+dans la décision tant qu'il n'a pas franchi le portail.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
