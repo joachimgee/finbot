@@ -357,11 +357,17 @@ Prudemment, sans casser le chemin canonique. Chaque suppression = tests verts.
 ### P4 — Ops & confiance avant argent réel
 
 - [x] **Journal d'exécution + réconciliation + manifeste** (fait).
-- [ ] **Suivi P&L** exploitable (paper puis live) à partir du journal + snapshots.
-- [ ] **Alerting** sur échec de run / circuit breaker / écart de réconciliation
-  (au-delà du log ERROR actuel : notification réelle).
-- [ ] **Runbook paper→live** : critères chiffrés de passage, procédure kill-switch
-  testée, checklist d'activation `FINBOT_ENABLE_LIVE_TRADING`.
+- [x] **Suivi P&L** *(fait — `trading/pnl.py`, `scripts/pnl_report.py`)*. Dérive
+  courbe d'equity, P&L, rendement et **drawdown max** des snapshots du journal
+  (run_start/run_end). Le harness paper enregistre désormais aussi ces snapshots.
+- [x] **Alerting** *(fait — `trading/alerts.py`)*. `AlertManager` route vers log +
+  fichier JSONL + webhook optionnel (`FINBOT_ALERT_WEBHOOK`), **fail-safe absolu**
+  (un puits qui échoue ne casse jamais le trading). Câblé au daemon : écart de
+  réconciliation → **CRITICAL**, échec de run → **ERROR**.
+- [x] **Runbook paper→live** *(fait — `docs/RUNBOOK_PAPER_TO_LIVE.md`)*. Double
+  verrou (code `mode='live'` + jeton env exact), **10 critères chiffrés** de
+  passage, procédure d'activation, et **kill-switch testé** (cycle
+  activer→refuser, `tests/test_trading/test_kill_switch.py`).
 
 ### P5 — Hygiène documentaire
 
