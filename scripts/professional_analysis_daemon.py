@@ -923,6 +923,14 @@ Configuration :
         # Persistent execution journal (order audit trail + account snapshots for
         # P&L / reconciliation). Every order routed through the gateway is recorded.
         _journal = TradingJournal(f"logs/execution_journal_{datetime.now().strftime('%Y%m')}.jsonl")
+        # Alerting ops (fail-safe) : écart de réconciliation / échec de run sont
+        # notifiés (log + fichier + webhook si FINBOT_ALERT_WEBHOOK défini), au-delà
+        # du simple log. N'interrompt jamais le trading.
+        from financial_analyzer.trading.alerts import AlertManager
+        _alerts = AlertManager(
+            alert_log_path=f"logs/alerts_{datetime.now().strftime('%Y%m')}.jsonl",
+            mode=adapter.mode,
+        )
         # Manifeste de reproductibilité : commit git + versions + mode de ce run.
         _journal.record_manifest(build_run_manifest(mode=adapter.mode))
         _journal.record_snapshot(
@@ -1175,7 +1183,10 @@ Configuration :
                 print(f"  ✅ {_recon.summary()}")
             else:
                 print(f"  🚨 ALERTE — {_recon.summary()}")
-                logger.error("Réconciliation en écart: %s", _recon.summary())
+                # Écart de réconciliation = ordre perdu ou contournement du gateway :
+                # signal ops critique (notifié au-delà du log).
+                _alerts.critical("Écart de réconciliation", _recon.summary(),
+                                 detail=_recon.to_dict())
         except Exception as _re:
             logger.warning("Réconciliation impossible: %s", _re)
 
@@ -1200,6 +1211,12 @@ Configuration :
         print(f"\n❌ ERREUR: {e}")
         import traceback
         traceback.print_exc()
+        # Échec de run = signal ops. Alerte best-effort (l'AlertManager peut ne pas
+        # exister si l'échec est survenu avant sa création — d'où le garde).
+        try:
+            _alerts.error("Échec du run daemon", str(e))
+        except Exception:  # noqa: BLE001 - l'alerting ne doit jamais masquer l'erreur d'origine
+            pass
         return False
 
 

@@ -63,6 +63,11 @@ def main() -> None:
 
     journal = TradingJournal(f"logs/paper_validation_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")  # noqa: DTZ005
     journal.record_manifest(build_run_manifest(mode=adapter.mode))
+    # Snapshot de départ : alimente le suivi P&L (scripts/pnl_report.py).
+    journal.record_snapshot(
+        equity=float(acct.get("equity", 0.0)), cash=float(acct.get("cash", 0.0)),
+        event="run_start", mode=adapter.mode,
+    )
 
     pipeline = LiveTradingPipeline(
         broker_adapter=adapter,
@@ -105,6 +110,13 @@ def main() -> None:
         print(f"    {'✅' if recon.ok else '🚨'} {recon.summary()}")
     else:
         print("\n[4] Réconciliation ignorée (dry-run — aucun ordre réel à réconcilier).")
+
+    # Snapshot de fin : clôt la période pour le suivi P&L.
+    acct_end = adapter.get_account()
+    journal.record_snapshot(
+        equity=float(acct_end.get("equity", 0.0)), cash=float(acct_end.get("cash", 0.0)),
+        event="run_end", mode=adapter.mode,
+    )
 
     adapter.disconnect()
     print(f"\n✅ Validation terminée ({mode_label}). Journal: {journal.path}")
