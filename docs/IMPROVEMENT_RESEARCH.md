@@ -128,6 +128,41 @@ Autrement dit, la recherche confirme la théorie (Grinold-Kahn) *et* montre
 empiriquement que l'implémenter demande de la **décorrélation**, pas du volume de
 tickers. C'est la direction du travail suivant (momentum résiduel).
 
+### ✅ Fait (Tier 2 ter) — momentum résiduel testé, REJETÉ, et la vraie conclusion
+
+Implémenté `backtest/residual_momentum.py` (Blitz-Huij-Martens : β marché glissant
+retiré, momentum sur le résidu idiosyncratique, standardisé — sans look-ahead) et
+passé au portail sur l'univers large (475 titres).
+
+| grandeur | résiduel | classique (référence) |
+|---|---|---|
+| IC t-stat | **+2.00** (≤ 2, échec strict) | +2.70 |
+| Sharpe net | +0.47 | +0.81 |
+| DSR | **0.05** | 0.14 |
+| corrélation OOS ↔ classique | **+0.85** | — |
+
+**Non inscrit** — et le résultat est *contre-intuitif et instructif* : le momentum
+résiduel est **+0.85 corrélé** au momentum classique, soit *plus* que le TSMOM brut
+(+0.74). Retirer le seul β **marché** ne décorrèle pas deux signaux qui trient tous
+deux sur la tendance *idiosyncratique* : sur des large-caps, l'edge du momentum est
+déjà largement idiosyncratique, et une orthogonalisation mono-facteur laisse les
+communalités secteur/style. Le vrai momentum résiduel de Blitz retire un modèle
+**multi-facteurs** (marché + taille + value) estimé sur **36 mois** — hors de portée
+avec 3 ans d'historique Alpaca.
+
+**Conclusion honnête (3 tentatives convergentes).** TSMOM, élargissement d'univers,
+momentum résiduel : *aucun* signal prix ne décorrèle du seul edge ni ne survit au
+DSR sur cet échantillon. Le plafond n'est **pas** l'ingéniosité du signal — c'est
+la **donnée** : (1) biais de survie (36.8 % mesuré), (2) univers large-cap trop
+corrélé (breadth effective faible), (3) **3 ans** d'historique (trop court pour un
+modèle multi-facteurs *et* pour un DSR crédible). Continuer à tester des variantes
+de signal sur *le même* échantillon **aggrave** le problème de tests multiples
+(N ↑ → barre DSR ↑) : ce serait de l'overfitting déguisé, contraire à la discipline
+du portail. **Le déblocage passe par de meilleures données** (dataset profond sans
+biais de survie type Sharadar/CRSP, +10 ans, small-caps), pas par une n-ième
+variante. Les trois modules restent comme **infrastructure testée**, prêts à être
+re-passés au portail dès qu'un tel dataset est disponible.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
