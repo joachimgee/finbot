@@ -256,6 +256,11 @@ class LiveTradingPipeline:
         account_monitor: Optional[AccountMonitor] = None,
         risk_guard: Optional[RiskGuard] = None,
         journal: Optional[TradingJournal] = None,
+        target_vol: Optional[float] = None,
+        vol_lookback: int = 126,
+        max_exposure: float = 1.0,
+        risk_off_ma: int = 200,
+        risk_off_factor: float = 0.5,
     ) -> None:
         """
         Initialize live trading pipeline.
@@ -319,6 +324,16 @@ class LiveTradingPipeline:
         # Single audited execution chokepoint (mode-gate + risk + idempotence +
         # audit). Le journal partagé, s'il est fourni, persiste chaque ordre.
         self.order_gateway = OrderGateway(self.broker, self.risk_guard, journal=journal)
+
+        # Overlay de gestion de volatilité (Tier 1.2), opt-in. Si target_vol est
+        # défini, l'exposition est scalée = min(max_exposure, target_vol/vol_ex_ante)
+        # × filtre de tendance (risk-off). max_exposure=1.0 (défaut) => l'overlay ne
+        # peut que RÉDUIRE l'exposition (de-risk), jamais lever — sûreté d'abord.
+        self.target_vol = target_vol
+        self.vol_lookback = vol_lookback
+        self.max_exposure = max_exposure
+        self.risk_off_ma = risk_off_ma
+        self.risk_off_factor = risk_off_factor
 
         # Schedule
         self.schedule = schedule_config or TradingSchedule()
@@ -511,7 +526,39 @@ class LiveTradingPipeline:
         cap = getattr(self.risk_guard, "max_position_pct", None)
         if isinstance(cap, (int, float)) and 0.0 < cap < 1.0 and target_weights:
             target_weights = _cap_and_renormalize(target_weights, float(cap))
+        # Overlay de vol (opt-in) : scale l'exposition globale vers target_vol et
+        # applique le filtre risk-off. Réduit l'exposition (laisse du cash) sans
+        # jamais toucher aux poids relatifs. Aucune donnée exploitable -> pas de scale.
+        if self.target_vol and target_weights:
+            target_weights = self._apply_vol_overlay(target_weights, data)
         return target_weights, data
+
+    def _apply_vol_overlay(self, weights: Dict[str, float], data: Dict) -> Dict[str, float]:
+        """Scale l'exposition du book selon le ciblage de vol + filtre de tendance."""
+        try:
+            from financial_analyzer.backtest.vol_management import exposure_scalar
+
+            prices = data.get("prices", {}) or {}
+            frames = {s: df["close"] for s, df in prices.items()
+                      if s in weights and df is not None and not df.empty and "close" in df}
+            if not frames:
+                return weights
+            close = pd.DataFrame(frames).dropna(how="all")
+            exposure, diag = exposure_scalar(
+                weights, close, target_vol=self.target_vol, lookback=self.vol_lookback,
+                max_exposure=self.max_exposure, ma_window=self.risk_off_ma,
+                risk_off_factor=self.risk_off_factor,
+            )
+            logger.info(
+                "Vol overlay: exposition=%.2f (vol ex-ante=%s, vol_scalar=%.2f, trend=%.2f)",
+                exposure,
+                f"{diag['ex_ante_vol']:.1%}" if diag["ex_ante_vol"] else "n/a",
+                diag["vol_scalar"], diag["trend_scalar"],
+            )
+            return {s: w * exposure for s, w in weights.items()}
+        except Exception as e:  # noqa: BLE001 - l'overlay ne doit jamais casser la décision
+            logger.warning("Vol overlay indisponible (%s) — exposition inchangée.", e)
+            return weights
 
     def _fetch_data(self) -> Dict:
         """

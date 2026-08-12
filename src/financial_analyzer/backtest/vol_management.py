@@ -20,7 +20,10 @@ import pandas as pd
 __all__ = [
     "annualized_vol",
     "apply_vol_target",
+    "ex_ante_vol",
+    "exposure_scalar",
     "sharpe",
+    "trend_scalar",
     "vol_target_leverage",
 ]
 
@@ -81,3 +84,73 @@ def apply_vol_target(
         max_leverage=max_leverage, periods_per_year=periods_per_year,
     )
     return r * lev, lev
+
+
+# --- Overlay au niveau du PORTEFEUILLE (ex-ante) — pour le sizing du pipeline ---
+
+def ex_ante_vol(
+    weights: dict[str, float], close: pd.DataFrame,
+    lookback: int = 126, periods_per_year: int = 252,
+) -> float | None:
+    """Volatilité **ex-ante** annualisée du portefeuille : ``sqrt(wᵀ Σ w)``.
+
+    Args:
+        weights: {ticker: poids} (peuvent ne pas sommer à 1).
+        close: panel de clôtures (dates × tickers).
+        lookback: fenêtre de covariance (jours).
+
+    Returns:
+        Vol annualisée, ou ``None`` si données insuffisantes (le sizing doit alors
+        s'abstenir de scaler — pas de valeur inventée).
+    """
+    syms = [s for s in weights if s in close.columns and weights[s] != 0]
+    if len(syms) < 1:
+        return None
+    rets = close[syms].pct_change().tail(lookback).dropna(how="all")
+    if len(rets) < max(20, lookback // 4):
+        return None
+    cov = rets.cov().to_numpy()
+    w = np.array([weights[s] for s in syms], dtype=float)
+    var = float(w @ cov @ w)
+    if var <= 0:
+        return None
+    return float(np.sqrt(var) * np.sqrt(periods_per_year))
+
+
+def trend_scalar(
+    close: pd.DataFrame, ma_window: int = 200, risk_off_factor: float = 0.5,
+) -> float:
+    """Filtre de tendance marché (risk-off) : 1.0 si l'indice est au-dessus de sa
+    moyenne mobile, ``risk_off_factor`` sinon.
+
+    L'indice « marché » est l'équipondéré des clôtures normalisées de l'univers
+    (proxy auto-suffisant, pas besoin d'un ticker externe). Données insuffisantes
+    → 1.0 (pas de réduction fabriquée).
+    """
+    if close.empty or len(close) < ma_window:
+        return 1.0
+    idx = close.div(close.iloc[0]).mean(axis=1)  # indice équipondéré normalisé
+    ma = idx.rolling(ma_window).mean()
+    if pd.isna(ma.iloc[-1]):
+        return 1.0
+    return 1.0 if idx.iloc[-1] >= ma.iloc[-1] else float(risk_off_factor)
+
+
+def exposure_scalar(
+    weights: dict[str, float], close: pd.DataFrame, *,
+    target_vol: float = 0.10, lookback: int = 126, max_exposure: float = 1.0,
+    ma_window: int = 200, risk_off_factor: float = 0.5,
+) -> tuple[float, dict[str, float]]:
+    """Facteur d'exposition = ciblage de vol ex-ante × filtre de tendance.
+
+    ``exposure = min(max_exposure, target_vol / vol_ex_ante) × trend_scalar``.
+
+    Avec ``max_exposure=1.0`` (défaut, sûreté d'abord), l'overlay ne peut que
+    **réduire** l'exposition (de-risk) — jamais lever au-delà du plein
+    investissement. Retourne aussi un dict de diagnostic.
+    """
+    va = ex_ante_vol(weights, close, lookback=lookback)
+    vol_scalar = 1.0 if va is None or va <= 0 else min(max_exposure, target_vol / va)
+    trend = trend_scalar(close, ma_window=ma_window, risk_off_factor=risk_off_factor)
+    exposure = float(max(0.0, vol_scalar * trend))
+    return exposure, {"ex_ante_vol": va, "vol_scalar": vol_scalar, "trend_scalar": trend}

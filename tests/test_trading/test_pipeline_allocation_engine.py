@@ -170,6 +170,38 @@ def test_compute_target_weights_applies_concentration_cap() -> None:
     assert max(weights.values()) <= 0.25 + 1e-9
 
 
+def test_vol_overlay_off_by_default_leaves_weights() -> None:
+    """Sans target_vol, l'exposition reste pleine (somme des poids ≈ 1)."""
+    pipe, _, _ = _make_pipeline(["UP", "DOWN"])
+    assert pipe.target_vol is None
+    data = {"prices": {"UP": _price_df(0.004, seed=1), "DOWN": _price_df(-0.004, seed=2)},
+            "fundamentals": {}, "news": {}, "sentiment": {}}
+    weights, _ = pipe.compute_target_weights(data=data)
+    assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_vol_overlay_reduces_exposure_when_enabled() -> None:
+    """Avec target_vol bas et des titres volatils, l'exposition est réduite (< 1)."""
+    broker = MagicMock()
+    broker.connected = True
+    broker.mode = "paper"
+    pipe = LiveTradingPipeline(
+        broker_adapter=broker, tickers=["UP"], account_monitor=MagicMock(),
+        risk_guard=MagicMock(), target_vol=0.05, max_exposure=1.0, risk_off_ma=50,
+    )
+    # Titre haussier (momentum 12-1 > 0, historique ≥252 j) mais très volatil ->
+    # vol ex-ante >> 5% -> l'overlay réduit l'exposition.
+    close = 100 * np.exp(np.cumsum(np.random.default_rng(9).normal(0.004, 0.05, 300)))
+    idx = pd.date_range("2024-01-01", periods=300, freq="D")
+    df = pd.DataFrame(
+        {"open": close, "high": close * 1.01, "low": close * 0.99,
+         "close": close, "volume": 1e6}, index=idx)
+    data = {"prices": {"UP": df}, "fundamentals": {}, "news": {}, "sentiment": {}}
+    weights, _ = pipe.compute_target_weights(data=data)
+    assert weights, "attendu au moins une position"
+    assert sum(weights.values()) < 0.95  # exposition réduite par l'overlay
+
+
 def test_dry_run_flows_through_to_gateway(monkeypatch) -> None:
     """run(dry_run=True) fait passer dry_run jusqu'au gateway (aucune soumission réelle)."""
     pipe, monitor, risk = _make_pipeline(["UP"])
