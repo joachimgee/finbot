@@ -48,7 +48,7 @@ Workflow Type:
         14. account_monitor.track() → Monitoring
 
 References:
-    - INTEGRATION_STATUS.md : État des 5 priorités (144/144 tests)
+    - archive/INTEGRATION_STATUS.md : État des 5 priorités (144/144 tests)
     - portfolio_manager.py : Décisions portfolio existant
     - daily_preanalysis.py : Drift + Options integration
     - COMPARATIVE_ANALYSIS.md : Architecture complète

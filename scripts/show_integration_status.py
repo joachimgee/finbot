@@ -155,8 +155,8 @@ def main():
     print_banner("✅ INTÉGRATION COMPLÈTE - PRODUCTION READY", "=")
     
     print("Documentation complète:")
-    print("  → docs/FINAL_FULL_INTEGRATION_REPORT.md")
-    print("  → docs/API_INTEGRATION_STATUS.md")
+    print("  → docs/archive/FINAL_FULL_INTEGRATION_REPORT.md")
+    print("  → docs/archive/API_INTEGRATION_STATUS.md")
     print("  → docs/ALPACA_LIVE_TRADING.md\n")
     
     print("Scripts disponibles:")

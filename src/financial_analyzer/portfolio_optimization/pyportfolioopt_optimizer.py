@@ -14,7 +14,7 @@ Features:
 
 References:
 - PyPortfolioOpt docs: https://pyportfolioopt.readthedocs.io/
-- FORKS_INTEGRATION_PLAN.md section PyPortfolioOpt
+- archive/FORKS_INTEGRATION_PLAN.md section PyPortfolioOpt
 
 Example:
     >>> import pandas as pd

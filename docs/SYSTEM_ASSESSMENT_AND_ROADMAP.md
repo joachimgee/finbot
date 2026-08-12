@@ -371,26 +371,43 @@ Prudemment, sans casser le chemin canonique. Chaque suppression = tests verts.
 
 ### P5 — Hygiène documentaire
 
-- [ ] **Réconcilier `docs/`** : archiver/supprimer les « delivery/integration
-  reports » aspirationnels ; garder une architecture et un README qui décrivent le
-  système **réel** (le chemin canonique), pas l'intention.
-- [ ] Faire de ce document la **source de vérité** de l'état et du plan.
+- [x] **`docs/` réconcilié** *(fait)* : 16 « delivery/integration/status reports »
+  aspirationnels (plans d'intégration, rapports « final », docs de l'orchestrateur
+  mort, roadmaps RL) déplacés dans [`docs/archive/`](archive/) (avec un README qui
+  renvoie au réel). Nouvelle [`CANONICAL_ARCHITECTURE.md`](CANONICAL_ARCHITECTURE.md)
+  décrit le **système réel** (chemin canonique), pas l'intention. Références de code
+  vers les docs déplacés corrigées (pas de lien mort).
+- [x] **Source de vérité** : ce document (état + plan) + `CANONICAL_ARCHITECTURE.md`
+  (architecture réelle) + `RUNBOOK_PAPER_TO_LIVE.md` (mise en prod) font foi ;
+  l'`archive/` est explicitement historique.
 
 ---
 
-## 5. Prochaine action recommandée
+## 5. État actuel & prochaines actions
 
-**P0 en premier** : trancher le chemin canonique unique (recommandé : promouvoir le
-`LiveTradingPipeline` déjà durci comme moteur de décision du daemon) et **purger le
-stub du chemin réellement exécuté**. C'est le point où « le système trade sur du
-bruit » se referme — tout le reste (facteurs, données, élagage) vient après.
+**P0 → P5 : tous traités.** Le système a un chemin argent unique et audité, des
+signaux validés OOS (portail à double critère), des coûts et une cadence réels,
+des données point-in-time (fondamentaux Polygon + univers), un suivi P&L, de
+l'alerting fail-safe, et un runbook paper→live avec kill-switch testé. Voir
+[`CANONICAL_ARCHITECTURE.md`](CANONICAL_ARCHITECTURE.md).
+
+**Ce qui reste (au-delà de la feuille de route initiale) :**
+
+- **Élargir le registre validé** : *un seul* signal validé (`momentum_12_1`).
+  Chercher d'autres edges (univers small-cap, autres facteurs) **via le portail** —
+  aucun raccourci.
+- **Blocages data (tier payant)** : prix des delistés (validation sans biais de
+  survie complète) ; échelle Polygon (5 req/min).
+- **Fusions P3 différées** : `portfolio` + `portfolio_optimization` (toutes deux
+  dans le money path) — prudemment, isolément.
+- **Accumuler l'historique paper** vers les 10 critères du runbook avant tout live.
 
 ---
 
-### Informations à obtenir (questions ouvertes)
+### Informations à obtenir (questions ouvertes) — mises à jour
 
-- [ ] Confirmer le but : trading réel (A) vs analyse/reco (B).
-- [ ] Fournisseur de fondamentaux point-in-time souhaité (budget/API) ?
-- [ ] Intention réelle sur `rl/` et `deep_learning/` : recherche à conserver, ou à
-  supprimer ?
+- [x] But confirmé : **trading réel automatisé, sûreté d'abord**.
+- [x] Fondamentaux point-in-time : **Polygon** (clé présente) — câblé.
+- [x] `rl/` / `deep_learning/` : **conservés hors chemin de prod** (abstiennent) ;
+  orphelins `async_pipeline`/`database` **conservés** aussi (décision).
 - [ ] Capital cible et tolérance au risque (dimensionne RiskGuard et le passage live).
