@@ -64,6 +64,7 @@ class GateThresholds:
     ic_t_stat_min: float = 2.0
     net_sharpe_min: float = 0.0
     dsr_min: float = 0.95
+    pbo_max: float = 0.5
 
 
 DEFAULT_THRESHOLDS = GateThresholds()
@@ -74,15 +75,17 @@ def decide(
     net_sharpe: float,
     thresholds: GateThresholds = DEFAULT_THRESHOLDS,
     dsr: float | None = None,
+    pbo: float | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
     """Décision pure du portail à partir des métriques.
 
     Retourne ``(passed, reasons)`` — ``reasons`` liste les critères échoués
     (vide si tout passe). ``NaN`` est traité comme un échec (preuve insuffisante).
 
-    ``dsr`` (Deflated Sharpe Ratio ∈ [0,1]) est un troisième critère *optionnel*
-    anti-tests-multiples : passé (non ``None``), il doit dépasser ``dsr_min``.
-    Absent, le portail conserve exactement son comportement double-critère.
+    ``dsr`` (Deflated Sharpe Ratio ∈ [0,1]) et ``pbo`` (Probability of Backtest
+    Overfitting ∈ [0,1]) sont deux critères *optionnels* anti-surapprentissage :
+    fournis (non ``None``), le DSR doit dépasser ``dsr_min`` et la PBO doit rester
+    sous ``pbo_max``. Absents, le portail conserve son comportement double-critère.
     """
     reasons: list[str] = []
     if math.isnan(ic_t_stat) or ic_t_stat <= thresholds.ic_t_stat_min:
@@ -100,6 +103,11 @@ def decide(
             f"DSR={dsr:.2f} < {thresholds.dsr_min:.2f} "
             "(Sharpe non crédible après correction des tests multiples)"
         )
+    if pbo is not None and (math.isnan(pbo) or pbo > thresholds.pbo_max):
+        reasons.append(
+            f"PBO={pbo:.2f} > {thresholds.pbo_max:.2f} "
+            "(le processus de sélection sur-apprend : meilleur IS souvent sous la médiane OOS)"
+        )
     return (not reasons), tuple(reasons)
 
 
@@ -116,6 +124,7 @@ class ValidationVerdict:
     passed: bool
     reasons: tuple[str, ...] = field(default_factory=tuple)
     dsr: float | None = None
+    pbo: float | None = None
 
     def summary(self) -> str:
         verdict = "✅ VALIDÉ" if self.passed else "❌ REJETÉ"
@@ -126,6 +135,8 @@ class ValidationVerdict:
         )
         if self.dsr is not None:
             base += f", DSR={self.dsr:.2f}"
+        if self.pbo is not None:
+            base += f", PBO={self.pbo:.2f}"
         if self.reasons:
             base += " | échec: " + " ; ".join(self.reasons)
         return base
@@ -145,6 +156,7 @@ def evaluate_signal_gate(
     thresholds: GateThresholds = DEFAULT_THRESHOLDS,
     n_trials: int | None = None,
     trial_sharpe_std: float | None = None,
+    pbo: float | None = None,
 ) -> ValidationVerdict:
     """Passe un signal au portail : validation walk-forward OOS + double critère.
 
@@ -160,10 +172,14 @@ def evaluate_signal_gate(
             Deflated Sharpe Ratio (anti-tests-multiples). Absent → double critère.
         trial_sharpe_std: écart-type des Sharpes **par période** à travers ces
             essais (dispersion réellement observée). Requis pour un DSR honnête.
+        pbo: Probability of Backtest Overfitting du *processus de sélection*
+            (calculée en amont par ``robustness.probability_of_backtest_overfitting``
+            sur la matrice des configs). Fournie, active le critère PBO ≤ ``pbo_max``.
 
     Returns:
         ValidationVerdict — ``passed`` vrai seulement si IC t > seuil ET Sharpe
-        net > seuil (ET DSR ≥ seuil si ``n_trials`` fourni) sur l'agrégat OOS.
+        net > seuil (ET DSR ≥ seuil si ``n_trials`` fourni, ET PBO ≤ seuil si
+        ``pbo`` fournie) sur l'agrégat OOS.
     """
     # Coût par défaut = modèle Alpaca calibré (commission 0, slippage ~2.5 bps),
     # pas le défaut générique de CostModel (25 bps) : le portail juge de la
@@ -187,7 +203,7 @@ def evaluate_signal_gate(
     if n_trials is not None and n_trials > 1 and trial_sharpe_std is not None:
         net_returns = oos.net_equity_curve.pct_change().dropna()
         dsr, _ = deflated_sharpe_ratio(net_returns, n_trials, trial_sharpe_std)
-    passed, reasons = decide(oos.ic_t_stat, oos.net_sharpe, thresholds, dsr=dsr)
+    passed, reasons = decide(oos.ic_t_stat, oos.net_sharpe, thresholds, dsr=dsr, pbo=pbo)
     return ValidationVerdict(
         name=name,
         ic_mean=oos.ic_mean,
@@ -198,6 +214,7 @@ def evaluate_signal_gate(
         passed=passed,
         reasons=reasons,
         dsr=dsr,
+        pbo=pbo,
     )
 
 

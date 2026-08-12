@@ -270,6 +270,31 @@ seul run. C'est précisément pourquoi le DSR reste **optionnel** dans le portai
 un futur signal *sans* prior fort, lui, devra le franchir. La mise en garde est
 inscrite noir sur blanc dans l'`evidence` de `VALIDATED_SIGNALS["momentum_12_1"]`.
 
+### ✅ Fait (audit #1) — PBO / CSCV : le *processus de sélection* sur-apprend-il ?
+
+Ajout de `probability_of_backtest_overfitting` (Combinatorial Symmetric CV,
+Bailey-Borwein-LdP-Zhu 2015) dans `backtest/robustness.py`, câblé comme **4e
+critère optionnel** du portail (`decide(pbo=…)`, `pbo_max=0.5`). Là où le DSR
+dégonfle *un* Sharpe pour N essais, la PBO juge le **tri** : sur la matrice
+complète (config × temps), fréquence où la config *meilleure in-sample* finit
+**sous la médiane out-of-sample**.
+
+**Verdict réel** (`run_deflated_sharpe_alpaca.py`, matrice 32 configs, CSCV S=10,
+252 combinaisons) : **PBO = 0.09** (✅ ≤ 0.5).
+
+Résultat *complémentaire et rassurant*, à lire avec le DSR :
+
+| métrique | valeur | ce qu'elle dit |
+|---|---|---|
+| DSR | 0.13 ❌ | la *magnitude* du Sharpe (0.76) n'est pas distinguable de la chance de sélection sur 3 ans |
+| **PBO** | **0.09 ✅** | mais le *tri* n'est PAS sur-appris : la config best-IS reste au-dessus de la médiane OOS **91 %** du temps |
+
+Autrement dit, le choix de momentum est **robuste et persistant** (ce n'est pas une
+config chanceuse qui a gagné une fois — cohérent avec son fort prior) ; la seule
+réserve porte sur la *magnitude* du Sharpe, pas sur la validité de la sélection. Le
+DSR et la PBO restent tous deux **optionnels** (n'activent que si on fournit les
+essais / la matrice) : ils ne peuvent que resserrer le double critère historique.
+
 ---
 
 ## Tier 4 — Maturité plateforme (inspiration Qlib / QuantConnect-LEAN)

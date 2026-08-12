@@ -102,6 +102,37 @@ def test_evaluate_gate_dsr_none_by_default() -> None:
     assert verdict.dsr is None
 
 
+# --- PBO : 4e critère optionnel (surapprentissage du processus de sélection) --
+
+def test_decide_high_pbo_rejects() -> None:
+    """Un signal qui passe IC+Sharpe mais dont la sélection sur-apprend (PBO élevée)
+    est REJETÉ."""
+    passed, reasons = decide(2.56, 0.76, pbo=0.80)
+    assert not passed
+    assert any("PBO" in r for r in reasons)
+
+
+def test_decide_low_pbo_passes() -> None:
+    passed, reasons = decide(2.56, 0.76, pbo=0.10)
+    assert passed
+    assert reasons == ()
+
+
+def test_decide_pbo_absent_keeps_behaviour() -> None:
+    assert decide(2.56, 0.76, pbo=None)[0] is True
+
+
+def test_evaluate_gate_passes_pbo_into_verdict() -> None:
+    returns = _returns_panel(seed=1)
+    rng = np.random.default_rng(7)
+    scores = returns.shift(-1) + rng.normal(0, 0.03, returns.shape)
+    verdict = evaluate_signal_gate(
+        "predictive", scores, returns, cost_model=CostModel(), pbo=0.9)
+    assert verdict.pbo == 0.9
+    assert not verdict.passed  # PBO trop élevée -> rejet malgré IC/Sharpe ok
+    assert any("PBO" in r for r in verdict.reasons)
+
+
 # --- Évaluation bout-en-bout sur données synthétiques ------------------------
 
 def _returns_panel(n_days: int = 260, n_assets: int = 40, seed: int = 0) -> pd.DataFrame:

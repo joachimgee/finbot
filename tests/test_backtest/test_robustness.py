@@ -9,6 +9,7 @@ from financial_analyzer.backtest.robustness import (
     deflated_sharpe_ratio,
     expected_max_sharpe,
     probabilistic_sharpe_ratio,
+    probability_of_backtest_overfitting,
     purged_kfold_indices,
     sharpe_per_period,
 )
@@ -103,3 +104,37 @@ def test_purged_kfold_rejects_bad_params() -> None:
         purged_kfold_indices(100, n_splits=1)
     with pytest.raises(ValueError):
         purged_kfold_indices(3, n_splits=5)
+
+
+# --- PBO (Combinatorial Symmetric CV) ----------------------------------------
+
+def test_pbo_near_half_for_pure_noise_configs() -> None:
+    """N configs de pur bruit : le meilleur IS n'a aucune raison d'être bon OOS
+    -> PBO ≈ 0.5 (hasard). L'estimation par tirage est bruitée : on moyenne."""
+    vals = []
+    for s in range(8):
+        perf = pd.DataFrame(np.random.default_rng(s).normal(0, 0.01, (600, 20)))
+        vals.append(probability_of_backtest_overfitting(perf, n_splits=10)[0])
+    assert 0.35 <= float(np.mean(vals)) <= 0.65
+
+
+def test_pbo_diag_reports_combinatorics() -> None:
+    perf = pd.DataFrame(np.random.default_rng(0).normal(0, 0.01, (600, 20)))
+    _, diag = probability_of_backtest_overfitting(perf, n_splits=10)
+    assert diag["n_configs"] == 20.0
+    assert diag["n_combinations"] == 252.0  # C(10,5)
+
+
+def test_pbo_low_when_one_config_has_persistent_skill() -> None:
+    """Une config à edge réel (drift positif constant) domine IS *et* OOS -> PBO ~0."""
+    rng = np.random.default_rng(2)
+    noise = rng.normal(0, 0.01, (600, 15))
+    skilled = rng.normal(0.004, 0.01, (600, 1))  # Sharpe/période élevé, persistant
+    perf = pd.DataFrame(np.hstack([skilled, noise]))
+    pbo, _ = probability_of_backtest_overfitting(perf, n_splits=10)
+    assert pbo < 0.1
+
+
+def test_pbo_rejects_too_few_configs() -> None:
+    with pytest.raises(ValueError):
+        probability_of_backtest_overfitting(pd.DataFrame(np.zeros((100, 1))))

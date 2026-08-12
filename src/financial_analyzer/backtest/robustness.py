@@ -34,6 +34,7 @@ __all__ = [
     "deflated_sharpe_ratio",
     "expected_max_sharpe",
     "probabilistic_sharpe_ratio",
+    "probability_of_backtest_overfitting",
     "purged_kfold_indices",
     "sharpe_per_period",
 ]
@@ -170,3 +171,72 @@ def purged_kfold_indices(
         train_idx = all_idx[mask]
         folds.append((train_idx, test_idx))
     return folds
+
+
+def probability_of_backtest_overfitting(
+    perf: pd.DataFrame, n_splits: int = 10,
+) -> tuple[float, dict[str, float]]:
+    """PBO par CSCV (Combinatorial Symmetric Cross-Validation, Bailey-LdP 2015).
+
+    Répond à : « en choisissant *la meilleure* configuration in-sample, quelle est
+    la probabilité qu'elle soit sous la médiane out-of-sample ? » (= le tri a
+    sur-appris). Complète le DSR : le DSR dégonfle *un* Sharpe pour N essais ; la PBO
+    juge le **processus de sélection** sur la matrice de performance complète.
+
+    Algorithme : on partitionne le temps en ``n_splits`` blocs (pair) ; pour chaque
+    combinaison de la moitié des blocs (train) vs l'autre moitié (test), on prend la
+    config au meilleur Sharpe *in-sample* et on mesure son **rang** *out-of-sample*.
+    ``PBO = P(logit(rang relatif) < 0)`` = fréquence où le meilleur IS finit sous la
+    médiane OOS.
+
+    Args:
+        perf: matrice ``(temps × configurations)`` de rendements par période — une
+            colonne par configuration essayée (facteur × cadence, etc.).
+        n_splits: nombre de blocs temporels S (rendu pair ; C(S, S/2) combinaisons).
+
+    Returns:
+        ``(pbo, diag)`` — ``pbo`` ∈ [0,1] (plus bas = sélection plus robuste) ;
+        ``diag`` expose #configs, #combinaisons, logit médian.
+    """
+    from itertools import combinations
+
+    m = perf.dropna(how="any")
+    t, n = m.shape
+    if n < 2:
+        raise ValueError("PBO exige ≥ 2 configurations (colonnes).")
+    if n_splits % 2:
+        n_splits += 1
+    if t < n_splits:
+        raise ValueError(f"Historique ({t}) < n_splits ({n_splits}).")
+    vals = m.to_numpy()
+    bounds = np.linspace(0, t, n_splits + 1).astype(int)
+    blocks = [np.arange(bounds[i], bounds[i + 1]) for i in range(n_splits)]
+    full = set(range(n_splits))
+
+    def _sharpe_cols(idx: np.ndarray) -> np.ndarray:
+        sub = vals[idx]
+        mu = sub.mean(axis=0)
+        sd = sub.std(axis=0, ddof=1)
+        return np.where(sd > 0, mu / sd, -np.inf)
+
+    logits: list[float] = []
+    for train in combinations(range(n_splits), n_splits // 2):
+        tr = np.concatenate([blocks[i] for i in train])
+        te = np.concatenate([blocks[i] for i in sorted(full - set(train))])
+        r_is = _sharpe_cols(tr)
+        r_oos = _sharpe_cols(te)
+        best = int(np.argmax(r_is))
+        # Rang OOS de la config best (1 = pire, n = meilleur).
+        order = np.argsort(r_oos, kind="stable")
+        rank = np.empty(n, dtype=float)
+        rank[order] = np.arange(1, n + 1)
+        omega = rank[best] / (n + 1)  # rang relatif ∈ (0,1)
+        omega = min(max(omega, 1e-6), 1 - 1e-6)
+        logits.append(float(np.log(omega / (1.0 - omega))))
+    arr = np.array(logits)
+    pbo = float((arr < 0).mean())
+    return pbo, {
+        "n_configs": float(n),
+        "n_combinations": float(len(arr)),
+        "median_logit": float(np.median(arr)),
+    }

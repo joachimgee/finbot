@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import numpy as np
+import pandas as pd
 
 from financial_analyzer.backtest.classic_factors import (
     compute_classic_factors,
@@ -32,6 +33,7 @@ from financial_analyzer.backtest.classic_factors import (
 )
 from financial_analyzer.backtest.robustness import (
     deflated_sharpe_ratio,
+    probability_of_backtest_overfitting,
     sharpe_per_period,
 )
 from financial_analyzer.backtest.signal_evaluation import (
@@ -60,6 +62,7 @@ def main() -> None:
     ap.add_argument("--start", default="2023-08-01")
     ap.add_argument("--end", default="2026-07-31")
     ap.add_argument("--splits", type=int, default=5)
+    ap.add_argument("--pbo-splits", type=int, default=10, help="Blocs CSCV (pair).")
     ap.add_argument("--cache", default="/tmp/alpaca_rebalance_sweep.csv")
     args = ap.parse_args()
 
@@ -76,8 +79,10 @@ def main() -> None:
     cost = CostModel.alpaca_equities()
 
     # Chaque (facteur × cadence) est un ESSAI. On collecte le Sharpe par période
-    # (OOS, net) de chacun, et on garde les rendements de la meilleure config.
+    # (OOS, net) de chacun, la série de rendements (pour la matrice PBO), et on
+    # garde les rendements de la meilleure config.
     trial_sharpes: list[float] = []
+    trial_series: dict[str, pd.Series] = {}
     best = {"name": None, "reb": None, "sr_pp": -np.inf, "net_returns": None}
     for name, panel in factors.items():
         for reb in REBALANCE_PERIODS:
@@ -94,6 +99,7 @@ def main() -> None:
             net_r = oos.net_equity_curve.pct_change().dropna()
             sr_pp = sharpe_per_period(net_r)
             trial_sharpes.append(sr_pp)
+            trial_series[f"{name}@{reb}"] = net_r
             if sr_pp > best["sr_pp"]:
                 best = {"name": name, "reb": reb, "sr_pp": sr_pp, "net_returns": net_r}
 
@@ -125,6 +131,22 @@ def main() -> None:
     print("\nLecture : le DSR est la probabilité que le vrai Sharpe dépasse le meilleur")
     print("Sharpe *attendu par pur hasard* sur autant d'essais. En dessous de 0.95, le")
     print("portail (seuil dsr_min) refuserait le signal malgré un Sharpe brut positif.")
+
+    # --- PBO (CSCV) : le PROCESSUS de sélection sur-apprend-il ? ---
+    matrix = pd.DataFrame(trial_series).dropna(how="any")
+    if matrix.shape[1] >= 2 and matrix.shape[0] >= 10:
+        pbo, pdiag = probability_of_backtest_overfitting(matrix, n_splits=args.pbo_splits)
+        print("\n" + "=" * 74)
+        print("PROBABILITY OF BACKTEST OVERFITTING (CSCV) — le tri lui-même")
+        print("=" * 74)
+        print(f"\n  Configs dans la matrice      : {int(pdiag['n_configs'])}")
+        print(f"  Combinaisons CSCV            : {int(pdiag['n_combinations'])} "
+              f"(S={args.pbo_splits})")
+        print(f"  Logit médian                 : {pdiag['median_logit']:+.2f}")
+        print(f"\n  >>> PBO = {pbo:.3f}  "
+              f"({'✅ ≤ 0.50 : sélection robuste' if pbo <= 0.5 else '❌ > 0.50 : le tri sur-apprend'})")
+        print("\nLecture : PBO = fréquence où la config *meilleure in-sample* finit sous la")
+        print("médiane out-of-sample. > 0.5 => choisir le meilleur du sweep est illusoire.")
 
 
 if __name__ == "__main__":
