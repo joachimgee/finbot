@@ -54,6 +54,54 @@ def test_combiner_trap_reason_points_at_ic() -> None:
     assert not any("Sharpe" in r for r in reasons)
 
 
+# --- DSR : 3e critère optionnel (anti-tests-multiples) -----------------------
+
+def test_decide_dsr_absent_keeps_dual_criterion() -> None:
+    """Sans DSR fourni, le portail décide exactement comme avant (rétro-compat)."""
+    assert decide(2.56, 0.76)[0] is True
+    assert decide(2.56, 0.76, dsr=None)[0] is True
+
+
+def test_decide_low_dsr_rejects_otherwise_passing_signal() -> None:
+    """Un signal qui passe IC+Sharpe mais dont le DSR est faible est REJETÉ."""
+    passed, reasons = decide(2.56, 0.76, dsr=0.10)
+    assert not passed
+    assert any("DSR" in r for r in reasons)
+
+
+def test_decide_high_dsr_passes() -> None:
+    passed, reasons = decide(2.56, 0.76, dsr=0.99)
+    assert passed
+    assert reasons == ()
+
+
+def test_decide_nan_dsr_is_failure() -> None:
+    passed, _ = decide(2.56, 0.76, dsr=float("nan"))
+    assert not passed
+
+
+def test_evaluate_gate_populates_dsr_when_trials_given() -> None:
+    """Fournir n_trials + dispersion active et renseigne le DSR dans le verdict."""
+    returns = _returns_panel(seed=1)
+    rng = np.random.default_rng(7)
+    scores = returns.shift(-1) + rng.normal(0, 0.03, returns.shape)
+    verdict = evaluate_signal_gate(
+        "predictive", scores, returns, cost_model=CostModel(),
+        n_trials=50, trial_sharpe_std=0.05,
+    )
+    assert verdict.dsr is not None
+    assert 0.0 <= verdict.dsr <= 1.0
+
+
+def test_evaluate_gate_dsr_none_by_default() -> None:
+    """Sans n_trials, le DSR reste None et le verdict est double-critère."""
+    returns = _returns_panel(seed=1)
+    rng = np.random.default_rng(7)
+    scores = returns.shift(-1) + rng.normal(0, 0.03, returns.shape)
+    verdict = evaluate_signal_gate("predictive", scores, returns, cost_model=CostModel())
+    assert verdict.dsr is None
+
+
 # --- Évaluation bout-en-bout sur données synthétiques ------------------------
 
 def _returns_panel(n_days: int = 260, n_assets: int = 40, seed: int = 0) -> pd.DataFrame:

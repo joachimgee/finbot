@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from financial_analyzer.backtest.robustness import deflated_sharpe_ratio
 from financial_analyzer.backtest.signal_evaluation import (
     CostModel,
     SignalEvalResult,
@@ -53,10 +54,16 @@ __all__ = [
 
 @dataclass(frozen=True)
 class GateThresholds:
-    """Seuils du portail. Directionnels : l'IC doit être *positif* et significatif."""
+    """Seuils du portail. Directionnels : l'IC doit être *positif* et significatif.
+
+    ``dsr_min`` n'est *actif* que si un Deflated Sharpe Ratio est fourni à
+    :func:`decide` (i.e. si ``n_trials`` est passé au portail). Il ne peut que
+    *resserrer* le portail : sans DSR, le double critère historique décide seul.
+    """
 
     ic_t_stat_min: float = 2.0
     net_sharpe_min: float = 0.0
+    dsr_min: float = 0.95
 
 
 DEFAULT_THRESHOLDS = GateThresholds()
@@ -66,11 +73,16 @@ def decide(
     ic_t_stat: float,
     net_sharpe: float,
     thresholds: GateThresholds = DEFAULT_THRESHOLDS,
+    dsr: float | None = None,
 ) -> tuple[bool, tuple[str, ...]]:
-    """Décision pure du portail à partir des deux métriques.
+    """Décision pure du portail à partir des métriques.
 
     Retourne ``(passed, reasons)`` — ``reasons`` liste les critères échoués
     (vide si tout passe). ``NaN`` est traité comme un échec (preuve insuffisante).
+
+    ``dsr`` (Deflated Sharpe Ratio ∈ [0,1]) est un troisième critère *optionnel*
+    anti-tests-multiples : passé (non ``None``), il doit dépasser ``dsr_min``.
+    Absent, le portail conserve exactement son comportement double-critère.
     """
     reasons: list[str] = []
     if math.isnan(ic_t_stat) or ic_t_stat <= thresholds.ic_t_stat_min:
@@ -82,6 +94,11 @@ def decide(
         reasons.append(
             f"Sharpe net={net_sharpe:+.2f} ≤ {thresholds.net_sharpe_min:+.2f} "
             "(non rentable après coûts)"
+        )
+    if dsr is not None and (math.isnan(dsr) or dsr < thresholds.dsr_min):
+        reasons.append(
+            f"DSR={dsr:.2f} < {thresholds.dsr_min:.2f} "
+            "(Sharpe non crédible après correction des tests multiples)"
         )
     return (not reasons), tuple(reasons)
 
@@ -98,6 +115,7 @@ class ValidationVerdict:
     n_periods: int
     passed: bool
     reasons: tuple[str, ...] = field(default_factory=tuple)
+    dsr: float | None = None
 
     def summary(self) -> str:
         verdict = "✅ VALIDÉ" if self.passed else "❌ REJETÉ"
@@ -106,6 +124,8 @@ class ValidationVerdict:
             f"(IC={self.ic_mean:+.4f}), Sharpe net={self.net_sharpe:+.2f}, "
             f"turnover={self.avg_turnover:.2f}, {self.n_periods} pér."
         )
+        if self.dsr is not None:
+            base += f", DSR={self.dsr:.2f}"
         if self.reasons:
             base += " | échec: " + " ; ".join(self.reasons)
         return base
@@ -123,6 +143,8 @@ def evaluate_signal_gate(
     long_short: bool = True,
     periods_per_year: int = 252,
     thresholds: GateThresholds = DEFAULT_THRESHOLDS,
+    n_trials: int | None = None,
+    trial_sharpe_std: float | None = None,
 ) -> ValidationVerdict:
     """Passe un signal au portail : validation walk-forward OOS + double critère.
 
@@ -133,10 +155,15 @@ def evaluate_signal_gate(
         cost_model: modèle de coûts (défaut ``CostModel()``).
         rebalance_every: cadence de rééquilibrage retenue pour ce signal.
         n_splits: nombre de fenêtres walk-forward.
+        n_trials: nombre de configurations essayées (facteurs × cadences × …).
+            Fourni (avec ``trial_sharpe_std``), active le troisième critère
+            Deflated Sharpe Ratio (anti-tests-multiples). Absent → double critère.
+        trial_sharpe_std: écart-type des Sharpes **par période** à travers ces
+            essais (dispersion réellement observée). Requis pour un DSR honnête.
 
     Returns:
         ValidationVerdict — ``passed`` vrai seulement si IC t > seuil ET Sharpe
-        net > seuil sur l'agrégat OOS.
+        net > seuil (ET DSR ≥ seuil si ``n_trials`` fourni) sur l'agrégat OOS.
     """
     # Coût par défaut = modèle Alpaca calibré (commission 0, slippage ~2.5 bps),
     # pas le défaut générique de CostModel (25 bps) : le portail juge de la
@@ -154,7 +181,13 @@ def evaluate_signal_gate(
             net_sharpe=float("nan"), avg_turnover=float("nan"), n_periods=0,
             passed=False, reasons=("aucune fenêtre OOS exploitable",),
         )
-    passed, reasons = decide(oos.ic_t_stat, oos.net_sharpe, thresholds)
+    # DSR optionnel : n'active le 3e critère que si on nous dit combien de
+    # configurations ont été essayées ET la dispersion de leurs Sharpes.
+    dsr: float | None = None
+    if n_trials is not None and n_trials > 1 and trial_sharpe_std is not None:
+        net_returns = oos.net_equity_curve.pct_change().dropna()
+        dsr, _ = deflated_sharpe_ratio(net_returns, n_trials, trial_sharpe_std)
+    passed, reasons = decide(oos.ic_t_stat, oos.net_sharpe, thresholds, dsr=dsr)
     return ValidationVerdict(
         name=name,
         ic_mean=oos.ic_mean,
@@ -164,6 +197,7 @@ def evaluate_signal_gate(
         n_periods=oos.n_periods,
         passed=passed,
         reasons=reasons,
+        dsr=dsr,
     )
 
 
@@ -202,7 +236,16 @@ VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {
         net_sharpe=0.76,
         evidence="run_rebalance_sweep_alpaca.py — 80 US large-caps, 5 fenêtres OOS, "
                  "coûts Alpaca calibrés (commission 0 + slippage 2.5 bps) : "
-                 "meilleur à reb=10 (Sharpe net +0.76).",
+                 "meilleur à reb=10 (Sharpe net +0.76). "
+                 "MISE EN GARDE (Tier 3, run_deflated_sharpe_alpaca.py) : sur ce seul "
+                 "échantillon 2023-08→2026-07 et vu les 32 essais du sweep, le Deflated "
+                 "Sharpe Ratio = 0.13 (Sharpe/période 0.048 < repère E[max|H0] 0.093). "
+                 "Conservé car momentum est un facteur à *fort prior* (des décennies de "
+                 "littérature, multi-marchés) — pas une trouvaille par data-mining sur ce "
+                 "backtest ; le DSR, qui suppose N tirages a priori équiprobables, le "
+                 "sur-pénalise. La crédibilité repose sur ce prior + IC/Sharpe OOS, pas "
+                 "sur ce seul run. Le portail garde le DSR *optionnel* (actif seulement "
+                 "si n_trials est fourni) pour ne pas écarter un edge à prior fort.",
     ),
 }
 

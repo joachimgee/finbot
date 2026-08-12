@@ -94,6 +94,35 @@ payant/fermé) :
 *Impact : moins de faux positifs — mais probablement moins de « survivants » encore.
 C'est le prix de l'honnêteté statistique.*
 
+### ✅ Fait (Tier 3) — et un résultat inconfortable, rapporté honnêtement
+
+Implémenté dans `backtest/robustness.py` (formules directes, sans dépendance
+payante) : `probabilistic_sharpe_ratio`, `expected_max_sharpe`,
+`deflated_sharpe_ratio`, `purged_kfold_indices` (purge + embargo). Le portail
+(`validation_gate.decide`) accepte un **3e critère DSR optionnel** (`dsr_min=0.95`),
+*actif seulement si on lui fournit `n_trials`* — il ne peut que resserrer, jamais
+relâcher le double critère historique.
+
+**Verdict réel sur le seul edge validé** (`run_deflated_sharpe_alpaca.py`,
+32 essais = 8 facteurs × 4 cadences, 626 obs OOS) :
+
+| grandeur | valeur |
+|---|---|
+| Sharpe/période observé (momentum_12_1 @ reb=10) | +0.048 (annualisé **+0.76**) |
+| repère dégonflé E[max Sharpe \| H0] sur 32 essais | +0.093 (annualisé **+1.47**) |
+| **Deflated Sharpe Ratio** | **0.13** (❌ < 0.95) |
+
+Autrement dit : sur *ce seul échantillon* et vu le nombre d'essais du sweep, le
+Sharpe de momentum est **en dessous** de ce qu'on attendrait du meilleur de 32
+tirages de pur bruit. **On garde quand même momentum au registre**, mais en le
+disant : momentum est un facteur à **fort prior** (littérature de plusieurs
+décennies, multi-marchés/multi-périodes) — pas une trouvaille par data-mining sur
+*ce* backtest. Le DSR suppose N essais a priori équiprobables et *sur-pénalise* un
+signal théoriquement fondé. La crédibilité tient au prior + IC/Sharpe OOS, pas à ce
+seul run. C'est précisément pourquoi le DSR reste **optionnel** dans le portail :
+un futur signal *sans* prior fort, lui, devra le franchir. La mise en garde est
+inscrite noir sur blanc dans l'`evidence` de `VALIDATED_SIGNALS["momentum_12_1"]`.
+
 ---
 
 ## Tier 4 — Maturité plateforme (inspiration Qlib / QuantConnect-LEAN)
