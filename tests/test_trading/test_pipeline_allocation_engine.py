@@ -202,6 +202,49 @@ def test_vol_overlay_reduces_exposure_when_enabled() -> None:
     assert sum(weights.values()) < 0.95  # exposition réduite par l'overlay
 
 
+def test_no_trade_band_off_by_default() -> None:
+    pipe, _, _ = _make_pipeline(["A", "B"])
+    assert pipe.no_trade_band == 0.0
+
+
+def _pipe_with_holdings(band, positions, pv=100000.0):
+    broker = MagicMock()
+    broker.connected = True
+    broker.mode = "paper"
+    monitor = MagicMock()
+    monitor.portfolio_value = pv
+    monitor.positions = positions
+    return LiveTradingPipeline(
+        broker_adapter=broker, tickers=["A", "B"], account_monitor=monitor,
+        risk_guard=MagicMock(), no_trade_band=band,
+    )
+
+
+def test_no_trade_band_holds_small_drift() -> None:
+    """Une micro-dérive (< bande) ne déclenche pas de trade : poids tenus."""
+    pipe = _pipe_with_holdings(0.05, [
+        {"symbol": "A", "market_value": 50000.0},
+        {"symbol": "B", "market_value": 50000.0}])  # actuel 0.5 / 0.5
+    out = pipe._apply_no_trade_band({"A": 0.52, "B": 0.48})  # Δ = 0.02 < 0.05
+    assert out["A"] == pytest.approx(0.5) and out["B"] == pytest.approx(0.5)
+
+
+def test_no_trade_band_trades_large_move() -> None:
+    """Un mouvement au-delà de la bande est exécuté (va au cible)."""
+    pipe = _pipe_with_holdings(0.05, [
+        {"symbol": "A", "market_value": 50000.0},
+        {"symbol": "B", "market_value": 50000.0}])
+    out = pipe._apply_no_trade_band({"A": 0.80, "B": 0.20})  # Δ = 0.30 >= 0.05
+    assert out["A"] == pytest.approx(0.80) and out["B"] == pytest.approx(0.20)
+
+
+def test_no_trade_band_no_holdings_is_passthrough() -> None:
+    """Sans book détenu (mise en place), rien à tenir -> cible inchangé."""
+    pipe = _pipe_with_holdings(0.05, [])
+    out = pipe._apply_no_trade_band({"A": 0.6, "B": 0.4})
+    assert out == {"A": 0.6, "B": 0.4}
+
+
 def test_dry_run_flows_through_to_gateway(monkeypatch) -> None:
     """run(dry_run=True) fait passer dry_run jusqu'au gateway (aucune soumission réelle)."""
     pipe, monitor, risk = _make_pipeline(["UP"])

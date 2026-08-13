@@ -24,7 +24,7 @@ Objectif : distinguer **robustesse/sûreté/maintenabilité** (améliorable ici)
 |---|---|---|---|
 | 1 | **PBO / CSCV dans le portail** | `backtest/validation/combinatorial_cv.py` existe mais n'est pas relié au gate ; le DSR est là, pas la *Probability of Backtest Overfitting* | faible |
 | 2 | **RiskGuard enrichi** ✅ **Fait** | Ajout d'un contrôle **pré-trade portefeuille** corrélation-aware (`validate_portfolio`) : vol ex-ante `√(wᵀΣw)`, VaR 95 % 1 j, nombre effectif de paris — limites *opt-in*, câblées dans le pipeline (abstention si dépassement). Voir §7. | ~~moyen~~ |
-| 3 | **Objectif portefeuille *cost-aware*** | Contrainte de turnover présente (`portfolio/constraints.py`) mais l'optimisation ne **pénalise pas** les coûts dans l'objectif | moyen |
+| 3 | **Objectif portefeuille *cost-aware*** ✅ **Fait** | Bande de non-transaction (`backtest/cost_aware.py`), câblée en option dans `evaluate_signal` et `LiveTradingPipeline.no_trade_band`. Résultat réel : Sharpe net +0.73→+0.95, maxDD −21%→−17%, turnover −98%. Voir §8. | ~~moyen~~ |
 | 4 | **Combiner *risk-weighting*** | `strategy/ensemble_allocator.py` prêt mais jamais exercé (1 seul signal validé) — prêt le jour où un 2ᵉ signal passe | faible |
 
 ## 3. Dette structurelle (fragmentation) — ✅ frontière verrouillée
@@ -98,8 +98,9 @@ total restent à éponger au fil de l'eau.
 3. **Consolidation structurelle** (§3) — ✅ **Fait** : couche recherche mise en
    quarantaine par *frontière imposée* (test de layering) + suppression du couplage
    recherche→live mort. Fusion des répertoires doublons déférée (churn/cosmétique).
-4. **Objectif cost-aware** (#3) — améliore directement le Sharpe *net*.
-5. **Séparation type LEAN** (§4) — le plus structurant, plus d'effort.
+4. **Objectif cost-aware** (#4) — ✅ **Fait** : bande de non-transaction (§8),
+   Sharpe net +0.73→+0.95 sur momentum réel. Câblée opt-in dans le pipeline.
+5. **Séparation type LEAN** — le plus structurant, plus d'effort. *Reste à faire.*
 
 ## 7. Détail #2 — contrôle de risque pré-trade au niveau portefeuille
 
@@ -119,6 +120,33 @@ inchangé). Données insuffisantes → **abstention** (pas de faux rejet). Câbl
 qui dépasse une limite fait **s'abstenir** tout le rééquilibrage (log + statut
 `skipped/portfolio_risk_limit`), sans crasher le daemon. À activer via les
 paramètres du `RiskGuard` quand on passe en live (cf. runbook).
+
+## 8. Détail #4 — rééquilibrage cost-aware (bande de non-transaction)
+
+Sous **coûts proportionnels**, la politique optimale est une **bande de
+non-transaction** (Constantinides 1986 ; Davis-Norman 1990 ; Gârleanu-Pedersen
+2013) : ne trader une ligne que si son poids bouge de plus que la bande.
+`backtest/cost_aware.py::apply_no_trade_band` (pur, testé), branché en option dans
+`evaluate_signal(no_trade_band=…)` et `LiveTradingPipeline(no_trade_band=…)`
+(défaut 0 → comportement inchangé, fail-safe).
+
+**Résultat réel** (`run_cost_aware_band_alpaca.py`, momentum_12_1 à **poids
+continus**, reb quotidien, coûts Alpaca calibrés) :
+
+| bande | turnover | Sharpe brut | Sharpe net | maxDD |
+|---|---|---|---|---|
+| 0.000 | 0.057 | +0.75 | +0.73 | −21.1 % |
+| 0.020 | 0.006 | +0.83 | +0.83 | −20.4 % |
+| 0.050 | 0.001 | +0.95 | **+0.95** | **−17.3 %** |
+
+**Caveat honnête** : le gain n'est **pas** que des coûts. Le *Sharpe brut* monte
+aussi (+0.75→+0.95) → la bande **ralentit** le signal (on tient les gagnants plus
+longtemps), ce qui aide *parce que le momentum est lent* — même raison que reb=10 >
+reb=1. Une bande large est donc une **généralisation continue** de la cadence de
+rééquilibrage déjà en place, pas seulement une économie de coûts. Sur un book
+**quantile équipondéré** (poids discrets 0/±step) la bande est ~sans effet : elle
+vise les **poids continus** (chemin BL du pipeline live), d'où le test sur poids
+continus.
 
 ## 6. Rappel honnête sur le plafond
 

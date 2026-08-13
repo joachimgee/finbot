@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from financial_analyzer.backtest.cost_aware import apply_no_trade_band
 from financial_analyzer.backtest.ic_reporting import (
     compute_cross_sectional_ic,
     ic_summary,
@@ -165,6 +166,7 @@ def evaluate_signal(
     long_short: bool = True,
     periods_per_year: int = 252,
     rebalance_every: int = 1,
+    no_trade_band: float = 0.0,
 ) -> SignalEvalResult:
     """Évalue un signal cross-sectionnel, coûts inclus.
 
@@ -181,6 +183,9 @@ def evaluate_signal(
             = rééquilibrage à chaque période (turnover maximal). N > 1 tient les
             poids N périodes, ce qui réduit le turnover et les coûts — utile pour
             un signal lent comme le momentum, sur-tradé en quotidien.
+        no_trade_band: bande de non-transaction (cost-aware). 0 (défaut) = viser
+            exactement le cible. > 0 : ne trader un actif que si son poids bouge de
+            plus de ``no_trade_band`` — réduit le turnover (cf. ``cost_aware``).
 
     Returns:
         SignalEvalResult (IC, Sharpe brut/net, rendement net, turnover).
@@ -218,6 +223,10 @@ def evaluate_signal(
             if prev_w is None:
                 turnover = float(target.abs().sum())  # mise en place initiale
             else:
+                # Bande de non-transaction (cost-aware) : ne bouger que les poids
+                # qui changent plus que la bande -> moins de turnover.
+                if no_trade_band > 0:
+                    target = apply_no_trade_band(target, prev_w, no_trade_band)
                 aligned_prev = prev_w.reindex(target.index).fillna(0.0)
                 turnover = float((target - aligned_prev).abs().sum())
             prev_w = target
@@ -274,6 +283,7 @@ def walk_forward_evaluate(
     long_short: bool = True,
     periods_per_year: int = 252,
     rebalance_every: int = 1,
+    no_trade_band: float = 0.0,
 ) -> Dict[str, object]:
     """Évaluation walk-forward strictement out-of-sample.
 
@@ -323,7 +333,7 @@ def walk_forward_evaluate(
         res = evaluate_signal(
             predicted, returns.loc[test_idx], cost_model=cost_model,
             quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
-            rebalance_every=rebalance_every,
+            rebalance_every=rebalance_every, no_trade_band=no_trade_band,
         )
         per_window.append(res)
 
@@ -332,7 +342,7 @@ def walk_forward_evaluate(
     oos = evaluate_signal(
         oos_scores, returns.reindex(oos_scores.index), cost_model=cost_model,
         quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
-        rebalance_every=rebalance_every,
+        rebalance_every=rebalance_every, no_trade_band=no_trade_band,
     ) if not oos_scores.empty else None
 
     return {"oos": oos, "per_window": per_window, "n_splits": len(per_window)}

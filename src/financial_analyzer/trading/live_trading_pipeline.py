@@ -257,6 +257,7 @@ class LiveTradingPipeline:
         max_exposure: float = 1.0,
         risk_off_ma: int = 200,
         risk_off_factor: float = 0.5,
+        no_trade_band: float = 0.0,
     ) -> None:
         """
         Initialize live trading pipeline.
@@ -328,6 +329,7 @@ class LiveTradingPipeline:
         self.target_vol = target_vol
         self.vol_lookback = vol_lookback
         self.max_exposure = max_exposure
+        self.no_trade_band = no_trade_band
         self.risk_off_ma = risk_off_ma
         self.risk_off_factor = risk_off_factor
 
@@ -537,7 +539,42 @@ class LiveTradingPipeline:
         # jamais toucher aux poids relatifs. Aucune donnée exploitable -> pas de scale.
         if self.target_vol and target_weights:
             target_weights = self._apply_vol_overlay(target_weights, data)
+        # Rééquilibrage cost-aware (opt-in) : bande de non-transaction vs les poids
+        # détenus. Ne bouge une ligne que si son poids change de plus que la bande —
+        # évite de churner le book pour des micro-variations de signal (coûts).
+        if self.no_trade_band > 0 and target_weights:
+            target_weights = self._apply_no_trade_band(target_weights)
         return target_weights, data
+
+    def _apply_no_trade_band(self, weights: Dict[str, float]) -> Dict[str, float]:
+        """Applique la bande de non-transaction aux poids cibles vs les poids détenus.
+
+        Poids détenus = valeur de marché des positions / valeur du portefeuille
+        (via le moniteur). Fail-safe : toute erreur -> poids inchangés.
+        """
+        try:
+            import pandas as pd
+
+            from financial_analyzer.backtest.cost_aware import apply_no_trade_band
+
+            pv = float(getattr(self.monitor, "portfolio_value", 0.0) or 0.0)
+            positions = getattr(self.monitor, "positions", None) or []
+            if pv <= 0 or not positions:
+                return weights  # pas de book détenu -> mise en place, rien à tenir
+            current = {}
+            for p in positions:
+                sym = p.get("symbol") if isinstance(p, dict) else None
+                mv = float(p.get("market_value", 0.0)) if isinstance(p, dict) else 0.0
+                if sym:
+                    current[sym] = mv / pv
+            idx = sorted(set(weights) | set(current))
+            tgt = pd.Series({s: weights.get(s, 0.0) for s in idx})
+            prev = pd.Series({s: current.get(s, 0.0) for s in idx})
+            banded = apply_no_trade_band(tgt, prev, self.no_trade_band)
+            return {s: float(w) for s, w in banded.items() if abs(w) > 1e-9}
+        except Exception as e:  # noqa: BLE001 - le cost-aware ne doit jamais casser la décision
+            logger.warning("Bande de non-transaction indisponible (%s) — poids inchangés.", e)
+            return weights
 
     def _apply_vol_overlay(self, weights: Dict[str, float], data: Dict) -> Dict[str, float]:
         """Scale l'exposition du book selon le ciblage de vol + filtre de tendance."""
