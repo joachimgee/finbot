@@ -177,6 +177,40 @@ TWAP, ou un autre modèle d'alpha) sans risque pour le reste du chemin.
 journal) reste en aval de l'ExecutionModel : la sûreté n'est pas court-circuitable
 par un exécuteur custom.*
 
+## 10. Idées tirées des docs déconnectés (`docs/AUDITS/AUDIT_FORKS`)
+
+Ces audits documentent 8 repos externes (backtesting.py, Riskfolio-Lib,
+PyPortfolioOpt, ML4T, FinanceToolkit…). Deux idées concrètes en ont été tirées et
+**testées via le portail** (discipline inchangée) :
+
+**A. Momentum résiduel PCA** (`PORTFOLIO_PRO_RESEARCH` « décorrélation PCA/ICA »).
+`backtest/residual_momentum.pca_residual_momentum_score` : retire les k premières
+composantes principales (marché + secteur/style implicites, sans labels), momentum
+sur le résidu. **Résout la décorrélation** que le résiduel mono-facteur ratait :
+corr au momentum brut +0.87 → **+0.17** (k=5), Sharpe net **+0.81** (≈ brut). Non
+inscrit (IC t=1.65 < 2, plafonné par la breadth sur 80 noms), mais **meilleur
+candidat breadth de la session**. Détail dans `IMPROVEMENT_RESEARCH.md`.
+
+**B. HRP en construction** (`AUDIT_RISKFOLIO_LIB`, López de Prado).
+`portfolio/hrp.hrp_weights` (implémentation directe scipy, sans inversion de
+matrice → robuste au bruit de covariance) + `framework.HRPConstruction` (le
+momentum *sélectionne*, HRP *dimensionne*), enfichable via la couche #5. Résultat
+réel (sizing du book momentum top-20 %, reb=10) :
+
+| sizing | Sharpe net | turnover | maxDD |
+|---|---|---|---|
+| équipondéré (EW) | **+1.40** | 0.040 | −23.5 % |
+| inverse-variance | +1.22 | 0.050 | −20.8 % |
+| **HRP** | +1.29 | 0.060 | **−19.4 %** |
+
+**Lecture honnête** : HRP livre sa promesse *là où la théorie l'attend* — le
+**drawdown le plus bas** (−17 % vs EW) — mais **pas** le meilleur Sharpe : sur ~80
+large-caps homogènes, l'edge du momentum est dans la **sélection**, pas la
+pondération, et HRP échange du rendement contre moins de risque. Ce n'est pas un
+free lunch mais un arbitrage risque/rendement. HRP reste **enfichable en option**
+pour une config *risk-averse* ; son vrai gain apparaîtrait sur un univers plus large
+et hétérogène (clusters de corrélation distincts) — encore le thème « données ».
+
 ## 6. Rappel honnête sur le plafond
 
 Ces points améliorent **robustesse, sûreté et maintenabilité**, pas l'**edge**.

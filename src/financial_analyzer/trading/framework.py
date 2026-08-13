@@ -93,6 +93,46 @@ class PipelineConstruction:
         return self._p._construct_weights(signals, data)
 
 
+class HRPConstruction:
+    """Construction **HRP** : le signal *sélectionne* les noms, HRP les *dimensionne*.
+
+    Alternative enfichable à la construction BL. Le momentum choisit les titres à
+    conviction longue (signal > 0) ; Hierarchical Risk Parity (López de Prado) les
+    pondère de façon **robuste au bruit de covariance** (pas d'inversion de matrice),
+    puis on applique la même finalisation (cap → vol → bande) que la construction par
+    défaut. Données insuffisantes / trop peu de noms → repli sur la construction BL
+    (fail-safe, jamais de crash).
+    """
+
+    def __init__(self, pipeline: object, lookback: int = 252, min_names: int = 3) -> None:
+        self._p = pipeline
+        self.lookback = lookback
+        self.min_names = min_names
+
+    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        import pandas as pd
+
+        from financial_analyzer.portfolio.hrp import hrp_weights
+
+        longs = [s for s, v in (signals or {}).items() if v and v > 0]
+        prices = (data or {}).get("prices", {}) or {}
+        frames = {s: prices[s]["close"] for s in longs
+                  if s in prices and prices[s] is not None
+                  and not prices[s].empty and "close" in prices[s]}
+        if len(frames) < self.min_names:
+            return self._p._construct_weights(signals, data)  # repli BL
+        try:
+            close = pd.DataFrame(frames).dropna(how="all").tail(self.lookback + 1)
+            rets = close.pct_change().dropna()
+            w = hrp_weights(rets)
+            weights = {s: float(x) for s, x in w.items() if x > 1e-9}
+            if not weights:
+                return self._p._construct_weights(signals, data)
+            return self._p._finalize_weights(weights, data)
+        except Exception:  # noqa: BLE001 - une construction ne doit jamais crasher le run
+            return self._p._construct_weights(signals, data)
+
+
 class PipelineRisk:
     """Risque par défaut : contrôle pré-trade portefeuille (``_portfolio_risk_ok``)."""
 
@@ -122,6 +162,7 @@ class PipelineExecution:
 __all__ = [
     "AlphaModel",
     "ExecutionModel",
+    "HRPConstruction",
     "PipelineAlpha",
     "PipelineConstruction",
     "PipelineExecution",

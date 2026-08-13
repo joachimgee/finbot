@@ -11,10 +11,12 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from financial_analyzer.trading.framework import (
     AlphaModel,
     ExecutionModel,
+    HRPConstruction,
     PipelineAlpha,
     PipelineConstruction,
     PipelineExecution,
@@ -78,6 +80,43 @@ def test_injected_construction_replaces_only_that_stage() -> None:
             "news": {}, "sentiment": {}}
     weights, _ = pipe.compute_target_weights(data=data)
     assert weights == {"UP": 0.7, "DOWN": 0.3}
+
+
+def test_hrp_construction_sizes_selected_names() -> None:
+    """HRP conforme au Protocol, dimensionne les noms sélectionnés (signal>0),
+    poids ≥ 0 sommant ≈ 1 sur ces noms."""
+    pipe = _make_pipeline()
+    pipe.tickers = ["A", "B", "C", "D"]
+    hrp = HRPConstruction(pipe, lookback=200, min_names=3)
+    assert isinstance(hrp, PortfolioConstructionModel)
+    rng = np.random.default_rng(0)
+    idx = pd.date_range("2024-01-01", periods=260, freq="D")
+
+    def _px(vol):
+        return pd.DataFrame({"close": 100 * np.exp(np.cumsum(rng.normal(0, vol, 260)))}, index=idx)
+
+    data = {"prices": {"A": _px(0.01), "B": _px(0.02), "C": _px(0.015), "D": _px(0.008)}}
+    signals = {"A": 0.8, "B": 0.5, "C": 0.3, "D": 0.6}  # tous longs
+    weights = hrp.construct(signals, data)
+    assert set(weights).issubset({"A", "B", "C", "D"})
+    assert all(w >= 0 for w in weights.values())
+    assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_hrp_construction_falls_back_when_too_few_names() -> None:
+    """Trop peu de noms exploitables -> repli sur la construction BL par défaut."""
+    pipe = _make_pipeline()
+    called = {}
+
+    def _bl(signals, data):
+        called["bl"] = True
+        return {"X": 1.0}
+
+    pipe._construct_weights = _bl
+    hrp = HRPConstruction(pipe, min_names=3)
+    out = hrp.construct({"A": 0.5}, {"prices": {}})  # aucune donnée -> repli
+    assert called.get("bl") is True
+    assert out == {"X": 1.0}
 
 
 def test_injected_risk_model_can_veto() -> None:

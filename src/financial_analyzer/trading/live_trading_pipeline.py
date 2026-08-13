@@ -550,12 +550,20 @@ class LiveTradingPipeline:
         return target_weights, data
 
     def _construct_weights(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
-        """Construction de portefeuille par défaut : BL + cap + overlay vol + bande.
+        """Construction de portefeuille par défaut : BL puis finalisation.
 
         (Corps historique de ``compute_target_weights``, extrait pour l'étage
         Construction enfichable — comportement identique.)
         """
         target_weights = self._optimize_portfolio(signals, data)
+        return self._finalize_weights(target_weights, data)
+
+    def _finalize_weights(self, target_weights: Dict[str, float], data: Dict) -> Dict[str, float]:
+        """Finalisation commune à toute construction : cap → overlay vol → bande.
+
+        Partagée par la construction par défaut (BL) et les constructions
+        alternatives (p.ex. HRP) pour garantir les mêmes garde-fous en aval.
+        """
         # Plafonner chaque poids au cap de concentration du RiskGuard et
         # redistribuer l'excédent : sinon la position la plus convaincue dépasse la
         # limite et se fait REJETER à l'exécution (on perd le meilleur signal). Le
