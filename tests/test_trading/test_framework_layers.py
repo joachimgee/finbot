@@ -23,6 +23,7 @@ from financial_analyzer.trading.framework import (
     PipelineRisk,
     PortfolioConstructionModel,
     RiskModel,
+    ScheduledExecution,
 )
 from financial_analyzer.trading.live_trading_pipeline import LiveTradingPipeline
 
@@ -117,6 +118,32 @@ def test_hrp_construction_falls_back_when_too_few_names() -> None:
     out = hrp.construct({"A": 0.5}, {"prices": {}})  # aucune donnée -> repli
     assert called.get("bl") is True
     assert out == {"X": 1.0}
+
+
+def test_scheduled_execution_slices_parent_into_children() -> None:
+    """ScheduledExecution découpe un ordre parent en tranches à clés idempotentes
+    uniques, toutes soumises via le gateway, quantité totale préservée."""
+    pipe = _make_pipeline()
+    pipe._generate_orders = lambda tw, data: [
+        {"symbol": "UP", "qty": 100, "side": "buy", "price": 10.0, "order_type": "market"}]
+    submitted = []
+
+    def _exec(orders, dry_run=False):
+        submitted.extend(orders)
+        return [{"status": "executed"} for _ in orders]
+
+    pipe._execute_orders_with_risk_checks = _exec
+    ex = ScheduledExecution(pipe, n_slices=4, kappa=0.0)  # TWAP
+    results = ex.execute({"UP": 1.0}, {"prices": {}}, dry_run=False)
+    assert len(submitted) == 4  # 4 tranches
+    assert sum(o["qty"] for o in submitted) == 100  # total préservé
+    keys = [o["idempotency_key"] for o in submitted]
+    assert len(set(keys)) == 4  # clés uniques -> pas de dédup
+    assert len(results) == 4
+
+
+def test_scheduled_execution_conforms_to_protocol() -> None:
+    assert isinstance(ScheduledExecution(_make_pipeline()), ExecutionModel)
 
 
 def test_injected_risk_model_can_veto() -> None:

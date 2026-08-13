@@ -159,10 +159,56 @@ class PipelineExecution:
         return self._p._execute_orders_with_risk_checks(orders, dry_run=dry_run)
 
 
+class ScheduledExecution:
+    """ExecutionModel qui **découpe** chaque ordre en tranches enfants (algo TWAP /
+    Almgren-Chriss), soumises via le **même gateway audité**.
+
+    Chaque tranche porte une ``idempotency_key`` unique (indice de tranche) pour ne
+    pas être dédupliquée par la clé dérivée. ``kappa=0`` ⇒ TWAP (tranches égales) ;
+    ``kappa>0`` ⇒ front-loaded (Almgren-Chriss, urgence).
+
+    ⚠️ **Étalement dans le temps** : ce modèle produit et soumet le *planning* ; le
+    véritable espacement intraday exige un driver d'exécution temps-réel (hors
+    périmètre). En synchrone, les tranches partent en séquence — l'intérêt est le
+    *plumbing* (découpe + clés idempotentes + passage par le chokepoint), prêt à
+    recevoir un driver. Le bénéfice d'impact ne se matérialise qu'avec l'espacement.
+    """
+
+    def __init__(self, pipeline: object, n_slices: int = 5, kappa: float = 0.0,
+                 min_slice_qty: int = 1) -> None:
+        self._p = pipeline
+        self.n_slices = max(1, int(n_slices))
+        self.kappa = float(kappa)
+        self.min_slice_qty = max(1, int(min_slice_qty))
+
+    def execute(
+        self, target_weights: Dict[str, float], data: Dict, *, dry_run: bool
+    ) -> List[Dict]:
+        from financial_analyzer.trading.execution_algos import almgren_chriss_schedule
+
+        parents = self._p._generate_orders(target_weights, data)
+        children: List[Dict] = []
+        for o in parents:
+            qty = int(o.get("qty", 0))
+            if qty <= 0 or qty < self.min_slice_qty:
+                children.append(o)
+                continue
+            schedule = almgren_chriss_schedule(qty, self.n_slices, self.kappa)
+            for i, child_qty in enumerate(schedule):
+                if child_qty < self.min_slice_qty:
+                    continue
+                children.append({
+                    **o, "qty": child_qty,
+                    "idempotency_key": f"{o['symbol']}:{o['side']}:s{i}:{child_qty}",
+                })
+        return self._p._execute_orders_with_risk_checks(children, dry_run=dry_run)
+
+
 __all__ = [
     "AlphaModel",
     "ExecutionModel",
     "HRPConstruction",
+    "ScheduledExecution",
     "PipelineAlpha",
     "PipelineConstruction",
     "PipelineExecution",

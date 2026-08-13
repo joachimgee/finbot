@@ -1156,6 +1156,10 @@ class LiveTradingPipeline:
                     price=order['price'],
                     order_type=order.get('order_type', 'market'),
                     dry_run=dry_run,
+                    # Clé d'idempotence explicite si fournie (ordres enfants d'un
+                    # algo d'exécution : évite la collision de deux tranches de même
+                    # quantité, que la clé dérivée (symbol,side,qty,type) dédupliquerait).
+                    idempotency_key=order.get('idempotency_key'),
                 )
 
                 # Classify by the broker's actual order status rather than

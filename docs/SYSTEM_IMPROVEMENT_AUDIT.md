@@ -85,9 +85,13 @@ total restent à éponger au fil de l'eau.
   (`max_dd_pct` est une fraction, pas un %). Ex. réel `momentum_12_1` : Sharpe
   net +0.76, **Sortino +0.92**, **Calmar +0.64**, **maxDD −13.9 %**, PSR 0.88
   (`run_tearsheet_alpaca.py`).
-- **Exécution** — aucun algorithme (market/limit seulement). Implementation
-  shortfall / TWAP / participation-rate (Almgren-Chriss). *Faible priorité à petite
-  taille*, à traiter avant de scaler.
+- **Exécution** — ✅ **Fait (planification)** : `trading/execution_algos.py`
+  (TWAP, VWAP, POV, Almgren-Chriss + modèle de coût d'impact) et
+  `framework.ScheduledExecution` (découpe en tranches à clés idempotentes uniques,
+  via le gateway audité). Démo : 1-shot 125 k$ d'impact → TWAP 12,5 k$ (×10). §12.
+  *Réserve honnête* : l'**étalement temps-réel** intraday exige un driver dédié
+  (hors périmètre) ; le bénéfice ne se matérialise qu'à grande taille. À petite
+  taille sur large-caps liquides, non prioritaire.
 - **Détection de régime** — ✅ **Fait** : HMM gaussien 2 états (`backtest/regime.py`,
   numpy pur, `hmmlearn` absent) avec **filtre avant causal** (pas de Viterbi lissé →
   no look-ahead), ré-estimé en fenêtre glissante ; exposition = 1 − (1−rof)·P(état
@@ -244,6 +248,33 @@ léger Sharpe (arbitrage de dé-risque classique, comme le vol-target et HRP). C
 pas un gain de rendement mais un **outil de risque data-driven** supérieur au filtre
 naïf. Enfichable comme risk-off alternatif pour une config prudente (tests : 6, dont
 recouvrement des régimes et **causalité vérifiée**).
+
+## 12. Détail — algorithmes d'exécution
+
+`trading/execution_algos.py` : logique de **planification pure** (quantités enfants
+entières, somme préservée), testée :
+
+| algo | principe |
+|---|---|
+| `twap_schedule` | tranches égales dans le temps (baseline) |
+| `vwap_schedule` | tranches ∝ profil de volume (suivre le marché) |
+| `pov_schedule` | *participation of volume* : enfant = min(reste, part·volume) |
+| `almgren_chriss_schedule` | trajectoire optimale impact↔risque (urgence κ) |
+| `expected_impact_cost` | coût d'impact (modèle AC) pour comparer les plannings |
+
+Démo (`run_execution_algos_demo.py`, ordre 50 k / ADV 1 M) — coût d'impact
+temporaire : **1-shot 125 k$ → TWAP 12,5 k$ (×10)** ; Almgren-Chriss urgent (κ élevé)
+= front-loaded = moins de risque de timing, plus d'impact. `ScheduledExecution`
+(couche #5) découpe chaque ordre et soumet les tranches — **clé idempotente unique
+par tranche** (sinon deux tranches de même quantité seraient dédupliquées par le
+gateway ; un passthrough `idempotency_key` a été ajouté au chemin d'exécution).
+
+**Réserve honnête** : le daemon n'est pas un moteur temps-réel — les tranches
+partent en séquence, sans espacement intraday. Le *plumbing* (découpe + idempotence
++ chokepoint audité) est prêt ; l'espacement réel (et donc le vrai gain d'impact)
+demande un **driver d'exécution temps-réel**, à ajouter le jour où le notional le
+justifie. Le chokepoint audité (mode-gate + RiskGuard + journal) reste en aval :
+chaque tranche est risk-checkée.
 
 ## 6. Rappel honnête sur le plafond
 
