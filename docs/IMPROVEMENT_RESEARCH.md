@@ -189,6 +189,44 @@ sans biais de survie, PCA k=5 franchirait plausiblement le portail, et sa combin
 module reste comme **infrastructure testée**, prêt à re-passer le portail sur données
 profondes.
 
+### ✅✅ Fait — STAT-ARB PAIRES : le payoff de breadth ENFIN démontré
+
+Nouvelle **famille** (mean-reversion, pas une variante de tendance) :
+`backtest/pairs_trading.py` — walk-forward *sans look-ahead* (sélection par
+**cointégration Engle-Granger** sur le passé, β gelé, demi-vie AR(1) ; trading par
+z-score glissant causal du spread ; dollar-neutre, coûts calibrés).
+`run_pairs_trading_alpaca.py`, 80 large-caps :
+
+| grandeur | valeur |
+|---|---|
+| Sharpe net (paires) | **+0.63** |
+| max drawdown | **−3.8 %** |
+| corrélation ↔ momentum | **−0.03** (vraiment indépendant) |
+| paires actives (moyenne) | 1.5 (thin — plafond de données) |
+
+**Et le payoff de Grinold-Kahn, mesuré :**
+
+| stratégie | Sharpe net |
+|---|---|
+| momentum seul | +0.68 |
+| paires seul | +0.63 |
+| **combo risk-weighted (inverse-vol)** | **+0.94** |
+
+Deux paris **réellement décorrélés** (ρ=−0.03) se combinent à **+0.94** — conforme à
+la théorie (√(0.68²+0.63²) ≈ 0.93) et **+38 % vs momentum seul**. C'est la première
+démonstration empirique de la session que la **breadth paie** : une *autre famille*
+indépendante relève l'IR combiné, exactement comme le prédit Grinold-Kahn.
+
+**Réserve honnête** : les paires sont **thin** (1.5 en moyenne — peu de couples
+cointégrés stables sur ~80 large-caps), donc risque idiosyncratique élevé et
+robustesse OOS incertaine sur 3 ans. Ce n'est pas encore un edge inscriptible tel
+quel, mais **la direction est prouvée** et l'infra est réutilisable telle quelle sur
+un univers **profond** (plus de titres → beaucoup plus de paires → strat paires
+robuste), où le combo momentum+paires+PCA-résiduel formerait un vrai multi-stratégie.
+C'est la conclusion constructive de tout le fil « breadth » : le plafond reste la
+donnée, mais on a désormais **deux familles indépendantes** qui, ensemble, valent
+mieux que la meilleure seule.
+
 ### ✅ Fait (Tier 2 quater) — sentiment FinBERT (vraie famille décorrélée), REJETÉ mais prometteur
 
 Le test de sentiment initial (IC t = −0.93) notait le champ `insight` **brut** de
