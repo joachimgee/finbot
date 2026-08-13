@@ -227,6 +227,42 @@ C'est la conclusion constructive de tout le fil « breadth » : le plafond reste
 donnée, mais on a désormais **deux familles indépendantes** qui, ensemble, valent
 mieux que la meilleure seule.
 
+### 🏁 Fait — MULTI-STRATÉGIE : les trois familles combinées (capstone)
+
+`backtest/multi_strategy.py` (risk-weighting **inverse-vol** + **ERC/risk-parity**,
+testé) assemble les trois familles en un book unique.
+`run_multi_strategy_alpaca.py`, 80 large-caps, coûts calibrés :
+
+**Matrice de corrélation (toutes ~décorrélées) :**
+
+| | momentum | pca_resid | pairs |
+|---|---|---|---|
+| **momentum** | 1.00 | +0.17 | −0.03 |
+| **pca_resid** | +0.17 | 1.00 | +0.03 |
+| **pairs** | −0.03 | +0.03 | 1.00 |
+
+**Sharpe net & combinaison (risk-parity) :**
+
+| famille | Sharpe seul | poids ERC |
+|---|---|---|
+| momentum | +0.85 | 0.18 |
+| pca_resid | +0.90 | 0.30 |
+| pairs | +0.63 | 0.52 |
+| **BOOK COMBINÉ** | **+1.30** | — |
+
+Le book combiné atteint **Sharpe +1.30** — **+44 % vs la meilleure famille seule
+(+0.90)** — avec un **max drawdown de −4.4 %** seulement. C'est la **démonstration
+définitive** de la thèse de toute la session : le plafond était la *breadth*
+(paris indépendants), et trois familles décorrélées (une tendance cross-section, une
+résiduelle PCA, une mean-reversion par paires) combinées par risk-parity **battent
+nettement** n'importe laquelle seule, avec un risque bien réparti.
+
+**Réserve honnête finale** : 3 ans / 80 large-caps, paires *thin* → chiffres
+indicatifs du **mécanisme**, pas un track record. Mais l'arc est bouclé : le code
+sait désormais **construire et pondérer un multi-stratégie décorrélé** ; le seul
+levier restant pour en faire un edge inscriptible robuste est la **donnée** (univers
+profond sans biais de survie), où les trois familles gagneraient toutes en robustesse.
+
 ### ✅ Fait (Tier 2 quater) — sentiment FinBERT (vraie famille décorrélée), REJETÉ mais prometteur
 
 Le test de sentiment initial (IC t = −0.93) notait le champ `insight` **brut** de
