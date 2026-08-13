@@ -133,6 +133,39 @@ class HRPConstruction:
             return self._p._construct_weights(signals, data)
 
 
+class MultiStrategyConstruction:
+    """Construction **multi-stratégie** (momentum + PCA-résiduel + paires).
+
+    Ignore le signal du pipeline et calcule le **book combiné long/short** depuis
+    ``data['prices']`` (familles décorrélées, mélangées par risk-weighting). Repli
+    sur la construction BL si données insuffisantes.
+
+    ⚠️ Long/short + familles **non validées** (seul momentum l'est) → **paper
+    uniquement** (forward-test). On ne passe **pas** par la finalisation long-only
+    (cap/vol/bande) : les poids sont déjà normalisés (brut = 1) par le book.
+    """
+
+    def __init__(self, pipeline: object, family_weights: Dict[str, float] | None = None,
+                 min_names: int = 10) -> None:
+        self._p = pipeline
+        self.family_weights = family_weights
+        self.min_names = min_names
+
+    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        import pandas as pd
+
+        from financial_analyzer.trading.multi_strategy_book import combined_book
+
+        prices = (data or {}).get("prices", {}) or {}
+        frames = {s: df["close"] for s, df in prices.items()
+                  if df is not None and not df.empty and "close" in df}
+        if len(frames) < self.min_names:
+            return self._p._construct_weights(signals, data)
+        close = pd.DataFrame(frames).dropna(how="all")
+        book = combined_book(close, self.family_weights)
+        return book or self._p._construct_weights(signals, data)
+
+
 class PipelineRisk:
     """Risque par défaut : contrôle pré-trade portefeuille (``_portfolio_risk_ok``)."""
 
@@ -208,11 +241,12 @@ __all__ = [
     "AlphaModel",
     "ExecutionModel",
     "HRPConstruction",
-    "ScheduledExecution",
+    "MultiStrategyConstruction",
     "PipelineAlpha",
     "PipelineConstruction",
     "PipelineExecution",
     "PipelineRisk",
     "PortfolioConstructionModel",
+    "ScheduledExecution",
     "RiskModel",
 ]

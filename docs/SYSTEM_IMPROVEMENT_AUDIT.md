@@ -276,6 +276,24 @@ demande un **driver d'exécution temps-réel**, à ajouter le jour où le notion
 justifie. Le chokepoint audité (mode-gate + RiskGuard + journal) reste en aval :
 chaque tranche est risk-checkée.
 
+## 13. Multi-stratégie en paper trading (forward-test)
+
+Le book combiné (momentum + PCA-résiduel + paires, risk-weighted) est **déployable
+en paper** via la couche enfichable #5 : `trading/multi_strategy_book.combined_book`
+produit les poids cibles **long/short** du jour ; `framework.MultiStrategyConstruction`
+les branche dans le `LiveTradingPipeline` ; `run_multi_strategy_paper.py` exécute
+contre le compte **paper** Alpaca (double-verrou : jamais live sans jeton).
+
+Exécution réelle (paper) : book **market-neutral** (31 positions, brut=1.00,
+net=+0.00, 16 longs / 15 shorts) soumis via l'**OrderGateway audité** (mode-gate +
+RiskGuard + journal). Réconciliation honnête : ordres **soumis mais non remplis**
+(hors séance → en file pour la prochaine ouverture) — l'audit détecte correctement
+l'écart soumis≠rempli, ce qui est le comportement attendu.
+
+⚠️ **Discipline** : PCA-résiduel & paires ne sont **pas validés** (seul momentum
+l'est) → **paper uniquement**, forward-test pour accumuler un track record avant
+toute décision. Le passage live resterait interdit par le double-verrou.
+
 ## 6. Rappel honnête sur le plafond
 
 Ces points améliorent **robustesse, sûreté et maintenabilité**, pas l'**edge**.
