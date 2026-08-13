@@ -78,8 +78,13 @@ total restent à éponger au fil de l'eau.
 - **Qlib (Microsoft)** — *rolling retraining* / re-validation glissante automatique
   des alphas. FinBot valide une fois ; pas de re-validation périodique du registre
   (un signal peut se dégrader silencieusement).
-- **Alphalens (Quantopian)** — *tearsheets* standard : décroissance d'IC, quantile
-  returns, turnover. FinBot a les briques (`evaluate_signal`) sans le rapport type.
+- **Alphalens (Quantopian)** — *tearsheets* standard. ✅ **Fait** :
+  `backtest/tearsheet.py` compose les métriques déjà codées mais **non branchées**
+  (Sortino, Calmar, max drawdown de `metrics.py`) avec le PSR (`robustness.py`) en
+  un tearsheet à partir d'un `SignalEvalResult`. Corrige au passage un bug d'unité
+  (`max_dd_pct` est une fraction, pas un %). Ex. réel `momentum_12_1` : Sharpe
+  net +0.76, **Sortino +0.92**, **Calmar +0.64**, **maxDD −13.9 %**, PSR 0.88
+  (`run_tearsheet_alpaca.py`).
 - **Exécution** — aucun algorithme (market/limit seulement). Implementation
   shortfall / TWAP / participation-rate (Almgren-Chriss). *Faible priorité à petite
   taille*, à traiter avant de scaler.
