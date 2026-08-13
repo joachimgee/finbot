@@ -27,16 +27,47 @@ Objectif : distinguer **robustesse/sûreté/maintenabilité** (améliorable ici)
 | 3 | **Objectif portefeuille *cost-aware*** | Contrainte de turnover présente (`portfolio/constraints.py`) mais l'optimisation ne **pénalise pas** les coûts dans l'objectif | moyen |
 | 4 | **Combiner *risk-weighting*** | `strategy/ensemble_allocator.py` prêt mais jamais exercé (1 seul signal validé) — prêt le jour où un 2ᵉ signal passe | faible |
 
-## 3. Dette structurelle (fragmentation)
+## 3. Dette structurelle (fragmentation) — ✅ frontière verrouillée
 
-- **Répertoires en double** : `strategy/` + `strategies/` ; `features/` +
-  `ml_features/` + `ml_features_advanced/` ; `analysis/` + `analytics/`.
-  (Même schéma que la fusion `portfolio_optimization` → `portfolio` déjà réalisée.)
-- **≈ 11 000 LOC de recherche orpheline** : `ml/` (6.4 k), `rl/` (2.8 k),
-  `deep_learning/`, `derivatives/` — importés par 1-3 modules chacun, **hors du
-  chemin qui trade**. Décision à prendre : quarantaine dans un namespace `research/`
-  clairement étiqueté, ou câblage honnête via le portail. Aujourd'hui : poids mort
-  ambigu (~66 marqueurs TODO/FIXME/stub au total).
+### Fait : quarantaine de la couche recherche par **frontière imposée** (pas un déplacement)
+
+Déplacer physiquement ~11 k LOC (`ml/`, `rl/`, `deep_learning/`, `derivatives/`)
+casserait des dizaines d'imports de tests (7-8 tests par répertoire) pour un gain
+cosmétique — mauvais rapport risque/récompense. On a fait mieux et plus sûr :
+
+1. **Suppression du couplage recherche→live réellement mort.** Le
+   `SignalFusionEngine` gardait trois méthodes `_init_lstm_predictor` /
+   `_init_ml_factor_engine` / `_init_rl_pipeline` **jamais appelées** (zombies de
+   la purge P0) qui importaient `deep_learning`/`ml`/`rl` dans le chemin live pour
+   rien ; idem deux imports gardés (`LSTMPredictor`, `MLPredictor`) inutilisés dans
+   `live_trading_pipeline`. Supprimés. Les sources correspondantes **s'abstiennent**
+   déjà via `_get_*_signal → _abstain` (registre `ABSTAINING_SOURCES` conservé).
+2. **Frontière verrouillée par un test** : `tests/test_architecture/test_layering.py`
+   vérifie qu'**aucun** fichier du cœur de décision (`trading/`, les deux modules
+   `integration/` du live, le portail + éval `backtest/`, `portfolio/`) n'importe
+   `ml`/`rl`/`deep_learning`/`derivatives`. Empêche toute ré-introduction silencieuse.
+
+Résultat : la couche recherche est *de facto* en quarantaine (aucun lien vers le
+live), sans le risque d'un déménagement massif. Elle reste utilisable en R&D et
+re-branchable **via le portail** le jour où un modèle est réellement entraîné/validé.
+
+### Carte des couches (référence)
+
+| Couche | Répertoires | Rôle |
+|---|---|---|
+| **Live (décision)** | `trading/`, `integration/signal_fusion_engine`+`signal_portfolio_bridge`, `backtest/`(gate, éval, facteurs, vol, robustness, coûts), `portfolio/`, `data/` | ce qui trade |
+| **Recherche (quarantaine)** | `ml/`, `rl/`, `deep_learning/`, `derivatives/` | R&D, hors live, re-branchable via le portail |
+| **Analytics / reporting** | `analytics/`, `reports/`, `analysis/` | post-hoc, non décisionnel |
+
+### Reste (déféré, faible priorité) : fusion des répertoires en double
+
+`strategy/`+`strategies/`, `features/`+`ml_features/`+`ml_features_advanced/`,
+`analysis/`+`analytics/`. Fusion physique **déférée** : chacun est couplé à
+plusieurs suites de tests → churn élevé pour un gain purement cosmétique. À traiter
+répertoire par répertoire, avec mise à jour des imports et suite verte, quand le
+besoin de lisibilité le justifie (même méthode que la fusion
+`portfolio_optimization`→`portfolio` déjà faite). ~66 marqueurs TODO/FIXME/stub au
+total restent à éponger au fil de l'eau.
 
 ## 4. Ce que la littérature / d'autres systèmes ont et qui manque
 
@@ -64,8 +95,9 @@ Objectif : distinguer **robustesse/sûreté/maintenabilité** (améliorable ici)
    `IMPROVEMENT_RESEARCH.md`.
 2. **RiskGuard enrichi** (#2) — vraie sûreté *live* (limites corrélation/secteur +
    VaR), modules déjà écrits.
-3. **Consolidation structurelle** (§3) — fusion des doublons + quarantaine du layer
-   recherche. Faible risque, gros gain de lisibilité.
+3. **Consolidation structurelle** (§3) — ✅ **Fait** : couche recherche mise en
+   quarantaine par *frontière imposée* (test de layering) + suppression du couplage
+   recherche→live mort. Fusion des répertoires doublons déférée (churn/cosmétique).
 4. **Objectif cost-aware** (#3) — améliore directement le Sharpe *net*.
 5. **Séparation type LEAN** (§4) — le plus structurant, plus d'effort.
 

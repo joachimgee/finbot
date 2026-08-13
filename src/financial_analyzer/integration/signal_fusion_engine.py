@@ -148,14 +148,15 @@ class SignalFusionEngine:
         # Sources déjà signalées comme abstentionnistes (log une seule fois).
         self._abstained_logged: set[str] = set()
         
-        # Initialize sub-engines (lazy loading)
+        # Initialize sub-engines (lazy loading). Les sources LSTM/ML-factor/RL
+        # *s'abstiennent* (aucun modèle entraîné câblé — cf. _get_*_signal ->
+        # _abstain) : on ne charge donc PLUS deep_learning/ml/rl ici (couche
+        # recherche, hors du chemin de décision live). Le boundary est verrouillé
+        # par tests/test_architecture/test_layering.py.
         self._technical_engine = None
         self._fundamental_engine = None
         self._sentiment_pipeline = None
-        self._lstm_predictor = None
-        self._ml_factor_engine = None
-        self._rl_pipeline = None
-        
+
         # Evidence-based reweighting si historique fourni
         if auto_reweight and weighting_history is not None and not weighting_history.empty:
             try:
@@ -256,47 +257,13 @@ class SignalFusionEngine:
                 self._sentiment_pipeline = False
         return self._sentiment_pipeline if self._sentiment_pipeline is not False else None
     
-    def _init_lstm_predictor(self):
-        """Lazy init LSTMPredictor."""
-        if self._lstm_predictor is None:
-            try:
-                from financial_analyzer.deep_learning.lstm_predictor import LSTMPredictor
-                self._lstm_predictor = LSTMPredictor(
-                    lookback_window=60,
-                    forecast_horizon=5,
-                    hidden_units=128,
-                    dropout=0.2
-                )
-                logger.info("✅ LSTMPredictor loaded")
-            except Exception as e:
-                logger.warning(f"⚠️  LSTMPredictor unavailable: {e}")
-                self._lstm_predictor = False
-        return self._lstm_predictor if self._lstm_predictor is not False else None
-    
-    def _init_ml_factor_engine(self):
-        """Lazy init ML factor engines (sentiment + news signals)."""
-        if self._ml_factor_engine is None:
-            try:
-                from financial_analyzer.ml.sentiment_factor_engine import SentimentFactorEngine
-                self._ml_factor_engine = SentimentFactorEngine()
-                logger.info("✅ ML Factor Engine loaded")
-            except Exception as e:
-                logger.warning(f"⚠️  ML Factor Engine unavailable: {e}")
-                self._ml_factor_engine = False
-        return self._ml_factor_engine if self._ml_factor_engine is not False else None
-    
-    def _init_rl_pipeline(self):
-        """Lazy init RL trading pipeline."""
-        if self._rl_pipeline is None:
-            try:
-                from financial_analyzer.rl.rl_trading_pipeline import run_rl_pipeline
-                self._rl_pipeline = True  # Mark as available (function, not class)
-                logger.info("✅ RLTradingPipeline (run_rl_pipeline) loaded")
-            except Exception as e:
-                logger.warning(f"⚠️  RLTradingPipeline unavailable: {e}")
-                self._rl_pipeline = False
-        return self._rl_pipeline if self._rl_pipeline not in (None, False) else None
-    
+    # NB : les anciens _init_lstm_predictor / _init_ml_factor_engine /
+    # _init_rl_pipeline ont été SUPPRIMÉS. Ils n'étaient jamais appelés (code mort)
+    # et importaient la couche recherche (deep_learning/ml/rl) dans le chemin live
+    # pour rien. Les sources correspondantes s'abstiennent via _get_*_signal ->
+    # _abstain ; elles restent listées dans ABSTAINING_SOURCES (registre de la
+    # discipline P0), sans charger aucun modèle.
+
     def _get_technical_signal(
         self,
         symbol: str,
@@ -649,13 +616,10 @@ class SignalFusionEngine:
             active_sources.append('fundamental')
         if self._sentiment_pipeline not in (None, False):
             active_sources.append('sentiment')
-        if self._lstm_predictor not in (None, False):
-            active_sources.append('ml_lstm')
-        if self._ml_factor_engine not in (None, False):
-            active_sources.append('ml_factor')
-        if self._rl_pipeline not in (None, False):
-            active_sources.append('rl')
-        
+        # ml_lstm / ml_factor / rl : sources en abstention (aucun modèle entraîné) —
+        # jamais « actives ». Elles figurent dans source_weights/ABSTAINING_SOURCES
+        # comme registre de discipline, pas comme contributeurs.
+
         return {
             'active_sources': active_sources,
             'source_weights': self.source_weights,

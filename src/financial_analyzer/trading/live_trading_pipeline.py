@@ -75,15 +75,11 @@ try:
 except Exception:
     FinancialNewsScraper = None
 
-try:
-    from financial_analyzer.deep_learning.lstm_predictor import LSTMPredictor
-except Exception:
-    LSTMPredictor = None
-
-try:
-    from financial_analyzer.analysis.ml_predictor import MLPredictor
-except Exception:
-    MLPredictor = None
+# NB : les imports gardés de LSTMPredictor (deep_learning) et MLPredictor
+# (analysis.ml_predictor) ont été retirés — non utilisés dans le chemin de
+# décision (les sources ML/LSTM s'abstiennent, cf. _generate_signals). Le pipeline
+# ne dépend donc plus de la couche recherche. Boundary verrouillé par
+# tests/test_architecture/test_layering.py.
 
 # Portail de validation (P1) : source de vérité des signaux autorisés à décider.
 # Import gardé pour éviter tout couplage dur si le module bouge.
