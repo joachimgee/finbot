@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 from .broker_adapter import BrokerAdapter
 from .account_monitor import AccountMonitor
+from .framework import (
+    PipelineAlpha,
+    PipelineConstruction,
+    PipelineExecution,
+    PipelineRisk,
+)
 from .risk_guard import RiskGuard, CircuitBreakerTriggered, RiskLimitExceeded
 from .order_gateway import OrderGateway
 
@@ -258,6 +264,10 @@ class LiveTradingPipeline:
         risk_off_ma: int = 200,
         risk_off_factor: float = 0.5,
         no_trade_band: float = 0.0,
+        alpha: Optional[object] = None,
+        construction: Optional[object] = None,
+        risk_model: Optional[object] = None,
+        execution: Optional[object] = None,
     ) -> None:
         """
         Initialize live trading pipeline.
@@ -332,6 +342,15 @@ class LiveTradingPipeline:
         self.no_trade_band = no_trade_band
         self.risk_off_ma = risk_off_ma
         self.risk_off_factor = risk_off_factor
+
+        # Couches enfichables (audit #5, façon LEAN) : Alpha → Construction → Risk
+        # → Execution. Par défaut, des adaptateurs qui délèguent à la logique déjà
+        # validée ci-dessous (comportement inchangé) ; injecter un modèle custom
+        # remplace *un seul* étage sans toucher aux autres.
+        self.alpha = alpha or PipelineAlpha(self)
+        self.construction = construction or PipelineConstruction(self)
+        self.risk_model = risk_model or PipelineRisk(self)
+        self.execution = execution or PipelineExecution(self)
 
         # Schedule
         self.schedule = schedule_config or TradingSchedule()
@@ -447,35 +466,34 @@ class LiveTradingPipeline:
             logger.info(f"Fetching data for {len(self.tickers)} tickers...")
             target_weights, data = self.compute_target_weights()
 
-            # 6b. Contrôle de risque PRÉ-TRADE au niveau PORTEFEUILLE
-            #     (corrélation-aware : vol ex-ante / VaR / concentration). Un book
+            # 6b. Étage RISK (pré-trade portefeuille, corrélation-aware). Un book
             #     trop risqué -> on s'ABSTIENT de tout le rééquilibrage (pas de
             #     crash du daemon) : la sûreté prime sur le fait de trader.
-            if target_weights and not self._portfolio_risk_ok(target_weights, data):
+            risk_ok, target_weights = self.risk_model.evaluate(target_weights, data)
+            if target_weights and not risk_ok:
                 return self._result(
                     status='skipped', reason='portfolio_risk_limit',
                     orders_generated=0, orders_executed=0, orders_rejected=0,
                 )
 
-            # 7. Generate orders
-            logger.info("Generating orders...")
-            orders = self._generate_orders(target_weights, data)
-            
-            logger.info(f"Generated {len(orders)} orders")
-            
-            # 8. Validate & Execute orders (dry_run applique tout sauf la
-            #    soumission réelle au broker).
-            execution_results = self._execute_orders_with_risk_checks(orders, dry_run=dry_run)
-            
+            # 7-8. Étage EXECUTION : poids cibles -> ordres -> chokepoint audité.
+            #      (dry_run applique tout sauf la soumission réelle au broker.)
+            logger.info("Executing target weights...")
+            execution_results = self.execution.execute(
+                target_weights, data, dry_run=dry_run
+            )
+
             # 9. Update monitor after execution
             self.monitor.update()
-            
+
             # 10. Log results
+            executed = sum(1 for r in execution_results if r['status'] == 'executed')
+            rejected = sum(1 for r in execution_results if r['status'] == 'rejected')
             result = self._result(
                 status='success',
-                orders_generated=len(orders),
-                orders_executed=sum(1 for r in execution_results if r['status'] == 'executed'),
-                orders_rejected=sum(1 for r in execution_results if r['status'] == 'rejected'),
+                orders_generated=len(execution_results),
+                orders_executed=executed,
+                orders_rejected=rejected,
                 execution_results=execution_results
             )
             
@@ -525,7 +543,18 @@ class LiveTradingPipeline:
         """
         if data is None:
             data = self._fetch_data()
-        signals = self._generate_signals(data)
+        # Étages enfichables : Alpha (data→signaux) puis Construction
+        # (signaux→poids). Les défauts délèguent à la logique validée ci-dessous.
+        signals = self.alpha.generate(data)
+        target_weights = self.construction.construct(signals, data)
+        return target_weights, data
+
+    def _construct_weights(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        """Construction de portefeuille par défaut : BL + cap + overlay vol + bande.
+
+        (Corps historique de ``compute_target_weights``, extrait pour l'étage
+        Construction enfichable — comportement identique.)
+        """
         target_weights = self._optimize_portfolio(signals, data)
         # Plafonner chaque poids au cap de concentration du RiskGuard et
         # redistribuer l'excédent : sinon la position la plus convaincue dépasse la
@@ -544,7 +573,7 @@ class LiveTradingPipeline:
         # évite de churner le book pour des micro-variations de signal (coûts).
         if self.no_trade_band > 0 and target_weights:
             target_weights = self._apply_no_trade_band(target_weights)
-        return target_weights, data
+        return target_weights
 
     def _apply_no_trade_band(self, weights: Dict[str, float]) -> Dict[str, float]:
         """Applique la bande de non-transaction aux poids cibles vs les poids détenus.

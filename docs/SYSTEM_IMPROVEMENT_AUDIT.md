@@ -100,7 +100,9 @@ total restent à éponger au fil de l'eau.
    recherche→live mort. Fusion des répertoires doublons déférée (churn/cosmétique).
 4. **Objectif cost-aware** (#4) — ✅ **Fait** : bande de non-transaction (§8),
    Sharpe net +0.73→+0.95 sur momentum réel. Câblée opt-in dans le pipeline.
-5. **Séparation type LEAN** — le plus structurant, plus d'effort. *Reste à faire.*
+5. **Séparation type LEAN** — ✅ **Fait** : quatre étages enfichables
+   (Alpha→Construction→Risk→Execution) via `trading/framework.py`, injectables dans
+   `LiveTradingPipeline`, défauts = logique existante (comportement inchangé). §9.
 
 ## 7. Détail #2 — contrôle de risque pré-trade au niveau portefeuille
 
@@ -147,6 +149,33 @@ rééquilibrage déjà en place, pas seulement une économie de coûts. Sur un b
 **quantile équipondéré** (poids discrets 0/±step) la bande est ~sans effet : elle
 vise les **poids continus** (chemin BL du pipeline live), d'où le test sur poids
 continus.
+
+## 9. Détail #5 — séparation en couches enfichables (façon LEAN)
+
+`trading/framework.py` définit quatre **Protocols** (contrats) et leurs
+implémentations par défaut :
+
+    Alpha  ─►  PortfolioConstruction  ─►  Risk  ─►  Execution
+   data→signaux   signaux→poids cibles    veto/ajuste   poids→ordres soumis
+
+| étage | contrat | défaut (délègue à) |
+|---|---|---|
+| `AlphaModel` | `generate(data) → signaux` | `_generate_signals` (signaux validés + abstention) |
+| `PortfolioConstructionModel` | `construct(signaux, data) → poids` | `_construct_weights` (BL + cap + vol + bande) |
+| `RiskModel` | `evaluate(poids, data) → (ok, poids)` | `_portfolio_risk_ok` (pré-trade corrélation-aware) |
+| `ExecutionModel` | `execute(poids, data, dry_run) → résultats` | ordres → chokepoint audité |
+
+Refactor **strangler** : `LiveTradingPipeline` compose désormais ces quatre étages
+(`self.alpha/construction/risk_model/execution`), injectables au constructeur. Les
+défauts reproduisent exactement l'ancien comportement (322 tests trading verts,
+inchangés). Injecter un modèle custom remplace **un seul** étage sans toucher aux
+autres — prouvé par test (alpha/construction/risk/execution custom). Bénéfice :
+chaque couche est testable et remplaçable isolément (p.ex. brancher un exécuteur
+TWAP, ou un autre modèle d'alpha) sans risque pour le reste du chemin.
+
+*Le chokepoint d'ordres unique (mode-gate + RiskGuard + idempotence + audit +
+journal) reste en aval de l'ExecutionModel : la sûreté n'est pas court-circuitable
+par un exécuteur custom.*
 
 ## 6. Rappel honnête sur le plafond
 
