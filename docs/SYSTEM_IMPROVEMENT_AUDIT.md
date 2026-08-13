@@ -88,8 +88,13 @@ total restent à éponger au fil de l'eau.
 - **Exécution** — aucun algorithme (market/limit seulement). Implementation
   shortfall / TWAP / participation-rate (Almgren-Chriss). *Faible priorité à petite
   taille*, à traiter avant de scaler.
-- **Détection de régime** — filtre trend/risk-off présent ; la littérature va plus
-  loin (HMM, ruptures de régime). Optionnel.
+- **Détection de régime** — ✅ **Fait** : HMM gaussien 2 états (`backtest/regime.py`,
+  numpy pur, `hmmlearn` absent) avec **filtre avant causal** (pas de Viterbi lissé →
+  no look-ahead), ré-estimé en fenêtre glissante ; exposition = 1 − (1−rof)·P(état
+  turbulent). Résultat réel (momentum_12_1) : drawdown −14.6 % → **−12.2 %** (rof=0.3,
+  −16 %), Sharpe net +0.56 → +0.49 (coût de dé-risque habituel). **Bat le filtre
+  MA200** (qui n'a quasi rien déclenché sur 2023-26, marché haussier). Overlay
+  causal enfichable comme risk-off *data-driven* alternatif. Détail : §11.
 
 ## 5. Hiérarchie recommandée
 
@@ -215,6 +220,30 @@ pondération, et HRP échange du rendement contre moins de risque. Ce n'est pas 
 free lunch mais un arbitrage risque/rendement. HRP reste **enfichable en option**
 pour une config *risk-averse* ; son vrai gain apparaîtrait sur un univers plus large
 et hétérogène (clusters de corrélation distincts) — encore le thème « données ».
+
+## 11. Détail — détection de régime HMM
+
+`backtest/regime.py` : HMM gaussien à 2 états sur le rendement marché équipondéré,
+estimé par **Baum-Welch (EM) en numpy pur** (aucune dépendance ; `hmmlearn` absent).
+États typiques : *calme* (faible vol) / *turbulent* (forte vol), identifiés par la
+variance. **Anti-look-ahead strict** : on n'utilise pas `predict` (Viterbi lissé,
+qui voit le futur) mais le **filtre avant** — `P(état_t | rendements ≤ t)` — et le
+modèle est gelé sur une fenêtre d'apprentissage *passée*, ré-estimé périodiquement.
+`regime_risk_series` renvoie une exposition ∈ [rof, 1] causale.
+
+| variante (momentum_12_1) | Sharpe net | max drawdown | expo. moy. |
+|---|---|---|---|
+| brut (non géré) | +0.56 | −14.6 % | 1.00 |
+| **régime-HMM rof=0.3** | +0.49 | **−12.2 %** | 0.86 |
+| régime-HMM rof=0.5 | +0.51 | −12.9 % | 0.90 |
+| réf. filtre tendance MA200 | +0.49 | −14.6 % | 0.98 |
+
+**Lecture honnête** : le régime-HMM livre un vrai **−16 % de drawdown** et **bat le
+filtre MA200** (qui n'a quasi rien déclenché — marché haussier 2023-26), au prix d'un
+léger Sharpe (arbitrage de dé-risque classique, comme le vol-target et HRP). Ce n'est
+pas un gain de rendement mais un **outil de risque data-driven** supérieur au filtre
+naïf. Enfichable comme risk-off alternatif pour une config prudente (tests : 6, dont
+recouvrement des régimes et **causalité vérifiée**).
 
 ## 6. Rappel honnête sur le plafond
 
