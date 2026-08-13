@@ -5,28 +5,19 @@ from financial_analyzer.integration.weighting_engine import WeightingEngine
 from financial_analyzer.integration.signal_fusion_engine import SignalFusionEngine
 
 
-def generate_history(days: int = 120) -> pd.DataFrame:
-    rng = pd.date_range("2025-01-01", periods=days)
-    # Technical: strong sharpe
-    technical = np.random.normal(0.0012, 0.008, days)
-    # Fundamental: moderate
-    fundamental = np.random.normal(0.0009, 0.009, days)
-    # Sentiment: higher vol, slightly better mean
-    sentiment = np.random.normal(0.0011, 0.012, days)
-    # LSTM: best mean, moderate vol
-    ml_lstm = np.random.normal(0.0015, 0.010, days)
-    # ML factor: weaker
-    ml_factor = np.random.normal(0.0005, 0.011, days)
-    # RL: neutral
-    rl = np.random.normal(0.0007, 0.010, days)
+def generate_history(days: int = 120, seed: int = 7) -> pd.DataFrame:
+    # RNG **graine** : le test doit être déterministe. Sans graine, les poids
+    # (donc les assertions d'ordre et de positivité) varient d'un run à l'autre.
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2025-01-01", periods=days)
     return pd.DataFrame({
-        'technical': technical,
-        'fundamental': fundamental,
-        'sentiment': sentiment,
-        'ml_lstm': ml_lstm,
-        'ml_factor': ml_factor,
-        'rl': rl
-    }, index=rng)
+        'technical': rng.normal(0.0012, 0.008, days),   # strong sharpe
+        'fundamental': rng.normal(0.0009, 0.009, days),  # moderate
+        'sentiment': rng.normal(0.0011, 0.012, days),    # higher vol
+        'ml_lstm': rng.normal(0.0015, 0.010, days),      # best mean
+        'ml_factor': rng.normal(0.0005, 0.011, days),    # weaker
+        'rl': rng.normal(0.0007, 0.010, days),           # neutral
+    }, index=idx)
 
 
 def test_weighting_engine_basic():
@@ -35,11 +26,12 @@ def test_weighting_engine_basic():
     result = engine.compute_weights(history)
     assert result.observations == len(history)
     assert abs(sum(result.weights.values()) - 1.0) < 1e-9
-    # LSTM devrait avoir un poids >= technique (meilleur mean) ou proche
+    # LSTM (meilleur mean) doit peser au moins autant que ml_factor (plus faible).
     assert result.weights['ml_lstm'] >= result.weights['ml_factor']
-    # Poids positifs
+    # Poids **non négatifs** : par conception, la source la plus faible peut être
+    # plancher à 0 (normalisation robuste min-max clippée à [0,1]).
     for w in result.weights.values():
-        assert w > 0
+        assert w >= 0
 
 
 def test_signal_fusion_engine_reweighting():
