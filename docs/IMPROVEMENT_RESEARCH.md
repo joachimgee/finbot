@@ -163,6 +163,32 @@ biais de survie type Sharadar/CRSP, +10 ans, small-caps), pas par une n-ième
 variante. Les trois modules restent comme **infrastructure testée**, prêts à être
 re-passés au portail dès qu'un tel dataset est disponible.
 
+**Suite (idée des audits `AUDIT_FORKS` + `PORTFOLIO_PRO_RESEARCH`) — momentum
+résiduel PCA : la décorrélation ENFIN obtenue.** Le résiduel *marché-seul* échouait
+parce que l'orthogonalisation était **mono-facteur**. La version multi-facteurs
+*data-free* (`pca_residual_momentum_score` : retire les k premières composantes
+principales = marché + secteur/style implicites, momentum sur le résidu) **résout la
+décorrélation** (`run_pca_residual_momentum_alpaca.py`) :
+
+| variante | IC t | Sharpe net | DSR | corr ↔ momentum brut |
+|---|---|---|---|---|
+| brut (réf) | +2.56 | +0.76 | 0.12 | — |
+| résiduel marché-seul | +2.16 | +0.44 | 0.05 | **+0.87** |
+| **PCA k=3** | +1.79 | +0.24 | 0.02 | **+0.21** |
+| **PCA k=5** | +1.65 | **+0.81** | 0.13 | **+0.17** |
+
+C'est le **meilleur candidat breadth de toute la session** : PCA k=5 est *réellement
+décorrélé* (+0.17 vs +0.87) **et** son Sharpe net (+0.81) **égale** le momentum brut.
+Le seul critère qui coince est l'**IC t = 1.65 < 2** — pas la rentabilité. Sur ~627
+périodes × **80** noms, le t-stat de l'IC cross-section est structurellement plafonné
+par la faible breadth : c'est *exactement* le symptôme Grinold-Kahn. **Non inscrit**
+(discipline : IC t > 2 exigé), mais la lecture change : la décorrélation n'était
+**pas** impossible — elle demandait la bonne orthogonalisation. Sur un univers large
+sans biais de survie, PCA k=5 franchirait plausiblement le portail, et sa combinaison
+*risk-weighted* avec le momentum brut relèverait l'IR (deux paris ~indépendants). Le
+module reste comme **infrastructure testée**, prêt à re-passer le portail sur données
+profondes.
+
 ### ✅ Fait (Tier 2 quater) — sentiment FinBERT (vraie famille décorrélée), REJETÉ mais prometteur
 
 Le test de sentiment initial (IC t = −0.93) notait le champ `insight` **brut** de

@@ -28,7 +28,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-__all__ = ["market_residuals", "residual_momentum_score"]
+__all__ = [
+    "market_residuals",
+    "pca_residual_momentum_score",
+    "residual_momentum_score",
+]
 
 
 def market_residuals(prices: pd.DataFrame, beta_window: int = 126) -> pd.DataFrame:
@@ -79,3 +83,64 @@ def residual_momentum_score(
     vol = r.rolling(win, min_periods=mp).std(ddof=1)
     score = cum / (vol * np.sqrt(win))  # t-stat de tendance idiosyncratique
     return score.replace([np.inf, -np.inf], np.nan)
+
+
+def pca_residual_momentum_score(
+    prices: pd.DataFrame,
+    n_components: int = 3,
+    form: int = 252,
+    skip: int = 21,
+    min_names: int = 10,
+    min_obs: int = 60,
+) -> pd.DataFrame:
+    """Momentum résiduel **multi-facteurs par PCA** — sans labels secteur.
+
+    Le momentum résiduel vs *marché seul* reste très corrélé au momentum brut sur
+    des large-caps (une orthogonalisation mono-facteur laisse les communalités
+    secteur/style). Ici on retire les **k premières composantes principales** de la
+    cross-section des rendements — statistiquement le marché (PC1) puis les facteurs
+    dominants (secteur/style implicites, PC2-3) — et on fait du momentum sur le
+    **résidu idiosyncratique**. C'est la version « bien faite » (Blitz : modèle
+    multi-facteurs) mais *data-free* (les facteurs sont extraits des prix).
+
+    Pour chaque date t, le modèle PCA est estimé **uniquement sur la fenêtre de
+    formation passée** ``[t−form, t−skip]`` (données ≤ t−skip < t → aucune fuite du
+    rendement futur), les résidus y sont cumulés et standardisés par leur vol.
+
+    Args:
+        prices: panel de clôtures (dates × tickers).
+        n_components: nombre de composantes principales retirées (facteurs communs).
+        form: fenêtre de formation (≈ 12 mois).
+        skip: dernier mois sauté (anti-reversal court terme).
+        min_names: nb min de titres à historique complet pour une PCA fiable.
+        min_obs: nb min d'observations dans la fenêtre.
+
+    Returns:
+        Panel de scores (mêmes index/colonnes). NaN là où l'historique/univers est
+        insuffisant ; ``inf`` (vol nulle) remplacé par NaN.
+    """
+    if form <= skip:
+        raise ValueError(f"form ({form}) doit être > skip ({skip})")
+    if n_components < 1:
+        raise ValueError("n_components doit être ≥ 1")
+    rets = prices.pct_change()
+    dates = prices.index
+    out = pd.DataFrame(np.nan, index=dates, columns=prices.columns, dtype=float)
+    for i in range(form, len(dates)):
+        # Fenêtre de formation strictement passée : lignes [i−form+1, i−skip].
+        window = rets.iloc[i - form + 1: i - skip + 1]
+        w = window.dropna(axis=1, how="any")
+        if w.shape[1] < min_names or w.shape[0] < min_obs:
+            continue
+        x = w.to_numpy()
+        x = x - x.mean(axis=0)  # démoyennage temporel (co-mouvement, pas niveaux)
+        # k premières composantes (portefeuilles-facteurs) via SVD.
+        _, _, vt = np.linalg.svd(x, full_matrices=False)
+        k = min(n_components, vt.shape[0])
+        loadings = vt[:k]                       # (k × n_actifs)
+        resid = x - (x @ loadings.T) @ loadings  # retire les k facteurs communs
+        vol = resid.std(axis=0, ddof=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            score = resid.sum(axis=0) / (vol * np.sqrt(len(w)))
+        out.loc[dates[i], w.columns] = score
+    return out.replace([np.inf, -np.inf], np.nan)

@@ -7,6 +7,7 @@ import pytest
 
 from financial_analyzer.backtest.residual_momentum import (
     market_residuals,
+    pca_residual_momentum_score,
     residual_momentum_score,
 )
 
@@ -61,3 +62,67 @@ def test_rejects_bad_windows() -> None:
     px = _panel(n=120)
     with pytest.raises(ValueError):
         residual_momentum_score(px, form=21, skip=21)
+
+
+# --- Momentum résiduel PCA (multi-facteurs, data-free) -----------------------
+
+def _multi_factor_panel(n: int = 340, seed: int = 0) -> pd.DataFrame:
+    """Panel avec 2 facteurs communs (marché + 'secteur') + idiosyncratique."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2022-01-01", periods=n, freq="B")
+    mkt = rng.normal(0.0004, 0.010, n)
+    sector = rng.normal(0.0, 0.008, n)  # 2e facteur commun
+    cols = {}
+    for j in range(12):
+        b_m = 0.5 + rng.random()
+        b_s = (1.0 if j < 6 else -1.0) * rng.random()  # deux 'secteurs'
+        idio = rng.normal(0.0002, 0.007, n)
+        cols[f"S{j}"] = 100 * np.exp(np.cumsum(b_m * mkt + b_s * sector + idio))
+    return pd.DataFrame(cols, index=idx)
+
+
+def test_pca_score_shape_and_labels() -> None:
+    px = _multi_factor_panel(seed=1)
+    score = pca_residual_momentum_score(px, n_components=2)
+    assert score.shape == px.shape
+    assert list(score.columns) == list(px.columns)
+
+
+def test_pca_residual_no_lookahead() -> None:
+    px = _multi_factor_panel(seed=2)
+    base = pca_residual_momentum_score(px, n_components=2)
+    shocked = px.copy()
+    shocked.iloc[330, 0] *= 1.4  # choc tardif
+    after = pca_residual_momentum_score(shocked, n_components=2)
+    # Scores aux dates < 330 n'utilisent que des prix passés -> inchangés.
+    pd.testing.assert_frame_equal(base.iloc[:329], after.iloc[:329])
+
+
+def test_pca_residuals_orthogonal_to_top_components() -> None:
+    """Le résidu PCA sur la fenêtre est ~décorrélé des 2 facteurs communs."""
+    px = _multi_factor_panel(seed=3)
+    rets = px.pct_change().dropna()
+    x = rets.to_numpy()
+    x = x - x.mean(0)
+    _, _, vt = np.linalg.svd(x, full_matrices=False)
+    k = 2
+    resid = x - (x @ vt[:k].T) @ vt[:k]
+    # Corrélation résidu vs score des 2 premières composantes ~ 0.
+    pcs = x @ vt[:k].T
+    for c in range(k):
+        for a in range(resid.shape[1]):
+            corr = np.corrcoef(resid[:, a], pcs[:, c])[0, 1]
+            assert abs(corr) < 1e-6
+
+
+def test_pca_insufficient_history_is_nan() -> None:
+    px = _multi_factor_panel(n=80)
+    assert pca_residual_momentum_score(px, n_components=2).iloc[-1].isna().all()
+
+
+def test_pca_rejects_bad_params() -> None:
+    px = _multi_factor_panel(n=120)
+    with pytest.raises(ValueError):
+        pca_residual_momentum_score(px, form=21, skip=21)
+    with pytest.raises(ValueError):
+        pca_residual_momentum_score(px, n_components=0)
