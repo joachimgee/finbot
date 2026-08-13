@@ -79,7 +79,10 @@ class RiskGuard:
         max_drawdown: float = -0.15,
         max_daily_loss: float = 5000.0,
         max_leverage: float = 2.0,
-        enable_circuit_breaker: bool = True
+        enable_circuit_breaker: bool = True,
+        max_portfolio_vol: Optional[float] = None,
+        max_var_95: Optional[float] = None,
+        min_effective_bets: Optional[float] = None,
     ) -> None:
         """
         Initialize risk guard.
@@ -114,6 +117,15 @@ class RiskGuard:
         self.max_daily_loss = max_daily_loss
         self.max_leverage = max_leverage
         
+        # Portfolio-level (pre-trade) limits — opt-in (None = inactive, so the
+        # per-order guard's behaviour is unchanged unless a limit is configured).
+        # These are correlation-aware: they act on the whole target book, catching
+        # concentration the single-name concentration cap cannot (e.g. many names
+        # that are individually small but jointly one big correlated bet).
+        self.max_portfolio_vol = max_portfolio_vol      # ex-ante annualised vol
+        self.max_var_95 = max_var_95                    # 1-day 95% parametric VaR (fraction)
+        self.min_effective_bets = min_effective_bets    # 1/HHI of |weights|
+
         # Circuit breaker
         self.enable_circuit_breaker = enable_circuit_breaker
         self.circuit_breaker_active = False
@@ -184,7 +196,99 @@ class RiskGuard:
         self._check_daily_loss_limit()
         
         logger.debug(f"Order validated: {symbol} {side} {qty} @ ${price}")
-    
+
+    # --- Contrôle PRÉ-TRADE au niveau PORTEFEUILLE (corrélation-aware) --------
+
+    def validate_portfolio(
+        self,
+        target_weights: Dict[str, float],
+        close: "object" = None,
+    ) -> Dict[str, float]:
+        """Valide le *book cible* dans son ensemble avant exécution (pré-trade).
+
+        Complète ``validate_order`` (par ordre) par des limites au niveau
+        portefeuille, corrélation-aware — celles qu'un cap de concentration
+        *par nom* ne peut pas voir :
+
+        * **vol ex-ante** ``√(wᵀΣw)`` annualisée (``max_portfolio_vol``) : un book
+          de N noms petits mais très corrélés a une vol élevée → bloqué ;
+        * **VaR 95 % 1 jour** paramétrique = 1.645·vol_jour (``max_var_95``) ;
+        * **nombre effectif de paris** ``1/Σwᵢ²`` (``min_effective_bets``) :
+          rejette un book trop concentré.
+
+        Chaque limite est *opt-in* (None → inactive). Les métriques calculables
+        sont renvoyées (diagnostic) ; en cas de données insuffisantes on
+        **s'abstient** de bloquer (pas de valeur fabriquée) plutôt que de rejeter
+        à tort. Lève ``RiskLimitExceeded`` si une limite active est franchie.
+
+        Args:
+            target_weights: {symbole: poids cible} (long-only, somme ≤ 1).
+            close: panel de clôtures (dates × tickers) pour la covariance ex-ante.
+                Requis pour les limites de vol/VaR ; le nombre de paris n'en a
+                pas besoin.
+
+        Returns:
+            Dict de diagnostic : ``ex_ante_vol``, ``var_95_1d``, ``effective_bets``
+            (valeurs ``None`` si non calculables).
+        """
+        diag: Dict[str, float] = {
+            "ex_ante_vol": None, "var_95_1d": None, "effective_bets": None,
+        }
+        weights = {s: float(w) for s, w in (target_weights or {}).items() if w}
+        if not weights:
+            return diag
+
+        # Nombre effectif de paris (Herfindahl sur |poids| normalisés) — ne dépend
+        # que des poids, toujours calculable.
+        abs_w = {s: abs(w) for s, w in weights.items()}
+        tot = sum(abs_w.values())
+        if tot > 0:
+            hhi = sum((w / tot) ** 2 for w in abs_w.values())
+            eff = 1.0 / hhi if hhi > 0 else 0.0
+            diag["effective_bets"] = eff
+            if self.min_effective_bets is not None and eff < self.min_effective_bets:
+                raise RiskLimitExceeded(
+                    f"Concentration portefeuille : nombre effectif de paris "
+                    f"{eff:.2f} < {self.min_effective_bets:.2f} "
+                    f"({len(weights)} noms, book trop concentré)"
+                )
+
+        # Vol ex-ante / VaR — nécessitent la covariance (panel de prix).
+        vol = self._ex_ante_vol(weights, close)
+        if vol is not None:
+            diag["ex_ante_vol"] = vol
+            var95 = 1.645 * vol / (252.0 ** 0.5)  # VaR 95 % 1 jour (fraction)
+            diag["var_95_1d"] = var95
+            if self.max_portfolio_vol is not None and vol > self.max_portfolio_vol:
+                raise RiskLimitExceeded(
+                    f"Vol ex-ante portefeuille {vol:.1%} > "
+                    f"{self.max_portfolio_vol:.1%} (risque agrégé trop élevé)"
+                )
+            if self.max_var_95 is not None and var95 > self.max_var_95:
+                raise RiskLimitExceeded(
+                    f"VaR 95% 1j {var95:.2%} > {self.max_var_95:.2%} "
+                    "(perte potentielle journalière trop élevée)"
+                )
+        elif (self.max_portfolio_vol is not None or self.max_var_95 is not None):
+            logger.warning(
+                "validate_portfolio : covariance ex-ante indisponible "
+                "(données insuffisantes) — limites vol/VaR non évaluées."
+            )
+        return diag
+
+    @staticmethod
+    def _ex_ante_vol(weights: Dict[str, float], close: "object") -> Optional[float]:
+        """Vol ex-ante annualisée √(wᵀΣw). Réutilise ``backtest.vol_management`` —
+        source unique de vérité — et renvoie None si non calculable."""
+        if close is None:
+            return None
+        try:
+            from financial_analyzer.backtest.vol_management import ex_ante_vol
+            return ex_ante_vol(weights, close)
+        except Exception as e:  # noqa: BLE001 - un calcul de risque ne doit jamais casser le flux
+            logger.warning("Vol ex-ante indisponible (%s).", e)
+            return None
+
     def _validate_order_parameters(
         self,
         symbol: str,

@@ -6,6 +6,8 @@ Uses mock AccountMonitor and BrokerAdapter (no real API calls).
 """
 
 from __future__ import annotations
+import numpy as np
+import pandas as pd
 import pytest
 from unittest.mock import Mock
 from datetime import datetime
@@ -490,3 +492,80 @@ class TestEdgeCases:
         guard.validate_order('AAPL', qty=10, side='buy', price=150.0)
         
         mock_monitor.update.assert_called()
+
+
+# --- Contrôle PRÉ-TRADE au niveau portefeuille (corrélation-aware) -----------
+
+def _close_panel(vol: float, n: int = 200, k: int = 6, seed: int = 0,
+                 common: float = 0.0) -> pd.DataFrame:
+    """Panel de clôtures ; ``common`` injecte un facteur commun (corrélation)."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2024-01-01", periods=n, freq="B")
+    mkt = rng.normal(0, vol, n)
+    cols = {}
+    for j in range(k):
+        r = common * mkt + (1 - common) * rng.normal(0, vol, n)
+        cols[f"S{j}"] = 100 * np.exp(np.cumsum(r))
+    return pd.DataFrame(cols, index=idx)
+
+
+def _guard(monitor, **kw):
+    return RiskGuard(account_monitor=monitor, **kw)
+
+
+def test_validate_portfolio_effective_bets_blocks_concentration(mock_monitor):
+    """Un book concentré (peu de paris effectifs) est refusé."""
+    guard = _guard(mock_monitor, min_effective_bets=3.0)
+    with pytest.raises(RiskLimitExceeded, match="paris"):
+        guard.validate_portfolio({"S0": 0.8, "S1": 0.2}, None)  # 1/(.68+.04) ≈ 1.4
+
+
+def test_validate_portfolio_diversified_book_passes(mock_monitor):
+    guard = _guard(mock_monitor, min_effective_bets=3.0)
+    w = {f"S{i}": 1 / 6 for i in range(6)}  # nombre effectif de paris = 6
+    diag = guard.validate_portfolio(w, None)
+    assert diag["effective_bets"] == pytest.approx(6.0, abs=1e-6)
+
+
+def test_validate_portfolio_vol_limit_blocks_risky_book(mock_monitor):
+    """Un book très volatil (vol ex-ante élevée) dépasse la limite -> refus."""
+    guard = _guard(mock_monitor, max_portfolio_vol=0.15)
+    close = _close_panel(vol=0.04, common=0.8, seed=1)  # corrélé + volatil
+    w = {c: 1 / close.shape[1] for c in close.columns}
+    with pytest.raises(RiskLimitExceeded, match="Vol ex-ante"):
+        guard.validate_portfolio(w, close)
+
+
+def test_validate_portfolio_calm_book_within_vol_limit(mock_monitor):
+    guard = _guard(mock_monitor, max_portfolio_vol=0.60)
+    close = _close_panel(vol=0.006, common=0.0, seed=2)  # calme, décorrélé
+    w = {c: 1 / close.shape[1] for c in close.columns}
+    diag = guard.validate_portfolio(w, close)  # ne lève pas
+    assert diag["ex_ante_vol"] is not None and diag["ex_ante_vol"] < 0.60
+    assert diag["var_95_1d"] is not None
+
+
+def test_validate_portfolio_var_limit(mock_monitor):
+    guard = _guard(mock_monitor, max_var_95=0.005)  # 0.5% 1j : très serré
+    close = _close_panel(vol=0.03, common=0.5, seed=3)
+    w = {c: 1 / close.shape[1] for c in close.columns}
+    with pytest.raises(RiskLimitExceeded, match="VaR"):
+        guard.validate_portfolio(w, close)
+
+
+def test_validate_portfolio_abstains_without_prices(mock_monitor):
+    """Sans panel de prix, les limites vol/VaR s'abstiennent (pas de faux rejet)."""
+    guard = _guard(mock_monitor, max_portfolio_vol=0.01, max_var_95=0.001)
+    diag = guard.validate_portfolio({f"S{i}": 1 / 6 for i in range(6)}, None)
+    assert diag["ex_ante_vol"] is None and diag["var_95_1d"] is None
+    assert diag["effective_bets"] == pytest.approx(6.0, abs=1e-6)
+
+
+def test_validate_portfolio_no_limits_is_noop(mock_monitor):
+    """Aucune limite portefeuille configurée -> jamais de rejet (rétro-compat)."""
+    guard = _guard(mock_monitor)  # défauts : toutes les limites portefeuille None
+    close = _close_panel(vol=0.05, common=0.9, seed=4)
+    w = {c: 1 / close.shape[1] for c in close.columns}
+    guard.validate_portfolio(w, close)  # ne lève pas
+    assert guard.validate_portfolio({}, None) == {
+        "ex_ante_vol": None, "var_95_1d": None, "effective_bets": None}

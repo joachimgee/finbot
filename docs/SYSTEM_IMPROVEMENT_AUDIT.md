@@ -23,7 +23,7 @@ Objectif : distinguer **robustesse/sûreté/maintenabilité** (améliorable ici)
 | # | Amélioration | État actuel | Effort |
 |---|---|---|---|
 | 1 | **PBO / CSCV dans le portail** | `backtest/validation/combinatorial_cv.py` existe mais n'est pas relié au gate ; le DSR est là, pas la *Probability of Backtest Overfitting* | faible |
-| 2 | **RiskGuard enrichi** | Live = position / concentration / drawdown / leverage. `risk/` (VaR, stress-test, risk-budgeting, corrélation) est **orphelin** du pré-trade | moyen |
+| 2 | **RiskGuard enrichi** ✅ **Fait** | Ajout d'un contrôle **pré-trade portefeuille** corrélation-aware (`validate_portfolio`) : vol ex-ante `√(wᵀΣw)`, VaR 95 % 1 j, nombre effectif de paris — limites *opt-in*, câblées dans le pipeline (abstention si dépassement). Voir §7. | ~~moyen~~ |
 | 3 | **Objectif portefeuille *cost-aware*** | Contrainte de turnover présente (`portfolio/constraints.py`) mais l'optimisation ne **pénalise pas** les coûts dans l'objectif | moyen |
 | 4 | **Combiner *risk-weighting*** | `strategy/ensemble_allocator.py` prêt mais jamais exercé (1 seul signal validé) — prêt le jour où un 2ᵉ signal passe | faible |
 
@@ -68,6 +68,25 @@ Objectif : distinguer **robustesse/sûreté/maintenabilité** (améliorable ici)
    recherche. Faible risque, gros gain de lisibilité.
 4. **Objectif cost-aware** (#3) — améliore directement le Sharpe *net*.
 5. **Séparation type LEAN** (§4) — le plus structurant, plus d'effort.
+
+## 7. Détail #2 — contrôle de risque pré-trade au niveau portefeuille
+
+`RiskGuard.validate_order` reste **par ordre** (taille, concentration *par nom*,
+leverage, drawdown, daily-loss). Nouveau : `RiskGuard.validate_portfolio(weights,
+close)` juge le **book cible entier**, ce qu'un cap *par nom* ne peut pas voir —
+p.ex. 5 noms à 15 % chacun mais tous très corrélés = un seul gros pari.
+
+- **Vol ex-ante** `√(wᵀΣw)` annualisée (`max_portfolio_vol`) — corrélation-aware
+  par construction (réutilise `backtest.vol_management.ex_ante_vol`, source unique).
+- **VaR 95 % 1 jour** paramétrique = 1.645·vol_jour (`max_var_95`).
+- **Nombre effectif de paris** `1/Σwᵢ²` (`min_effective_bets`).
+
+Chaque limite est **opt-in** (`None` → inactive : le comportement historique est
+inchangé). Données insuffisantes → **abstention** (pas de faux rejet). Câblé dans
+`LiveTradingPipeline.run` entre l'allocation et la génération d'ordres : un book
+qui dépasse une limite fait **s'abstenir** tout le rééquilibrage (log + statut
+`skipped/portfolio_risk_limit`), sans crasher le daemon. À activer via les
+paramètres du `RiskGuard` quand on passe en live (cf. runbook).
 
 ## 6. Rappel honnête sur le plafond
 

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 from .broker_adapter import BrokerAdapter
 from .account_monitor import AccountMonitor
-from .risk_guard import RiskGuard, CircuitBreakerTriggered
+from .risk_guard import RiskGuard, CircuitBreakerTriggered, RiskLimitExceeded
 from .order_gateway import OrderGateway
 
 if TYPE_CHECKING:
@@ -449,6 +449,16 @@ class LiveTradingPipeline:
             logger.info(f"Fetching data for {len(self.tickers)} tickers...")
             target_weights, data = self.compute_target_weights()
 
+            # 6b. Contrôle de risque PRÉ-TRADE au niveau PORTEFEUILLE
+            #     (corrélation-aware : vol ex-ante / VaR / concentration). Un book
+            #     trop risqué -> on s'ABSTIENT de tout le rééquilibrage (pas de
+            #     crash du daemon) : la sûreté prime sur le fait de trader.
+            if target_weights and not self._portfolio_risk_ok(target_weights, data):
+                return self._result(
+                    status='skipped', reason='portfolio_risk_limit',
+                    orders_generated=0, orders_executed=0, orders_rejected=0,
+                )
+
             # 7. Generate orders
             logger.info("Generating orders...")
             orders = self._generate_orders(target_weights, data)
@@ -559,6 +569,37 @@ class LiveTradingPipeline:
         except Exception as e:  # noqa: BLE001 - l'overlay ne doit jamais casser la décision
             logger.warning("Vol overlay indisponible (%s) — exposition inchangée.", e)
             return weights
+
+    def _portfolio_risk_ok(self, weights: Dict[str, float], data: Dict) -> bool:
+        """Contrôle pré-trade portefeuille (corrélation-aware) via le RiskGuard.
+
+        Renvoie ``True`` si le book cible passe (ou si le guard n'a pas de limite
+        portefeuille configurée / n'expose pas ``validate_portfolio``). ``False`` si
+        une limite est franchie -> le daemon s'abstient de rééquilibrer.
+        """
+        validate = getattr(self.risk_guard, "validate_portfolio", None)
+        if not callable(validate):
+            return True
+        try:
+            prices = (data or {}).get("prices", {}) or {}
+            frames = {s: df["close"] for s, df in prices.items()
+                      if s in weights and df is not None and not df.empty and "close" in df}
+            close = pd.DataFrame(frames).dropna(how="all") if frames else None
+            diag = validate(weights, close)
+            if isinstance(diag, dict):
+                logger.info(
+                    "Contrôle risque portefeuille OK (vol ex-ante=%s, VaR95 1j=%s, paris eff.=%s)",
+                    f"{diag.get('ex_ante_vol'):.1%}" if diag.get("ex_ante_vol") else "n/a",
+                    f"{diag.get('var_95_1d'):.2%}" if diag.get("var_95_1d") else "n/a",
+                    f"{diag.get('effective_bets'):.1f}" if diag.get("effective_bets") else "n/a",
+                )
+            return True
+        except RiskLimitExceeded as e:
+            logger.critical("🚨 Book cible REFUSÉ par le contrôle de risque portefeuille : %s", e)
+            return False
+        except Exception as e:  # noqa: BLE001 - un check de risque ne doit jamais crasher le run
+            logger.warning("Contrôle risque portefeuille indisponible (%s) — non bloquant.", e)
+            return True
 
     def _fetch_data(self) -> Dict:
         """
