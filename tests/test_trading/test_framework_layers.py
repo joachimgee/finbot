@@ -17,6 +17,7 @@ from financial_analyzer.trading.framework import (
     AlphaModel,
     ExecutionModel,
     HRPConstruction,
+    MultiStrategyConstruction,
     PipelineAlpha,
     PipelineConstruction,
     PipelineExecution,
@@ -162,6 +163,40 @@ def test_injected_risk_model_can_veto() -> None:
     result = pipe.run(force=True)
     assert result["status"] == "skipped"
     assert result["reason"] == "portfolio_risk_limit"
+
+
+def _two_frames():
+    idx = pd.date_range("2024-01-01", periods=30, freq="D")
+    return {"prices": {
+        "A": pd.DataFrame({"close": np.linspace(100, 110, 30)}, index=idx),
+        "B": pd.DataFrame({"close": np.linspace(100, 90, 30)}, index=idx)}}
+
+
+def test_multistrat_applies_no_trade_band_holds_small_drift(monkeypatch) -> None:
+    """Le book multi-stratégie (long/short) applique la bande : une micro-dérive
+    (< bande) vs les positions détenues ne déclenche aucun trade — poids tenus.
+    Couvre le short : B détenu à −0.5 est tenu malgré une cible à −0.48."""
+    pipe = _make_pipeline(no_trade_band=0.05)
+    pipe.monitor.portfolio_value = 100000.0
+    pipe.monitor.positions = [
+        {"symbol": "A", "market_value": 50000.0},    # détenu +0.5
+        {"symbol": "B", "market_value": -50000.0}]   # détenu −0.5 (short)
+    monkeypatch.setattr(
+        "financial_analyzer.trading.multi_strategy_book.combined_book",
+        lambda close, fw=None: {"A": 0.52, "B": -0.48})  # Δ = 0.02 < 0.05
+    out = MultiStrategyConstruction(pipe, min_names=2).construct({}, _two_frames())
+    assert out["A"] == pytest.approx(0.5) and out["B"] == pytest.approx(-0.5)
+
+
+def test_multistrat_no_band_by_default_returns_raw_book(monkeypatch) -> None:
+    """Bande à 0 (défaut du pipeline) -> book brut inchangé (aucune tenue)."""
+    pipe = _make_pipeline()  # no_trade_band == 0.0
+    assert pipe.no_trade_band == 0.0
+    monkeypatch.setattr(
+        "financial_analyzer.trading.multi_strategy_book.combined_book",
+        lambda close, fw=None: {"A": 0.52, "B": -0.48})
+    out = MultiStrategyConstruction(pipe, min_names=2).construct({}, _two_frames())
+    assert out == {"A": 0.52, "B": -0.48}
 
 
 def test_injected_execution_receives_target_weights() -> None:

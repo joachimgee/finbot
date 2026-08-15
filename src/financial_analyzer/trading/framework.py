@@ -142,7 +142,11 @@ class MultiStrategyConstruction:
 
     ⚠️ Long/short + familles **non validées** (seul momentum l'est) → **paper
     uniquement** (forward-test). On ne passe **pas** par la finalisation long-only
-    (cap/vol/bande) : les poids sont déjà normalisés (brut = 1) par le book.
+    (cap/vol) : les poids sont déjà normalisés (brut = 1) par le book. En revanche,
+    la **bande de non-transaction** (``pipeline.no_trade_band``, opt-in) est
+    appliquée si activée : elle est sign-agnostique (``|cible − détenu|`` par actif),
+    donc valable en long/short — elle ne bouge une ligne que si son poids change de
+    plus que la bande, réduisant le churn du rééquilibrage quotidien (coûts).
     """
 
     def __init__(self, pipeline: object, family_weights: Dict[str, float] | None = None,
@@ -163,7 +167,14 @@ class MultiStrategyConstruction:
             return self._p._construct_weights(signals, data)
         close = pd.DataFrame(frames).dropna(how="all")
         book = combined_book(close, self.family_weights)
-        return book or self._p._construct_weights(signals, data)
+        if not book:
+            return self._p._construct_weights(signals, data)
+        # Bande de non-transaction (opt-in) : tenir les lignes dont le poids bouge
+        # de moins que la bande vs le book détenu — évite de churner le book pour
+        # des micro-variations de signal (coûts). Sign-agnostique -> OK en long/short.
+        if getattr(self._p, "no_trade_band", 0.0) > 0:
+            book = self._p._apply_no_trade_band(book)
+        return book
 
 
 class PipelineRisk:

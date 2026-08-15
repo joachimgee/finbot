@@ -40,6 +40,11 @@ def main() -> None:
     ap.add_argument("--scheduled", action="store_true",
                     help="Mode planifié : ne rien faire si le marché est fermé "
                          "(jour férié / week-end / hors séance), via l'horloge Alpaca.")
+    ap.add_argument("--no-trade-band", type=float, default=0.02, metavar="FRAC",
+                    help="Bande de non-transaction (poids absolu, ex. 0.02 = 2%%) : "
+                         "ne rééquilibre une ligne que si son poids bouge de plus que "
+                         "la bande vs le book détenu — réduit le churn quotidien. "
+                         "0 = viser exactement le cible chaque jour (défaut : 0.02).")
     args = ap.parse_args()
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
@@ -49,9 +54,12 @@ def main() -> None:
     from financial_analyzer.trading.reconciliation import reconcile_orders
 
     dry_run = not args.execute
+    band = max(0.0, float(args.no_trade_band))
     label = "DRY-RUN (aucun ordre soumis)" if dry_run else "EXÉCUTION PAPER RÉELLE"
     print("=" * 78)
     print(f"MULTI-STRATÉGIE — Alpaca PAPER — {label}")
+    band_txt = f"{band * 100:.1f}%" if band > 0 else "désactivée (viser le cible)"
+    print(f"Bande de non-transaction : {band_txt}")
     print("=" * 78)
 
     adapter = AlpacaAdapter.from_env(mode="paper")
@@ -71,7 +79,8 @@ def main() -> None:
 
     journal = TradingJournal(
         f"logs/multistrat_paper_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")  # noqa: DTZ005
-    pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal)
+    pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal,
+                                   no_trade_band=band)
     # Couche enfichable #5 : remplacer la construction par le book multi-stratégie.
     pipeline.construction = MultiStrategyConstruction(pipeline)
 
