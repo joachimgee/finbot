@@ -37,6 +37,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--execute", action="store_true",
                     help="Placer réellement les ordres sur le compte PAPER (sinon dry-run).")
+    ap.add_argument("--scheduled", action="store_true",
+                    help="Mode planifié : ne rien faire si le marché est fermé "
+                         "(jour férié / week-end / hors séance), via l'horloge Alpaca.")
     args = ap.parse_args()
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
@@ -53,6 +56,15 @@ def main() -> None:
 
     adapter = AlpacaAdapter.from_env(mode="paper")
     adapter.connect()
+
+    # Mode planifié : garde-fou « jour ouvré » via l'horloge Alpaca (connaît les
+    # jours fériés du NYSE, que le cron hebdomadaire ne connaît pas). Marché fermé
+    # -> run ignorée proprement (aucun ordre), sortie 0.
+    if args.scheduled and not adapter.is_market_open():
+        print("Marché FERMÉ (week-end / jour férié / hors séance) — run planifiée ignorée.")
+        adapter.disconnect()
+        return
+
     acct = adapter.get_account()
     print(f"\nCompte paper: equity=${float(acct.get('equity', 0)):,.2f}  "
           f"cash=${float(acct.get('cash', 0)):,.2f}  mode={adapter.mode}")
