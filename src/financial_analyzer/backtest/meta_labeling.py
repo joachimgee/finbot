@@ -28,7 +28,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-__all__ = ["MetaResult", "META_FEATURES", "build_meta_samples", "walk_forward_meta"]
+__all__ = ["MetaResult", "MetaConfirm", "META_FEATURES", "build_meta_samples",
+           "walk_forward_meta", "confirm_meta_labeling"]
 
 #: Features méta par défaut (clés de ``compute_classic_factors``), motivées ex-ante.
 META_FEATURES = ("momentum_12_1", "momentum_6_1", "low_vol", "reversal_5", "max_lottery")
@@ -270,4 +271,176 @@ def walk_forward_meta(
         meta_size_net_sharpe=_sharpe(size_net),
         raw_turnover=raw_to, meta_filter_turnover=filt_to, meta_size_turnover=size_to,
         raw_avg_names=raw_names, meta_filter_avg_names=filt_names,
+    )
+
+
+@dataclass
+class MetaConfirm:
+    """Résultat de la passe de confirmation rigoureuse du méta-filtre."""
+
+    raw_sharpe: float
+    meta_sharpe: float
+    rand_sharpe_mean: float
+    rand_sharpe_p95: float
+    meta_percentile_vs_random: float  # % de filtres aléatoires battus par le méta
+    n_random: int
+    auc: float
+    auc_perm_pvalue: float            # P(AUC_aléatoire ≥ AUC_méta) sous labels mélangés
+    n_oos_preds: int
+    subperiod_meta_sharpes: list[float]
+    subperiod_raw_sharpes: list[float]
+    avg_kept: float
+
+    def summary(self) -> str:
+        return (
+            f"raw {self.raw_sharpe:+.2f} | méta {self.meta_sharpe:+.2f} | "
+            f"filtres ALÉATOIRES (même #noms) {self.rand_sharpe_mean:+.2f} (p95 {self.rand_sharpe_p95:+.2f}) "
+            f"→ méta bat {self.meta_percentile_vs_random:.0f}% des aléatoires | "
+            f"AUC {self.auc:.3f} (p-perm {self.auc_perm_pvalue:.3f})"
+        )
+
+
+def confirm_meta_labeling(
+    scores: pd.DataFrame,
+    returns: pd.DataFrame,
+    features: dict[str, pd.DataFrame],
+    *,
+    quantile: float = 0.2,
+    horizon: int = 10,
+    rebalance_every: int = 10,
+    min_train: int = 400,
+    embargo: int = 10,
+    p_threshold: float = 0.5,
+    cost_rate: float = 0.00025,
+    feature_names: tuple[str, ...] = META_FEATURES,
+    n_random: int = 100,
+    n_perm: int = 1000,
+    seed: int = 0,
+) -> MetaConfirm:
+    """Confirme (ou infirme) l'edge du méta-filtre par CONTRÔLES d'artefact.
+
+    Trois contrôles, la logistique n'est entraînée qu'une fois par rééq. :
+
+    1. **Filtre aléatoire** : à chaque date, on filtre les paris du primaire vers le
+       *même nombre de noms* que le méta, mais **au hasard** (``n_random`` tirages).
+       Si le méta ne bat pas nettement cette distribution nulle, son Sharpe vient de
+       la **concentration/turnover**, pas d'une compétence du modèle.
+    2. **Permutation de l'AUC** : labels OOS mélangés ``n_perm`` fois → p-value du
+       pouvoir discriminant réel.
+    3. **Stabilité par sous-période** (tiers) : l'edge est-il partout ou dans une
+       seule fenêtre chanceuse ?
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    samples = build_meta_samples(scores, returns, features, quantile=quantile,
+                                 horizon=horizon, feature_names=feature_names)
+    rng = np.random.default_rng(seed)
+    feats = list(feature_names)
+    reb_i = list(range(0, len(scores.index), rebalance_every))
+    w_raw: dict = {}
+    w_meta: dict = {}
+    w_rand: list[dict] = [dict() for _ in range(n_random)]
+    oos_y: list[int] = []
+    oos_p: list[float] = []
+    kept_counts: list[int] = []
+
+    for i in reb_i:
+        dt = scores.index[i]
+        row = scores.loc[dt].dropna()
+        if len(row) < 5:
+            continue
+        k = max(1, int(round(len(row) * quantile)))
+        ranked = row.sort_values()
+        sides = pd.Series(0.0, index=row.index)
+        sides.loc[ranked.index[-k:]] = +1.0
+        sides.loc[ranked.index[:k]] = -1.0
+        picks = sides[sides != 0.0]
+        w_raw[dt] = _norm_gross(picks.copy())
+
+        train = samples[samples["label_end_i"] + embargo <= i]
+        if len(train) < min_train or train["y"].nunique() < 2:
+            w_meta[dt] = _norm_gross(picks.copy())
+            for r in range(n_random):
+                w_rand[r][dt] = _norm_gross(picks.copy())
+            continue
+
+        scaler = StandardScaler().fit(train[feats].to_numpy())
+        clf = LogisticRegression(max_iter=1000, C=1.0).fit(
+            scaler.transform(train[feats].to_numpy()), train["y"].to_numpy())
+
+        cur_rows, cur_syms = [], []
+        for sym in picks.index:
+            vals, ok = [], True
+            for fn in feats:
+                fdf = features.get(fn)
+                v = float(fdf.loc[dt, sym]) if (fdf is not None and sym in fdf.columns
+                                                and dt in fdf.index) else np.nan
+                if not np.isfinite(v):
+                    ok = False
+                    break
+                vals.append(v)
+            if ok:
+                cur_rows.append(vals)
+                cur_syms.append(sym)
+        if not cur_rows:
+            w_meta[dt] = _norm_gross(picks.copy())
+            for r in range(n_random):
+                w_rand[r][dt] = _norm_gross(picks.copy())
+            continue
+        p = clf.predict_proba(scaler.transform(np.array(cur_rows)))[:, 1]
+        p_ser = pd.Series(p, index=cur_syms)
+        keep = [s for s in cur_syms if p_ser[s] >= p_threshold]
+        kk = len(keep)
+        kept_counts.append(kk)
+        w_meta[dt] = _norm_gross(picks[keep].copy()) if kk else pd.Series(dtype=float)
+        # Filtres aléatoires : kk noms tirés au hasard parmi les mêmes paris.
+        for r in range(n_random):
+            if kk == 0:
+                w_rand[r][dt] = pd.Series(dtype=float)
+            else:
+                sel = rng.choice(cur_syms, size=min(kk, len(cur_syms)), replace=False)
+                w_rand[r][dt] = _norm_gross(picks[list(sel)].copy())
+        # AUC OOS : labels connus de ce rééq.
+        cur = samples[(samples["date_i"] == i) & (samples["symbol"].isin(cur_syms))]
+        for _, rr in cur.iterrows():
+            oos_y.append(int(rr["y"]))
+            oos_p.append(float(p_ser.get(rr["symbol"], 0.5)))
+
+    raw_ser = _simulate_book(w_raw, returns, cost_rate)[0]
+    meta_ser = _simulate_book(w_meta, returns, cost_rate)[0]
+    rand_sharpes = np.array([_sharpe(_simulate_book(w_rand[r], returns, cost_rate)[0])
+                             for r in range(n_random)])
+    meta_sh = _sharpe(meta_ser)
+
+    # AUC + permutation.
+    auc, auc_p = 0.5, 1.0
+    try:
+        from sklearn.metrics import roc_auc_score
+        y = np.array(oos_y)
+        pp = np.array(oos_p)
+        if len(y) and len(set(y)) == 2:
+            auc = float(roc_auc_score(y, pp))
+            ge = 0
+            for _ in range(n_perm):
+                ge += roc_auc_score(rng.permutation(y), pp) >= auc
+            auc_p = float((ge + 1) / (n_perm + 1))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Sous-périodes (tiers) sur la série méta et raw.
+    def _thirds(s: pd.Series) -> list[float]:
+        s = s.dropna()
+        n = len(s) // 3
+        return [_sharpe(s.iloc[a:b]) for a, b in [(0, n), (n, 2 * n), (2 * n, len(s))]] if n else [0, 0, 0]
+
+    pct = float((meta_sh > rand_sharpes).mean() * 100.0) if n_random else float("nan")
+    return MetaConfirm(
+        raw_sharpe=_sharpe(raw_ser), meta_sharpe=meta_sh,
+        rand_sharpe_mean=float(rand_sharpes.mean()) if n_random else float("nan"),
+        rand_sharpe_p95=float(np.percentile(rand_sharpes, 95)) if n_random else float("nan"),
+        meta_percentile_vs_random=pct, n_random=n_random,
+        auc=auc, auc_perm_pvalue=auc_p, n_oos_preds=len(oos_y),
+        subperiod_meta_sharpes=_thirds(meta_ser), subperiod_raw_sharpes=_thirds(raw_ser),
+        avg_kept=float(np.mean(kept_counts)) if kept_counts else 0.0,
     )

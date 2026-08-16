@@ -410,6 +410,38 @@ disciplinée serait **une** passe de confirmation rigoureuse (DSR + réconciliat
 baseline), pas un sweep de seuils (= multiple-testing). Mais c'est la première chose de
 toute la campagne breadth que l'histoire longue a **renforcée** au lieu de tuer.
 
+### ✅✅ Fait — CONFIRMATION du méta-labeling : PASSE les 3 contrôles d'artefact
+
+`confirm_meta_labeling` (+ `confirm_meta_labeling_alpaca.py`) isole la *compétence* du
+méta-modèle des *artefacts*. Sur 18 ans (45 large-caps à histoire complète) :
+
+| contrôle | résultat | verdict |
+|---|---|---|
+| **[0] baseline réconcilié** | raw méta-construction +0.07 ≈ portail +0.05 (IC t 3.69) | l'écart au +0.33 était l'univers ; comparaison à **méthode égale** rétablie |
+| **[1] filtre aléatoire** (clé) | méta **+0.76** bat **100 %** de 100 filtres aléatoires (moy −0.04, p95 +0.24) | **pas** un artefact de concentration : la *sélection* a de la valeur |
+| **[2] permutation AUC** | AUC 0.563, **p = 0.002** | pouvoir discriminant **réel**, pas de la chance |
+| **[3] stabilité (tiers)** | méta [0.12, 1.18, 1.22] > raw [−0.49, 0.46, 0.2] | positif partout, bat le raw dans chaque tiers |
+
+**3/3.** Sur ces large-caps le momentum brut est quasi plat (+0.05) et le méta-modèle
+le transforme en +0.76 par une sélection qui **bat 100 % de l'aléatoire** et discrimine
+à **p = 0.002**. C'est le **premier edge sérieux de toute la campagne** — et le premier
+qui *illustre empiriquement le meta-labeling de López de Prado sur ce système*.
+
+**RESTE NON INSCRIT — mesure obligatoire, 3 réserves avant tout capital :**
+1. **Biais de survie doublé** : ces 45 titres ont survécu 18 ans *et* existaient en 2008
+   (Yahoo = cotés aujourd'hui). Le modèle a appris sur des **survivants** — le seul
+   contrôle que les tests ci-dessus **ne** couvrent pas. C'est LE risque restant.
+2. **Tests multiples au niveau campagne** : ~10 familles essayées, celle-ci gagne. Les
+   contrôles [1]/[2] traitent l'overfitting *intra-méta*, pas le « best-of-N » global —
+   il faut un **DSR formel avec essais comptés**.
+3. **AUC 0.563 reste faible** : l'edge est réel mais le modèle est modeste ; le +0.76
+   est amplifié par la concentration (8 noms → risque idiosyncratique) et la base momentum.
+
+**Statut : piste → CANDIDAT SÉRIEUX.** Suite disciplinée : (a) re-confirmer sur un
+dataset **sans biais de survie** (le vrai juge), (b) DSR campagne, (c) **forward-test
+paper** via l'infra existante (`framework` : un `MetaLabelConstruction` enfichable).
+Pas d'inscription ni de live tant que (a) n'est pas fait.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
