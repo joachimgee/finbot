@@ -82,6 +82,13 @@ def main() -> None:
 
     journal = TradingJournal(
         f"logs/multistrat_paper_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")  # noqa: DTZ005
+    # Snapshot de départ : alimente le suivi P&L et le critère « drawdown paper » du
+    # rapport de préparation au live (scripts/live_readiness_report.py). Sans ces
+    # snapshots, les runs planifiés ne seraient pas mesurables côté P&L.
+    journal.record_snapshot(
+        equity=float(acct.get("equity", 0.0)), cash=float(acct.get("cash", 0.0)),
+        event="run_start", mode=adapter.mode,
+    )
     pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal,
                                    no_trade_band=band)
     # Couche enfichable #5 : remplacer la construction par le book multi-stratégie.
@@ -117,6 +124,13 @@ def main() -> None:
         recon = reconcile_orders(journal.orders(), adapter.get_orders(status="all", limit=300) or [])
         journal.record_reconciliation(recon.to_dict())
         print(f"    {'✅' if recon.ok else '🚨'} {recon.summary()}")
+
+    # Snapshot de fin : ferme le run pour le suivi P&L / drawdown (cf. run_start).
+    acct_end = adapter.get_account()
+    journal.record_snapshot(
+        equity=float(acct_end.get("equity", 0.0)), cash=float(acct_end.get("cash", 0.0)),
+        event="run_end", mode=adapter.mode,
+    )
 
     adapter.disconnect()
     print(f"\n✅ Terminé ({label}). Journal: {journal.path}")
