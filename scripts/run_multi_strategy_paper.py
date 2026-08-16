@@ -44,7 +44,10 @@ def main() -> None:
                     help="Bande de non-transaction (poids absolu, ex. 0.02 = 2%%) : "
                          "ne rééquilibre une ligne que si son poids bouge de plus que "
                          "la bande vs le book détenu — réduit le churn quotidien. "
-                         "0 = viser exactement le cible chaque jour (défaut : 0.02).")
+                         "0 = viser exactement le cible chaque jour. Défaut 0.02 : "
+                         "calibré par scripts/sweep_multistrat_band_alpaca.py (meilleur "
+                         "Sharpe net dans la zone à signal préservé ; une bande plus "
+                         "large gèle le book — gain net = surapprentissage).")
     args = ap.parse_args()
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
