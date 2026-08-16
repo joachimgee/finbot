@@ -177,6 +177,88 @@ class MultiStrategyConstruction:
         return book
 
 
+class MetaLabelConstruction:
+    """Construction **méta-labeling** : momentum 12-1 filtré par un modèle secondaire.
+
+    Le primaire (momentum 12-1 cross-section, long/short) décide la **direction** ;
+    un modèle secondaire (logistique) prédit ``P(gain)`` d'un pari et **ne garde que
+    P ≥ seuil** (cf. ``backtest/meta_labeling``). Entraîné *à chaud* sur tout
+    l'historique à label clos (purge+embargo). Repli sur la construction BL si données
+    insuffisantes.
+
+    ⚠️ **Discipline** : le méta-labeling a passé les contrôles d'artefact sur 18 ans
+    (bat 100 % de l'aléatoire, AUC p=0.002) **mais** reste sous **biais de survie**
+    (survivants) et sans DSR campagne → **paper uniquement** (forward-test). Long/short.
+    On applique la bande de non-transaction (opt-in) comme le multi-stratégie.
+    """
+
+    def __init__(self, pipeline: object, quantile: float = 0.2, rebalance_every: int = 10,
+                 p_threshold: float = 0.5, min_train: int = 400, min_names: int = 10,
+                 lookback_days: int = 1100) -> None:
+        self._p = pipeline
+        self.quantile = quantile
+        self.rebalance_every = rebalance_every
+        self.p_threshold = p_threshold
+        self.min_train = min_train
+        self.min_names = min_names
+        # Le méta a besoin de ~3 ans (momentum 12-1 = 252 j + assez de dates pour
+        # accumuler min_train échantillons à label clos). Le fetch par défaut du
+        # pipeline (~420 j) ne suffit pas → on récupère notre propre panel long.
+        self.lookback_days = lookback_days
+
+    def _long_panel(self, data: Dict):
+        """Panel de clôtures ~3 ans : fetch broker si possible, sinon données pipeline."""
+        import pandas as pd
+
+        broker = getattr(self._p, "broker", None)
+        tickers = list(getattr(self._p, "tickers", []) or [])
+        if broker is not None and tickers and hasattr(broker, "get_bars_multi"):
+            try:
+                from datetime import datetime, timedelta
+
+                end = datetime.now()  # noqa: DTZ005
+                multi = broker.get_bars_multi(tickers, end - timedelta(days=self.lookback_days), end)
+                frames = {s: df["close"] for s, df in (multi or {}).items()
+                          if df is not None and not df.empty and "close" in df}
+                if len(frames) >= self.min_names:
+                    return pd.DataFrame(frames).dropna(how="all")
+            except Exception:  # noqa: BLE001 - repli sur les données du pipeline
+                pass
+        prices = (data or {}).get("prices", {}) or {}
+        frames = {s: df["close"] for s, df in prices.items()
+                  if df is not None and not df.empty and "close" in df}
+        return pd.DataFrame(frames).dropna(how="all") if frames else pd.DataFrame()
+
+    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        from financial_analyzer.backtest.classic_factors import (
+            compute_classic_factors,
+            daily_returns,
+        )
+        from financial_analyzer.backtest.meta_labeling import META_FEATURES, meta_filter_today
+
+        close = self._long_panel(data)
+        if close.shape[1] < self.min_names:
+            return self._p._construct_weights(signals, data)  # repli BL
+        try:
+            factors = compute_classic_factors(close)
+            scores = factors.get("momentum_12_1")
+            if scores is None or scores.dropna(how="all").empty:
+                return self._p._construct_weights(signals, data)
+            book = meta_filter_today(
+                scores, daily_returns(close), factors,
+                quantile=self.quantile, horizon=self.rebalance_every,
+                min_train=self.min_train, p_threshold=self.p_threshold,
+                feature_names=META_FEATURES)
+        except Exception:  # noqa: BLE001 - une construction ne doit jamais crasher le run
+            return self._p._construct_weights(signals, data)
+        if not book:
+            return self._p._construct_weights(signals, data)
+        # Bande de non-transaction (opt-in), sign-agnostique → OK long/short.
+        if getattr(self._p, "no_trade_band", 0.0) > 0:
+            book = self._p._apply_no_trade_band(book)
+        return book
+
+
 class PipelineRisk:
     """Risque par défaut : contrôle pré-trade portefeuille (``_portfolio_risk_ok``)."""
 

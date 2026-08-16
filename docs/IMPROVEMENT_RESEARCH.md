@@ -439,8 +439,19 @@ qui *illustre empiriquement le meta-labeling de López de Prado sur ce système*
 
 **Statut : piste → CANDIDAT SÉRIEUX.** Suite disciplinée : (a) re-confirmer sur un
 dataset **sans biais de survie** (le vrai juge), (b) DSR campagne, (c) **forward-test
-paper** via l'infra existante (`framework` : un `MetaLabelConstruction` enfichable).
-Pas d'inscription ni de live tant que (a) n'est pas fait.
+paper**. Pas d'inscription ni de live tant que (a) n'est pas fait.
+
+**✅ (c) fait — câblage forward-test paper.** `framework.MetaLabelConstruction`
+(couche enfichable #5) + `run_meta_labeling_paper.py` : le book momentum méta-labelé
+tourne sur le compte **paper** via le chemin audité (OrderGateway + journal +
+réconciliation), double-verrou paper-only. La construction fetch son **propre panel
+~3 ans** (le méta a besoin de 252 j pour momentum + assez de dates pour min_train ;
+le fetch pipeline de ~420 j ne suffit pas), entraîne la logistique à chaud sur
+l'historique à label clos, et ne garde que les paris `P(gain) ≥ seuil`. Dry-run réel :
+book **11 positions (7 L / 4 S)** — le méta écarte 9 des 20 paris momentum bruts
+(cohérent avec les ~8 noms de la confirmation). ``meta_filter_today`` (version « live »
+de `walk_forward_meta`) testé. *Reste (b) DSR campagne et surtout (a) données
+sans biais de survie avant toute inscription.*
 
 ---
 

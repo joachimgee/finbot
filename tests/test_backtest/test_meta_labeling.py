@@ -7,6 +7,7 @@ import pandas as pd
 from financial_analyzer.backtest.meta_labeling import (
     META_FEATURES,
     build_meta_samples,
+    meta_filter_today,
     walk_forward_meta,
 )
 
@@ -56,6 +57,31 @@ def test_walk_forward_runs_and_meta_defaults_to_raw_before_training() -> None:
     assert res.n_samples > 0
     # Sans entraînement possible, filtre/sizing retombent sur raw (Sharpe identique).
     assert res.meta_filter_net_sharpe == res.raw_net_sharpe
+
+
+def test_meta_filter_today_returns_long_short_book() -> None:
+    scores, returns, features = _synth(seed=7, n=500)
+    book = meta_filter_today(scores, returns, features, quantile=0.2, horizon=10, min_train=200)
+    assert isinstance(book, dict)
+    # Book long/short : au moins un poids, brut ~1 (ou vide si tout filtré).
+    if book:
+        assert abs(sum(abs(w) for w in book.values()) - 1.0) < 1e-6
+        assert any(w > 0 for w in book.values()) or any(w < 0 for w in book.values())
+
+
+def test_meta_filter_today_falls_back_to_raw_before_training() -> None:
+    scores, returns, features = _synth(seed=8, n=300)
+    # min_train énorme -> pas de méta -> renvoie les paris bruts du primaire (non filtrés).
+    book = meta_filter_today(scores, returns, features, quantile=0.2, horizon=10,
+                             min_train=10**9)
+    raw_k = 2 * max(1, int(round(scores.shape[1] * 0.2)))  # longs + shorts
+    assert len(book) == raw_k
+    assert abs(sum(abs(w) for w in book.values()) - 1.0) < 1e-6
+
+
+def test_meta_filter_today_empty_scores_is_empty() -> None:
+    import pandas as pd
+    assert meta_filter_today(pd.DataFrame(), pd.DataFrame(), {}) == {}
 
 
 def test_walk_forward_trains_and_reports_auc() -> None:

@@ -17,6 +17,7 @@ from financial_analyzer.trading.framework import (
     AlphaModel,
     ExecutionModel,
     HRPConstruction,
+    MetaLabelConstruction,
     MultiStrategyConstruction,
     PipelineAlpha,
     PipelineConstruction,
@@ -197,6 +198,32 @@ def test_multistrat_no_band_by_default_returns_raw_book(monkeypatch) -> None:
         lambda close, fw=None: {"A": 0.52, "B": -0.48})
     out = MultiStrategyConstruction(pipe, min_names=2).construct({}, _two_frames())
     assert out == {"A": 0.52, "B": -0.48}
+
+
+def test_metalabel_construction_falls_back_when_too_few_names() -> None:
+    """Trop peu de titres -> repli sur la construction BL (fail-safe)."""
+    pipe = _make_pipeline()
+    called = {}
+
+    def _bl(s, d):
+        called["bl"] = True
+        return {"X": 1.0}
+
+    pipe._construct_weights = _bl
+    mlc = MetaLabelConstruction(pipe, min_names=10)
+    out = mlc.construct({}, {"prices": {"A": _price_df(0.0)}})  # 1 titre < 10
+    assert called.get("bl") and out == {"X": 1.0}
+
+
+def test_metalabel_construction_produces_long_short_book(monkeypatch) -> None:
+    """Assez de titres -> book méta-labelé (long/short) via meta_filter_today."""
+    monkeypatch.setattr(
+        "financial_analyzer.backtest.meta_labeling.meta_filter_today",
+        lambda *a, **k: {"UP": 0.5, "DOWN": -0.5})
+    pipe = _make_pipeline()
+    data = {"prices": {f"T{i}": _price_df(0.0, seed=i) for i in range(12)}}
+    out = MetaLabelConstruction(pipe, min_names=10).construct({}, data)
+    assert out == {"UP": 0.5, "DOWN": -0.5}
 
 
 def test_injected_execution_receives_target_weights() -> None:

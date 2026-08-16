@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 __all__ = ["MetaResult", "MetaConfirm", "META_FEATURES", "build_meta_samples",
-           "walk_forward_meta", "confirm_meta_labeling"]
+           "walk_forward_meta", "confirm_meta_labeling", "meta_filter_today"]
 
 #: Features méta par défaut (clés de ``compute_classic_factors``), motivées ex-ante.
 META_FEATURES = ("momentum_12_1", "momentum_6_1", "low_vol", "reversal_5", "max_lottery")
@@ -272,6 +272,99 @@ def walk_forward_meta(
         raw_turnover=raw_to, meta_filter_turnover=filt_to, meta_size_turnover=size_to,
         raw_avg_names=raw_names, meta_filter_avg_names=filt_names,
     )
+
+
+def meta_filter_today(
+    scores: pd.DataFrame,
+    returns: pd.DataFrame,
+    features: dict[str, pd.DataFrame],
+    *,
+    quantile: float = 0.2,
+    horizon: int = 10,
+    min_train: int = 400,
+    embargo: int = 10,
+    p_threshold: float = 0.5,
+    feature_names: tuple[str, ...] = META_FEATURES,
+) -> dict[str, float]:
+    """Poids **du jour** (dernière date) du book momentum FILTRÉ par le méta-modèle.
+
+    Version « live » de :func:`walk_forward_meta` : entraîne la logistique sur **tout
+    l'historique à label clos** (purge + embargo), prédit ``P(gain)`` pour les paris
+    du primaire *aujourd'hui*, et ne garde que ``P ≥ seuil`` (long/short, brut≈1).
+
+    Fail-safe : données insuffisantes / erreur → renvoie les poids du primaire **non
+    filtrés** (jamais d'exception ; on ne casse pas la décision). Renvoie ``{}`` si
+    aucun pari aujourd'hui.
+    """
+    try:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+    except Exception:  # noqa: BLE001 - sans sklearn, pas de méta : on rend le primaire
+        return _raw_picks_today(scores, quantile)
+
+    if scores.empty or len(scores.index) < horizon + 2:
+        return _raw_picks_today(scores, quantile)
+    last_i = len(scores.index) - 1
+    dt = scores.index[last_i]
+
+    picks = _raw_picks_series_today(scores, quantile)
+    if picks.empty:
+        return {}
+    feats = list(feature_names)
+
+    try:
+        samples = build_meta_samples(scores, returns, features, quantile=quantile,
+                                     horizon=horizon, feature_names=feats)
+        train = samples[samples["label_end_i"] + embargo <= last_i]
+        if len(train) < min_train or train["y"].nunique() < 2:
+            return {s: float(w) for s, w in picks.items()}  # pas encore de méta
+
+        scaler = StandardScaler().fit(train[feats].to_numpy())
+        clf = LogisticRegression(max_iter=1000, C=1.0).fit(
+            scaler.transform(train[feats].to_numpy()), train["y"].to_numpy())
+
+        rows, syms = [], []
+        for sym in picks.index:
+            vals, ok = [], True
+            for fn in feats:
+                fdf = features.get(fn)
+                v = float(fdf.loc[dt, sym]) if (fdf is not None and sym in fdf.columns
+                                                and dt in fdf.index) else np.nan
+                if not np.isfinite(v):
+                    ok = False
+                    break
+                vals.append(v)
+            if ok:
+                rows.append(vals)
+                syms.append(sym)
+        if not rows:
+            return {s: float(w) for s, w in picks.items()}
+        p = clf.predict_proba(scaler.transform(np.array(rows)))[:, 1]
+        keep = [syms[j] for j in range(len(syms)) if p[j] >= p_threshold]
+        kept = picks[keep] if keep else pd.Series(dtype=float)
+        kept = _norm_gross(kept)
+        return {s: float(w) for s, w in kept.items() if abs(w) > 1e-9}
+    except Exception:  # noqa: BLE001 - le méta ne doit jamais casser la décision
+        return {s: float(w) for s, w in picks.items()}
+
+
+def _raw_picks_series_today(scores: pd.DataFrame, quantile: float) -> pd.Series:
+    """Paris long/short (±1, brut normalisé) du primaire à la dernière date."""
+    if scores.empty:
+        return pd.Series(dtype=float)
+    row = scores.iloc[-1].dropna()
+    if len(row) < 5:
+        return pd.Series(dtype=float)
+    k = max(1, int(round(len(row) * quantile)))
+    ranked = row.sort_values()
+    sides = pd.Series(0.0, index=row.index)
+    sides.loc[ranked.index[-k:]] = +1.0
+    sides.loc[ranked.index[:k]] = -1.0
+    return _norm_gross(sides[sides != 0.0])
+
+
+def _raw_picks_today(scores: pd.DataFrame, quantile: float) -> dict[str, float]:
+    return {s: float(w) for s, w in _raw_picks_series_today(scores, quantile).items()}
 
 
 @dataclass
