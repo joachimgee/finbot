@@ -86,4 +86,11 @@ def test_large_drawdown_fails(tmp_path: Path) -> None:
 def test_operator_criteria_are_manual(tmp_path: Path) -> None:
     rep = evaluate_readiness([_run(tmp_path, "2026-05-01", recon_ok=True)])
     manual_ids = {c.id for c in rep.operator}
-    assert manual_ids == {4, 5, 8, 10}  # chokepoint, riskguard, kill-switch, capital
+    # #5 (config de risque live) est désormais auto-vérifiable → reste 4/8/10.
+    assert manual_ids == {4, 8, 10}  # chokepoint, kill-switch, capital
+
+
+def test_live_risk_config_criterion_passes(tmp_path: Path) -> None:
+    rep = evaluate_readiness([_run(tmp_path, "2026-06-01", recon_ok=True)])
+    crit5 = next(c for c in rep.criteria if c.id == 5)
+    assert crit5.kind == "auto" and crit5.status == "pass"

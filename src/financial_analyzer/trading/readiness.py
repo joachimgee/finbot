@@ -143,6 +143,30 @@ def _registry_signals() -> list[str]:
         return []
 
 
+def _live_risk_config_ready() -> tuple[bool, str]:
+    """Vrai si la config de risque *live* committée renseigne toutes les limites.
+
+    Vérifie la *structure* (machinerie prête) sur un capital témoin ; le capital
+    réel reste une décision opérateur (critère #10).
+    """
+    try:
+        from financial_analyzer.trading.risk_config import (
+            REQUIRED_LIMIT_KEYS,
+            live_risk_config,
+        )
+        cfg = live_risk_config(100_000.0)
+        missing = [k for k in REQUIRED_LIMIT_KEYS if cfg.get(k) is None]
+        if missing:
+            return False, f"limites manquantes : {missing}"
+        if not cfg.get("enable_circuit_breaker"):
+            return False, "circuit breaker désactivé"
+        return True, (f"live: pos≤{cfg['max_position_pct']:.0%}, DD≥{cfg['max_drawdown']:.0%}, "
+                      f"levier≤{cfg['max_leverage']:g}, vol≤{cfg['max_portfolio_vol']:.0%} "
+                      "(capital = décision opérateur, #10)")
+    except Exception as e:  # noqa: BLE001
+        return False, f"config live indisponible ({e})"
+
+
 def _costs_calibrated() -> tuple[bool, str]:
     try:
         from financial_analyzer.backtest.signal_evaluation import CostModel
@@ -201,12 +225,12 @@ def evaluate_readiness(
         4, "Chokepoint d'exécution unique confirmé", "0 submit hors gateway",
         "manual", "pytest tests/test_scripts/test_daemon_safety_invariants.py", "operator"))
 
-    # 5 — RiskGuard configuré pour le live (config opérateur).
+    # 5 — RiskGuard configuré pour le live (auto : config live committée et complète).
+    ok5, detail5 = _live_risk_config_ready()
     c.append(Criterion(
-        5, "RiskGuard configuré (limites + circuit breaker)",
-        "position/concentration/drawdown/perte quotidienne actifs",
-        "manual", "à confirmer dans la config du daemon (étape 10) — voir aussi les "
-        "limites portefeuille opt-in vol/VaR/paris-effectifs", "operator"))
+        5, "Config de risque live committée et complète",
+        "toutes limites + circuit breaker + garde-fous portefeuille",
+        "pass" if ok5 else "fail", detail5, "auto"))
 
     # 6 — Cadence de rééquilibrage active (auto : état persistant présent).
     c.append(Criterion(

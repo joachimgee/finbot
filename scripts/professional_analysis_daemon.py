@@ -904,21 +904,20 @@ Configuration :
         # breaker / drawdown / perte quotidienne.
         from financial_analyzer.trading.account_monitor import AccountMonitor
         from financial_analyzer.trading.risk_guard import RiskGuard
+        from financial_analyzer.trading.risk_config import risk_config_for
         from financial_analyzer.trading.order_gateway import OrderGateway
         from financial_analyzer.trading.journal import TradingJournal
         from financial_analyzer.trading.run_manifest import build_run_manifest
         _monitor = AccountMonitor(adapter)
         _monitor.update()
         _equity_now = float(getattr(_monitor, 'portfolio_value', 0.0) or 0.0)
+        # Limites du RiskGuard via la config committée (source unique de vérité) :
+        # paper = profil observation-friendly historique (comportement inchangé) ;
+        # live = profil conservateur serré + garde-fous portefeuille actifs. Le
+        # profil est choisi par le mode de l'adaptateur (double-verrou en amont).
         _risk_guard = RiskGuard(
             account_monitor=_monitor,
-            max_position_size=max(_equity_now, 50000.0),
-            max_position_pct=0.35,
-            max_total_positions=100,
-            max_drawdown=-0.25,
-            max_daily_loss=max(_equity_now * 0.10, 1000.0),
-            max_leverage=1.5,
-            enable_circuit_breaker=True,
+            **risk_config_for(adapter.mode, _equity_now),
         )
         # Persistent execution journal (order audit trail + account snapshots for
         # P&L / reconciliation). Every order routed through the gateway is recorded.
