@@ -383,6 +383,33 @@ restants sont : (1) le **biais de survie** (Yahoo/Alpaca = titres encore cotés 
 corrigé), et (2) l'**homogénéité large-cap** (breadth effective faible). Un dataset
 sans biais de survie + small-caps reste le seul levier ; la longueur, elle, est réglée.
 
+### ✅ Fait — re-test des AUTRES familles sur 18 ans (Yahoo) : 3 confirment, 1 SURPREND
+
+Les scripts portail existants relancés sur `/tmp/yahoo_long.csv` (2008-2026) :
+
+| famille | 3 ans | **18 ans** | lecture |
+|---|---|---|---|
+| **TSMOM** | IC t 1.01, Sh +0.27 | IC t **2.79**, Sh **+0.09**, corr 0.67, DSR 0 | IC devient significatif mais Sharpe ~0 et toujours corrélé → **rejeté** |
+| **Paires (stat-arb)** | Sh +0.63 | Sh **−0.30**, corr −0.03 | le +0.63 de 3 ans était de la chance ; sur 18 ans, edge négatif → **rejeté** (paires exigent un univers profond) |
+| **Overlay régime** | réduit le DD | MA200 : Sh +0.13→**+0.20**, DD −33 %→**−26.5 %** | sur un **cycle complet**, le risk-off *aide* (là où le bull de 3 ans le rendait coûteux) → **outil de risque confirmé** |
+| **Meta-labeling** | AUC 0.507, nul | **AUC 0.563**, méta-filtre **+0.76** vs raw +0.07 | ⚠️ **la surprise** : la seule approche qui *s'améliore* avec plus de données |
+
+**Trois confirment la thèse** (TSMOM/paires meurent ou stagnent ; le régime aide sur
+cycle complet — cohérent). **Une surprend : le meta-labeling.** Sur 18 ans (79 416
+échantillons), l'AUC OOS du méta-modèle passe **0.507 → 0.563** (discrimination faible
+mais désormais *réelle* vu le N), et le méta-filtre bat nettement le raw *dans le
+script*. C'est le **premier résultat 18 ans encourageant** : avec assez de données, un
+secondaire apprend *un peu* à distinguer les paris momentum gagnants.
+
+**Prudence obligatoire — non inscrit, c'est une PISTE, pas un edge validé :**
+(1) **une seule config** (features/seuil/horizon fixes) → il faut un **DSR avec essais
+comptés** ; (2) le raw *intra-script* (+0.07) diffère du portail (+0.33) → **écart de
+construction à réconcilier** avant toute comparaison ; (3) le filtre **concentre à
+8 noms** (risque idiosyncratique). AUC 0.563 reste **faible** (0.5 = hasard). La suite
+disciplinée serait **une** passe de confirmation rigoureuse (DSR + réconciliation du
+baseline), pas un sweep de seuils (= multiple-testing). Mais c'est la première chose de
+toute la campagne breadth que l'histoire longue a **renforcée** au lieu de tuer.
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
