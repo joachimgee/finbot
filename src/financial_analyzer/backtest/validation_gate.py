@@ -262,7 +262,17 @@ VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {
                  "backtest ; le DSR, qui suppose N tirages a priori équiprobables, le "
                  "sur-pénalise. La crédibilité repose sur ce prior + IC/Sharpe OOS, pas "
                  "sur ce seul run. Le portail garde le DSR *optionnel* (actif seulement "
-                 "si n_trials est fourni) pour ne pas écarter un edge à prior fort.",
+                 "si n_trials est fourni) pour ne pas écarter un edge à prior fort. "
+                 "RECOUPEMENT 18 ANS (run_deflated_sharpe_alpaca.py sur données Yahoo "
+                 "2008-2026, data/yahoo_history.py) : sur un échantillon 6× plus long, "
+                 "l'IC devient FORTEMENT significatif (t=4.77 vs 2.56 sur 3 ans — le t "
+                 "était bien bridé par la breadth), MAIS le Sharpe net n'est que +0.33 "
+                 "(le +0.76 de 2023-26 était flatté par le régime) et le DSR reste ~0.03 "
+                 "(Sharpe modeste + queues épaisses, kurtosis 10). Lecture honnête : "
+                 "l'edge IC est réel et robuste, sa rentabilité nette est modeste et "
+                 "régime-dépendante. L'histoire courte n'était donc PAS le vrai plafond "
+                 "(Yahoo la lève gratuitement) ; les blocages restants sont le biais de "
+                 "survie (Yahoo/Alpaca = titres encore cotés) et l'homogénéité large-cap.",
     ),
 }
 

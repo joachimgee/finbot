@@ -347,6 +347,44 @@ ici. **La famille volume était le dernier candidat data-disponible ; il est tra
 
 ---
 
+### ✅ Fait — HISTOIRE LONGUE (18 ans, Yahoo gratuit) : l'échantillon court n'était PAS le vrai plafond
+
+Le « 3 ans » cité partout n'était **pas** une limite fondamentale mais le cache
+Alpaca IEX utilisé. Nouveau `data/yahoo_history.py` (fetcher **requests**, proxy-safe
+— `yfinance`/curl_cffi ignore le proxy de l'env) : **clôtures ajustées Yahoo, décennies,
+gratuit**. Rejoue **les scripts portail existants** (aucune modif) sur un panel
+**2008-2026, 80 large-caps** (`--cache /tmp/yahoo_long.csv`).
+
+**momentum_12_1 — 3 ans vs 18 ans :**
+
+| grandeur | 3 ans (2023-26) | **18 ans (2008-26)** | lecture |
+|---|---|---|---|
+| IC t-stat | 2.56 | **4.77** | l'IC ÉTAIT bridé par la breadth → devient fortement significatif |
+| Sharpe net | +0.76 | **+0.33** | le +0.76 était flatté par le régime ; le vrai net est modeste |
+| DSR (32 essais) | 0.13 | **0.028** | *pire* : Sharpe modeste + queues épaisses (kurtosis 10) |
+| PBO (CSCV) | 0.09 | 0.22 | tri toujours robuste (≤ 0.5) |
+
+**Deux enseignements qui corrigent le cadrage précédent :**
+
+1. **L'IC de momentum est réel et robuste** (t=4.77 sur 18 ans) — l'excuse « t bridé
+   par la breadth » était juste, la longueur d'échantillon la lève. Mais sa
+   **rentabilité nette est modeste** (+0.33) et régime-dépendante ; le +0.76 de
+   2023-26 était un artefact de régime haussier. Momentum reste inscrit sur son
+   **prior + IC robuste**, pas sur un Sharpe flatteur (evidence du registre mise à jour).
+2. **Le meilleur candidat breadth de 3 ans meurt sur 18 ans.** Le PCA-résiduel k=5
+   (Sharpe +0.81 / IC t 1.65 sur 3 ans) tombe à **IC t 0.98, Sharpe −0.18** sur 18 ans
+   (décorrélé +0.01 mais **sans edge**). Plus de données l'a **tué**, pas sauvé — son
+   +0.81 était lui-même un artefact de régime.
+
+**Conséquence sur la thèse « plafond de données » :** elle se **précise**. Ce n'est
+PAS la *longueur* d'histoire le blocage (Yahoo la donne gratuitement, et l'allonger
+*dégrade* les faux espoirs au lieu de les valider — c'est sain). Les vrais blocages
+restants sont : (1) le **biais de survie** (Yahoo/Alpaca = titres encore cotés — non
+corrigé), et (2) l'**homogénéité large-cap** (breadth effective faible). Un dataset
+sans biais de survie + small-caps reste le seul levier ; la longueur, elle, est réglée.
+
+---
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
