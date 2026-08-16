@@ -1,0 +1,68 @@
+"""Tests du meta-labeling (filtre/sizing des paris du primaire, sans look-ahead)."""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from financial_analyzer.backtest.meta_labeling import (
+    META_FEATURES,
+    build_meta_samples,
+    walk_forward_meta,
+)
+
+
+def _synth(n=400, k=12, seed=0):
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2023-01-01", periods=n, freq="B")
+    cols = [f"S{i}" for i in range(k)]
+    scores = pd.DataFrame(rng.normal(size=(n, k)), index=idx, columns=cols)
+    returns = pd.DataFrame(rng.normal(scale=0.01, size=(n, k)), index=idx, columns=cols)
+    features = {fn: pd.DataFrame(rng.normal(size=(n, k)), index=idx, columns=cols)
+                for fn in META_FEATURES}
+    return scores, returns, features
+
+
+def test_samples_have_labels_and_features_no_lookahead() -> None:
+    scores, returns, features = _synth()
+    s = build_meta_samples(scores, returns, features, quantile=0.25, horizon=10)
+    assert not s.empty
+    assert set(["date", "symbol", "side", "y", "label_end_i"]).issubset(s.columns)
+    assert set(s["y"].unique()).issubset({0, 1})
+    assert set(s["side"].unique()).issubset({-1, 1})
+    # Aucun échantillon ne doit avoir un horizon dépassant le panel.
+    assert (s["label_end_i"] < len(scores.index)).all()
+
+
+def test_win_label_respects_side() -> None:
+    # Un short (side=-1) sur un rendement forward négatif doit gagner (y=1).
+    idx = pd.date_range("2023-01-01", periods=30, freq="B")
+    cols = ["A", "B", "C", "D", "E", "F"]
+    scores = pd.DataFrame(0.0, index=idx, columns=cols)
+    scores.iloc[0] = [5.0, 4.0, 0.0, 0.0, -4.0, -5.0]  # E,F shorts ; A,B longs
+    returns = pd.DataFrame(0.0, index=idx, columns=cols)
+    returns.iloc[1:11, cols.index("F")] = -0.01  # F chute -> short gagne
+    returns.iloc[1:11, cols.index("A")] = +0.01  # A monte -> long gagne
+    feats = {fn: pd.DataFrame(1.0, index=idx, columns=cols) for fn in META_FEATURES}
+    s = build_meta_samples(scores, returns, feats, quantile=0.34, horizon=10)
+    first = s[s["date_i"] == 0].set_index("symbol")
+    assert first.loc["F", "y"] == 1 and first.loc["F", "side"] == -1
+    assert first.loc["A", "y"] == 1 and first.loc["A", "side"] == 1
+
+
+def test_walk_forward_runs_and_meta_defaults_to_raw_before_training() -> None:
+    scores, returns, features = _synth(seed=3)
+    res = walk_forward_meta(scores, returns, features, rebalance_every=10, horizon=10,
+                            min_train=100000)  # jamais assez pour entraîner -> méta == raw
+    assert res.n_samples > 0
+    # Sans entraînement possible, filtre/sizing retombent sur raw (Sharpe identique).
+    assert res.meta_filter_net_sharpe == res.raw_net_sharpe
+
+
+def test_walk_forward_trains_and_reports_auc() -> None:
+    scores, returns, features = _synth(seed=5, n=500)
+    res = walk_forward_meta(scores, returns, features, rebalance_every=10, horizon=10,
+                            min_train=200)
+    assert 0.0 <= res.oos_auc <= 1.0
+    assert 0.0 <= res.base_win_rate <= 1.0
+    # Le méta-filtre ne garde jamais plus de noms que le raw.
+    assert res.meta_filter_avg_names <= res.raw_avg_names + 1e-9

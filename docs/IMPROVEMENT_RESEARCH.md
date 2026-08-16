@@ -412,6 +412,36 @@ essais / la matrice) : ils ne peuvent que resserrer le double critère historiqu
 - **Exécution** (LEAN) : ordres limit / TWAP vs market. *Faible priorité* au niveau
   de capital et de liquidité actuels (large-caps) — le slippage mesuré est ~2.5 bps.
 
+### ✅ Fait (Tier 4) — meta-labeling testé, REJETÉ (5ᵉ résultat convergent)
+
+Implémenté `backtest/meta_labeling.py` (López de Prado, AFML ch. 3) : le primaire
+(`momentum_12_1`) décide la **direction** ; un modèle **secondaire** (régression
+logistique) apprend `P(gain)` d'un pari et le **filtre/dimensionne** — sans jamais
+changer la direction. Walk-forward avec **purge + embargo** (labels à horizon clos
+seulement), features motivées *ex-ante* (conviction momentum, momentum court, low-vol
+à la Barroso, reversal court, lottery), coûts Alpaca calibrés.
+(`run_meta_labeling_alpaca.py`, 50 large-caps, reb=10, 9 820 échantillons.)
+
+| stratégie | Sharpe net | turnover | noms moy. |
+|---|---|---|---|
+| raw (primaire) | +0.71 | 0.04 | 20 |
+| méta-filtre (P≥0.5) | +0.57 | 0.06 | 13 |
+| méta-sizing (∝P) | +0.75 | 0.04 | — |
+
+**Métrique clé : AUC OOS = 0.507** (taux de gain de base 51.7 %). Le méta-modèle
+**ne discrimine quasiment pas** les paris gagnants des perdants — pile ou face. Le
+méta-**filtre** *dégrade* (il jette de bons paris, +0.71→+0.57) ; le méta-**sizing**
+gagne +0.04 (bruit, non significatif vu l'AUC≈0.5) et ne survivrait pas au DSR avec
+l'essai compté. **Non inscrit** — le méta-modèle n'a pas d'edge secondaire fiable.
+
+C'est le **5ᵉ résultat convergent** (après TSMOM, univers large, résiduel, sentiment) :
+sur ces 80 large-caps / 3 ans, aucune sophistication de signal *ni de méta-modèle* ne
+bat le momentum brut bien géré. La cause reste la **donnée** — pas assez de paris
+indépendants ni d'histoire pour qu'un secondaire apprenne quelque chose de
+généralisable. Le module reste **infrastructure testée**, prêt à re-passer sur un
+univers profond sans biais de survie (où features fondamentales/cross-sectionnelles
+donneraient au secondaire de quoi discriminer).
+
 ---
 
 ## Ce que la recherche confirme sur l'approche déjà tenue
