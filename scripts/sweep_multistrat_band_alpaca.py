@@ -171,23 +171,45 @@ def main() -> None:
     base = by_band.get(0.0, rows[0][1])
     base_net, base_gross = base["net_sharpe"], base["gross_sharpe"]
 
-    # Garde-fou anti-surapprentissage : ne considérer que les bandes qui PRÉSERVENT
-    # le signal (Sharpe brut ≥ 90 % du brut à bande=0). Une bande large « gagne » en
-    # Sharpe net en GELANT le book (turnover ~0, brut effondré) — ce gain est un
-    # artefact dépendant du chemin, pas un vrai bénéfice cost-aware. On sélectionne
-    # donc le meilleur Sharpe net PARMI les bandes à signal préservé.
-    gross_floor = 0.90 * base_gross
-    eligible = [(b, m) for b, m in rows if m["gross_sharpe"] >= gross_floor]
+    # Garde-fou anti-surapprentissage (deux critères). Une bande large « gagne » en
+    # Sharpe net en GELANT le book : le turnover s'effondre et la perf devient un
+    # pari sur UNE allocation statique — gain dépendant du chemin qui change de signe
+    # d'une sous-période à l'autre (vérifié empiriquement). On n'accepte donc qu'une
+    # bande qui PRÉSERVE À LA FOIS :
+    #   1. le signal   : Sharpe brut ≥ 90 % du brut à bande=0 ;
+    #   2. le trading  : turnover ≥ 50 % du turnover à bande=0 (sinon book quasi gelé
+    #      — un bon Sharpe brut *en échantillon* n'y suffit pas, c'est de la chance).
+    # Puis on prend le meilleur Sharpe net parmi les bandes ainsi retenues.
+    # Cas dégénéré : si le book n'a AUCUN edge brut sur ce window (Sharpe brut ≤ 0),
+    # « préserver 90 % du brut » n'a pas de sens (90 % d'un négatif = seuil absurde).
+    # On désactive alors le plancher de brut et on ne garde que le plancher de
+    # turnover — la bande ne peut de toute façon pas créer d'alpha là où il n'y en a pas.
+    no_gross_edge = base_gross <= 0
+    gross_floor = float("-inf") if no_gross_edge else 0.90 * base_gross
+    turn_floor = 0.50 * base["turnover"]
+    eligible = [(b, m) for b, m in rows
+                if m["gross_sharpe"] >= gross_floor and m["turnover"] >= turn_floor]
     best_band, best = max(eligible, key=lambda kv: (kv[1]["net_sharpe"], kv[1]["net_ann"]))
     raw_band, raw = max(rows, key=lambda kv: kv[1]["net_sharpe"])
 
     print("\n" + "-" * 78)
     print(f"Argmax brut du Sharpe net : bande {raw_band:.3f} (net {raw['net_sharpe']:+.2f}, "
           f"brut {raw['gross_sharpe']:+.2f}, turnover {raw['turnover']:.3f})")
-    if raw_band != best_band and raw["gross_sharpe"] < gross_floor:
-        print(f"  ⚠️  REJETÉE : brut {raw['gross_sharpe']:+.2f} < {gross_floor:+.2f} "
-              f"(90 % du brut à bande=0) — le book est gelé, gain net = artefact.")
-    print(f"\nRecommandation (signal préservé, brut ≥ {gross_floor:+.2f}) : "
+    if raw_band != best_band:
+        why = []
+        if raw["gross_sharpe"] < gross_floor:
+            why.append(f"brut {raw['gross_sharpe']:+.2f} < {gross_floor:+.2f}")
+        if raw["turnover"] < turn_floor:
+            why.append(f"turnover {raw['turnover']:.3f} < {turn_floor:.3f}")
+        if why:
+            print(f"  ⚠️  REJETÉE ({' ; '.join(why)}) — book gelé / signal dégradé, "
+                  f"gain net = artefact dépendant du chemin.")
+    if no_gross_edge:
+        print(f"\n⚠️  Book SANS edge brut sur ce window (Sharpe brut à bande=0 = "
+              f"{base_gross:+.2f} ≤ 0) : la bande ne peut pas créer d'alpha. Plancher de "
+              f"brut désactivé, on ne retient que les bandes à trading préservé (least-bad).")
+    print(f"\nRecommandation ({'trading préservé' if no_gross_edge else 'signal ET trading préservés'} : "
+          f"{'' if no_gross_edge else f'brut ≥ {gross_floor:+.2f}, '}turnover ≥ {turn_floor:.3f}) : "
           f"bande {best_band:.3f}")
     print(f"  Sharpe net {best['net_sharpe']:+.2f} vs {base_net:+.2f} à bande=0  |  "
           f"brut {best['gross_sharpe']:+.2f}  |  turnover {best['turnover']:.3f}  |  "
