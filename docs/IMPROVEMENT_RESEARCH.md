@@ -313,6 +313,38 @@ du multiple-testing. Conclusion inchangée et désormais *robuste sur 4 familles
 (univers profond sans biais de survie, idéalement small-caps — là où sentiment *et*
 value ont de la place), pas une variante de plus sur ce même échantillon.
 
+### ✅ Fait (Tier 2 quinquies) — famille VOLUME/MICROSTRUCTURE testée, REJETÉE (6ᵉ famille)
+
+Audit du code déjà présent (`ml/factor_catalog.py` = 100 facteurs, dont 15
+Microstructure + 4 Volume ; `ml_features_advanced/microstructure_features.py`) : la
+famille **volume/microstructure** — indépendante du price-trend et calculable depuis
+le **volume Alpaca** — n'avait **jamais** passé le portail (les validations ne
+couvraient que les 8 facteurs prix classiques). Testée proprement, **2 hypothèses
+pré-enregistrées** (pas de sweep), via `run_microstructure_validation_alpaca.py`
+(50 large-caps, reb=10, coûts calibrés) :
+
+| signal | IC t | Sharpe net | corr ↔ momentum | verdict |
+|---|---|---|---|---|
+| **OFI** (order-flow imbalance) | −0.71 | −0.27 | **+0.08** | ❌ IC non significatif |
+| **Amihud** (illiquidité) | −2.01 | −0.20 | **−0.39** | ❌ IC significatif mais du *mauvais signe* |
+
+**Non inscrit.** Les deux sont **réellement indépendants** du momentum (+0.08 / −0.39
+→ vraie breadth potentielle), mais sans edge sur barres **quotidiennes / large-caps** :
+l'OFI et l'illiquidité vivent en **intraday** et sur **small-caps illiquides**.
+*Discipline* : l'Amihud à −2.01 « passerait » en **inversant le signe**, mais
+l'hypothèse pré-enregistrée était la prime de liquidité (long illiquide) et les
+données disent l'inverse sur large-caps — flipper serait le **piège post-hoc** de
+l'anomalie du combinateur (IC significatif ≠ edge exploitable). On rejette.
+
+**6ᵉ résultat convergent** (TSMOM, univers large, résiduel, sentiment, meta-labeling,
+volume/microstructure) : chaque famille *indépendante* qu'on teste confirme la
+breadth potentielle **mais** ne produit pas d'edge sur cet échantillon
+quotidien/large-cap/3 ans. Le code (OFI, Amihud, réutilisant les modules existants)
+reste comme **infra testée**, prête sur données profondes (intraday ou small-caps).
+Le reste du catalogue non testé (Regime/CrossAsset/Alternative, options) exige des
+données qu'on **n'a pas** (macro, cross-asset, chaînes d'options) → hors de portée
+ici. **La famille volume était le dernier candidat data-disponible ; il est traité.**
+
 ---
 
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
