@@ -23,16 +23,46 @@ calibrés que le portail ; le verdict reste soumis au portail (IC/Sharpe net + D
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
-__all__ = ["MetaResult", "MetaConfirm", "META_FEATURES", "build_meta_samples",
+__all__ = ["MetaResult", "MetaConfirm", "META_FEATURES", "META_FEATURES_RICH",
+           "REGIME_FEATURES", "regime_features", "build_meta_samples",
            "walk_forward_meta", "confirm_meta_labeling", "meta_filter_today"]
 
 #: Features méta par défaut (clés de ``compute_classic_factors``), motivées ex-ante.
 META_FEATURES = ("momentum_12_1", "momentum_6_1", "low_vol", "reversal_5", "max_lottery")
+
+#: Features de **régime** (Daniel-Moskowitz 2016, Barroso-Santa-Clara 2015) : ce qui
+#: prédit les *krachs de momentum* n'est pas une caractéristique cross-section du titre
+#: mais l'état du marché. Diffusées (mêmes valeurs pour tous les titres un jour donné).
+REGIME_FEATURES = ("mkt_ret_126", "mkt_vol_21", "xs_disp")
+
+#: Jeu enrichi = caractéristiques titre + régime marché. Pré-enregistré (pas un sweep).
+META_FEATURES_RICH = META_FEATURES + REGIME_FEATURES
+
+
+def regime_features(close: pd.DataFrame, scores: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Features de régime diffusées (dates × titres, mêmes valeurs par ligne).
+
+    * ``mkt_ret_126`` — rendement cumulé du marché équipondéré sur 126 j (état
+      haussier/baissier ; le momentum krache après un bear market qui rebondit) ;
+    * ``mkt_vol_21`` — vol réalisée du marché sur 21 j (turbulence — Barroso) ;
+    * ``xs_disp`` — dispersion cross-section du score momentum du jour (régimes de
+      forte/faible dispersion).
+    """
+    mkt_ret = close.pct_change().mean(axis=1)
+    mkt_ret_126 = (1.0 + mkt_ret).rolling(126).apply(lambda x: x.prod(), raw=True) - 1.0
+    mkt_vol_21 = mkt_ret.rolling(21).std()
+    xs_disp = scores.std(axis=1)  # std cross-section par date
+
+    def _broadcast(s: pd.Series) -> pd.DataFrame:
+        return pd.DataFrame({c: s for c in close.columns}, index=close.index)
+
+    return {"mkt_ret_126": _broadcast(mkt_ret_126), "mkt_vol_21": _broadcast(mkt_vol_21),
+            "xs_disp": _broadcast(xs_disp)}
 
 
 @dataclass
@@ -383,6 +413,7 @@ class MetaConfirm:
     subperiod_meta_sharpes: list[float]
     subperiod_raw_sharpes: list[float]
     avg_kept: float
+    meta_returns: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
 
     def summary(self) -> str:
         return (
@@ -536,4 +567,5 @@ def confirm_meta_labeling(
         auc=auc, auc_perm_pvalue=auc_p, n_oos_preds=len(oos_y),
         subperiod_meta_sharpes=_thirds(meta_ser), subperiod_raw_sharpes=_thirds(raw_ser),
         avg_kept=float(np.mean(kept_counts)) if kept_counts else 0.0,
+        meta_returns=meta_ser.dropna(),
     )

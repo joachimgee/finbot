@@ -441,6 +441,28 @@ qui *illustre empiriquement le meta-labeling de López de Prado sur ce système*
 dataset **sans biais de survie** (le vrai juge), (b) DSR campagne, (c) **forward-test
 paper**. Pas d'inscription ni de live tant que (a) n'est pas fait.
 
+**✅ (b) fait — features de régime + DSR campagne** (`run_meta_features_dsr_alpaca.py`,
+18 ans, 45 titres). *Meilleures features* : ajout **pré-enregistré** de 3 features de
+régime (Daniel-Moskowitz/Barroso : rdt marché 126 j, vol marché 21 j, dispersion
+cross-section — `regime_features`). Résultat **marginal** : l'AUC ne bouge pas
+(0.563→0.561, le modèle ne discrimine pas mieux) mais le Sharpe monte (+0.76→**+0.86**)
+et le 1er tiers se stabilise (0.12→0.40). Les features de base captaient déjà
+l'essentiel. *DSR campagne* (déflation du Sharpe méta RICH par ~20-30 essais de toute
+la campagne, σ=0.0247 du sweep) :
+
+| N essais | Sharpe/pér. méta | repère E[max\|H0] | **DSR** |
+|---|---|---|---|
+| 20 | +0.0542 | +0.0469 | **0.68** (⚠️ limite) |
+| 30 | +0.0542 | +0.0512 | **0.58** (⚠️ limite) |
+
+**Résultat le plus fort du projet, mais pas une validation.** Le Sharpe du méta
+**dépasse** le repère best-of-N (0.054 > 0.047-0.051) — *la première chose du projet à
+le faire* (le momentum brut, lui, est **sous** son repère : Sharpe/pér 0.021 < 0.052,
+DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
+(kurtosis 10.8) + échantillon fini laissent une confiance de ~0.6-0.7, pas une
+certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
+le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
+
 **✅ (c) fait — câblage forward-test paper.** `framework.MetaLabelConstruction`
 (couche enfichable #5) + `run_meta_labeling_paper.py` : le book momentum méta-labelé
 tourne sur le compte **paper** via le chemin audité (OrderGateway + journal +

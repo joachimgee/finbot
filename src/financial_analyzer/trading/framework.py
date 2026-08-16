@@ -234,7 +234,11 @@ class MetaLabelConstruction:
             compute_classic_factors,
             daily_returns,
         )
-        from financial_analyzer.backtest.meta_labeling import META_FEATURES, meta_filter_today
+        from financial_analyzer.backtest.meta_labeling import (
+            META_FEATURES_RICH,
+            meta_filter_today,
+            regime_features,
+        )
 
         close = self._long_panel(data)
         if close.shape[1] < self.min_names:
@@ -244,11 +248,13 @@ class MetaLabelConstruction:
             scores = factors.get("momentum_12_1")
             if scores is None or scores.dropna(how="all").empty:
                 return self._p._construct_weights(signals, data)
+            # Jeu enrichi (features titre + régime marché) — le modèle pré-enregistré.
+            factors.update(regime_features(close, scores))
             book = meta_filter_today(
                 scores, daily_returns(close), factors,
                 quantile=self.quantile, horizon=self.rebalance_every,
                 min_train=self.min_train, p_threshold=self.p_threshold,
-                feature_names=META_FEATURES)
+                feature_names=META_FEATURES_RICH)
         except Exception:  # noqa: BLE001 - une construction ne doit jamais crasher le run
             return self._p._construct_weights(signals, data)
         if not book:

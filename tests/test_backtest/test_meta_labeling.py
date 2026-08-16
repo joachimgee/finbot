@@ -84,6 +84,29 @@ def test_meta_filter_today_empty_scores_is_empty() -> None:
     assert meta_filter_today(pd.DataFrame(), pd.DataFrame(), {}) == {}
 
 
+def test_regime_features_are_broadcast_and_rich_set_runs() -> None:
+    import numpy as np
+    import pandas as pd
+
+    from financial_analyzer.backtest.meta_labeling import (
+        META_FEATURES_RICH,
+        confirm_meta_labeling,
+        regime_features,
+    )
+    scores, returns, features = _synth(seed=11, n=500)
+    close = (1.0 + returns).cumprod() * 100.0
+    rf = regime_features(close, scores)
+    assert set(rf) == {"mkt_ret_126", "mkt_vol_21", "xs_disp"}
+    # Diffusé : mêmes valeurs sur toutes les colonnes une date donnée.
+    assert bool((rf["mkt_vol_21"].nunique(axis=1) <= 1).all())
+    rich = {**features, **rf}
+    c = confirm_meta_labeling(scores, returns, rich, feature_names=META_FEATURES_RICH,
+                              rebalance_every=10, horizon=10, min_train=200,
+                              n_random=10, n_perm=50)
+    assert 0.0 <= c.auc <= 1.0
+    assert isinstance(c.meta_returns, pd.Series)  # série exposée pour le DSR
+
+
 def test_walk_forward_trains_and_reports_auc() -> None:
     scores, returns, features = _synth(seed=5, n=500)
     res = walk_forward_meta(scores, returns, features, rebalance_every=10, horizon=10,
