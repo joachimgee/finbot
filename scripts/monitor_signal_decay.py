@@ -39,8 +39,12 @@ def main() -> int:
     ap.add_argument("--signal", default="momentum_12_1", help="Signal du registre à surveiller.")
     ap.add_argument("--lookback", type=int, default=252, help="Périodes récentes évaluées (~1 an).")
     ap.add_argument("--start", default="2023-08-01")
-    ap.add_argument("--end", default="2026-08-16")
-    ap.add_argument("--price-cache", default="/tmp/alpaca_signal_monitor.csv")
+    ap.add_argument("--end", default=None,
+                    help="Date de fin (défaut : aujourd'hui — indispensable pour un "
+                         "suivi récurrent qui doit voir les données les plus fraîches).")
+    ap.add_argument("--price-cache", default=None,
+                    help="Cache prix (défaut : estampillé par la date de fin, pour "
+                         "re-fetcher des données fraîches à chaque exécution récurrente).")
     ap.add_argument("--health-log", default="logs/signal_health.jsonl")
     ap.add_argument("--no-alert", action="store_true", help="Ne pas émettre d'alerte (rapport seul).")
     args = ap.parse_args()
@@ -52,11 +56,14 @@ def main() -> int:
     from financial_analyzer.backtest.signal_monitor import evaluate_signal_health
     from financial_analyzer.data.alpaca_history import load_or_fetch
 
+    end = args.end or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     print("=" * 78)
     print(f"MONITEUR DE DÉCROISSANCE — signal '{args.signal}' (fenêtre {args.lookback} pér.)")
     print("=" * 78)
 
-    px = load_or_fetch(UNIVERSE, args.start, args.end, cache_path=args.price_cache)
+    price_cache = args.price_cache or f"/tmp/alpaca_signal_monitor_{end}.csv"
+    px = load_or_fetch(UNIVERSE, args.start, end, cache_path=price_cache)
     px = px[[c for c in UNIVERSE if c in px.columns]].ffill()
     px = px.dropna(axis=1, how="any").dropna(how="all")
 
