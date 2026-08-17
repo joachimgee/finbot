@@ -259,6 +259,13 @@ class MetaLabelConstruction:
             return self._p._construct_weights(signals, data)
         if not book:
             return self._p._construct_weights(signals, data)
+        # Contrôle de drawdown (opt-in) : overlay de vol-targeting (Barroso). Le
+        # Monte-Carlo a montré un drawdown sévère du L/S momentum ; scaler l'exposition
+        # vers target_vol (dé-risque en régime turbulent, max_exposure=1 → jamais de
+        # levier) divise ~par 2 le drawdown en préservant le Sharpe. Ordre = vol → bande
+        # (comme _finalize_weights).
+        if getattr(self._p, "target_vol", None):
+            book = self._p._apply_vol_overlay(book, data)
         # Bande de non-transaction (opt-in), sign-agnostique → OK long/short.
         if getattr(self._p, "no_trade_band", 0.0) > 0:
             book = self._p._apply_no_trade_band(book)

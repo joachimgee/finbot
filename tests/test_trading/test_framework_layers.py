@@ -226,6 +226,25 @@ def test_metalabel_construction_produces_long_short_book(monkeypatch) -> None:
     assert out == {"UP": 0.5, "DOWN": -0.5}
 
 
+def test_metalabel_construction_applies_vol_overlay_when_target_vol_set(monkeypatch) -> None:
+    """Si le pipeline a target_vol, le book méta passe par l'overlay de vol (drawdown)."""
+    monkeypatch.setattr(
+        "financial_analyzer.backtest.meta_labeling.meta_filter_today",
+        lambda *a, **k: {"UP": 0.6, "DOWN": -0.4})
+    pipe = _make_pipeline(target_vol=0.10)
+    seen = {}
+
+    def _overlay(weights, data):
+        seen["called"] = True
+        return {s: w * 0.5 for s, w in weights.items()}  # dé-risque 50%
+
+    pipe._apply_vol_overlay = _overlay
+    data = {"prices": {f"T{i}": _price_df(0.0, seed=i) for i in range(12)}}
+    out = MetaLabelConstruction(pipe, min_names=10).construct({}, data)
+    assert seen.get("called")
+    assert out == {"UP": 0.3, "DOWN": -0.2}  # exposition réduite de moitié
+
+
 def test_injected_execution_receives_target_weights() -> None:
     """Un exécuteur custom reçoit les poids cibles et son retour pilote le résultat."""
     seen = {}

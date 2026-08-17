@@ -463,6 +463,27 @@ DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
 certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
 le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
 
+**✅ Contrôle de drawdown branché — vol-target (Barroso) divise le drawdown par ~2.**
+Suite au Monte-Carlo, test des overlays de dé-risque *déjà présents* sur la série méta
+(RICH, reb=21), drawdown re-mesuré par bootstrap (`run_meta_drawdown_control_alpaca.py`) :
+
+| variante | Sharpe | DD médian | DD pire 1 % | levier moy. |
+|---|---|---|---|---|
+| raw | +0.82 | −51 % | −83 % | 1.00 |
+| **vol-target 10 % cap1** | **+0.84** | **−24 %** | **−47 %** | 0.47 |
+| vol-target 10 % cap2 (lève) | +0.85 | −24 % | −47 % | 0.47 |
+| régime-HMM | +0.94 | −33 % | −61 % | 0.73 |
+
+**Le vol-target (Barroso-Santa-Clara) est le meilleur contrôle de drawdown** : il **divise
+le drawdown par ~2** (médiane −51 %→−24 %, pire −83 %→−47 %) **en préservant le Sharpe**
+(+0.82→+0.84) — le résultat classique « la vol prédit les krachs de momentum ». Le
+régime-HMM donne le meilleur *Sharpe* (+0.94) mais réduit moins le drawdown. cap1≈cap2
+(le book veut surtout dé-risquer, rarement lever) → on retient **cap1 (jamais de levier)**.
+**Branché** : `MetaLabelConstruction` applique l'overlay de vol du pipeline
+(`_apply_vol_overlay`, ex-ante) quand `target_vol` est défini ; `run_meta_labeling_paper.py`
+le met à **10 %** par défaut. Dry-run réel : book à **brut 0.38** (dé-risqué en régime
+volatil). Le forward-test paper mesure désormais la version *risk-managed*.
+
 **✅ Monte-Carlo (block bootstrap) — edge robuste, mais DRAWDOWN SÉVÈRE révélé.**
 `block_bootstrap_metrics` (robustness.py) + `run_meta_montecarlo_alpaca.py` : 5000
 chemins ré-échantillonnés par blocs de 21 j de la série de rendements réelle du book

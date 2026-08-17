@@ -68,6 +68,10 @@ def main() -> None:
     ap.add_argument("--threshold", type=float, default=0.5, help="Seuil P(gain) du méta-filtre.")
     ap.add_argument("--no-trade-band", type=float, default=0.02, metavar="FRAC",
                     help="Bande de non-transaction (défaut 0.02 ; 0 = viser le cible).")
+    ap.add_argument("--target-vol", type=float, default=0.10, metavar="VOL",
+                    help="Contrôle de drawdown : vol-target annualisée (défaut 0.10 ; "
+                         "0 = désactivé). Dé-risque en régime volatil, jamais de levier "
+                         "(max_exposure=1) — divise ~par 2 le drawdown (Barroso).")
     ap.add_argument("--rebalance-every", type=int, default=21, metavar="N",
                     help="Cadence : ne rééquilibre que tous les N jours ouvrés (défaut 21 "
                          "≈ mensuel — meilleure cadence mesurée pour ce book). Persistée.")
@@ -86,8 +90,10 @@ def main() -> None:
     label = "DRY-RUN (aucun ordre soumis)" if dry_run else "EXÉCUTION PAPER RÉELLE"
     print("=" * 78)
     print(f"MÉTA-LABELING momentum — Alpaca PAPER — {label}")
-    print(f"Seuil P(gain) : {args.threshold:.2f}  |  Bande de non-transaction : "
-          f"{band * 100:.1f}%" if band > 0 else f"Seuil P(gain) : {args.threshold:.2f}")
+    tv = max(0.0, float(args.target_vol))
+    print(f"Seuil P(gain) : {args.threshold:.2f}  |  Bande : {band * 100:.1f}%  |  "
+          f"Vol-target (drawdown) : {tv * 100:.0f}%" if tv > 0 else
+          f"Seuil P(gain) : {args.threshold:.2f}  |  Bande : {band * 100:.1f}%  |  Vol-target : off")
     print("=" * 78)
 
     adapter = AlpacaAdapter.from_env(mode="paper")
@@ -128,8 +134,9 @@ def main() -> None:
             adapter.disconnect()
             return
 
+    tvol = max(0.0, float(args.target_vol)) or None
     pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal,
-                                   no_trade_band=band)
+                                   no_trade_band=band, target_vol=tvol)  # max_exposure=1 par défaut
     # Couche enfichable #5 : construction méta-labeling.
     pipeline.construction = MetaLabelConstruction(pipeline, p_threshold=args.threshold)
 
