@@ -600,8 +600,39 @@ qui rebondissent. (2) En **long-only** (l'approche de l'ancien système), le Sha
 **BETA** (univers +29 %/an en 2023-26), **pas de l'alpha**. Le momentum ne bat même pas
 « acheter tout ».
 
+### ⚠️ CORRECTION (18 ans) — la conclusion « c'est du beta » était un ARTEFACT DE 3 ANS
+
+Le tableau ci-dessus portait sur 2023-2026 (un bull). Rejoué sur **2008-2026** (Yahoo,
+1458 titres survivants, GFC + 2020 + 2022 inclus) — `--source yahoo --start 2008-01-01` :
+
+| | 3 ans (2023-26) | **18 ans (2008-26)** |
+|---|---|---|
+| momentum long-only (tout) | +1.18 | **+1.10** |
+| momentum long-only (small-cap T3) | +1.03 | **+1.14** |
+| **benchmark équipondéré (aucun signal)** | **+1.43** (battait tout) | **+0.92** (**battu**) |
+| IC t (small-cap) | +2.46 | **+4.77** |
+| momentum **L/S** small-cap | −0.70 | −0.39 (toujours négatif) |
+
+**Sur un échantillon multi-cycles, le momentum small-cap long-only BAT le beta de son
+univers** (+1.10/+1.14 vs +0.92) et son **IC devient très significatif (t=4.77 vs 2.56 en
+large-cap)** — conforme à **Hong-Lim-Stein (2000)** : momentum plus fort là où l'info
+diffuse lentement. La conclusion « pur beta » venait de la fenêtre courte (même erreur que
+pour le momentum large-cap, où 3 ans donnaient +0.76 flatté). **Deux leçons convergentes :
+une fenêtre de 3 ans ment.**
+
+**Ce qui tient donc :** (1) la **famille** visée par l'ancien système (small-cap momentum)
+est la bonne ; (2) la **forme long-only** est la bonne — le côté short reste toxique en
+small-cap (L/S −0.39 : squeezes, coûts d'emprunt) ; (3) **réserve majeure inchangée** :
+1458 survivants de 18 ans (Shumway 1997) — le benchmark subit le même biais, donc l'**écart**
+momentum-vs-benchmark est plus fiable que les niveaux, mais le momentum small-cap
+surpondère les titres qui montent et les faillites (−100 %) sont absentes → l'alpha réel
+est **plus faible que +0.20**, d'un montant indéterminable sans base sans-biais ; (4) coûts
+small-cap sous-estimés (2,5 bps vs spreads réels de 1-10 %).
+
 **Le ~80 % de l'ancien système = beta d'un régime small-cap haussier × survivorship, pas
-un edge répétable.** Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
+un edge répétable.** *(Nuance après le test 18 ans : le ~80 % sur un seul bull reste
+dominé par le beta+survivorship, MAIS la famille sous-jacente — small-cap momentum
+long-only — porte un alpha réel modeste et significatif sur le long terme.)* Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
 répliquent pas hors micro-caps sur-pondérés) ; Shumway (1997, delisting bias — les radiées
 à zéro sont invisibles dans un compte, gonflant l'affichage) ; Lesmond-Schill-Zhou (2004,
 momentum small-cap mangé par les coûts) ; Bali-Cakici-Whitelaw (2011, les titres loterie

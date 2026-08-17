@@ -35,6 +35,8 @@ def main() -> None:
     ap.add_argument("--start", default="2022-06-01")
     ap.add_argument("--end", default="2026-08-01")
     ap.add_argument("--reb", type=int, default=21)
+    ap.add_argument("--source", choices=["alpaca", "yahoo"], default="alpaca",
+                    help="alpaca (~2020+) ou yahoo (décennies, pour l'histoire longue).")
     ap.add_argument("--uni-cache", default="/tmp/alpaca_broad_universe.json")
     ap.add_argument("--px-cache", default="/tmp/alpaca_broad_prices.csv")
     args = ap.parse_args()
@@ -66,8 +68,13 @@ def main() -> None:
         px = pd.read_csv(pxp, index_col=0, parse_dates=True)
         print(f"Prix chargés du cache : {px.shape}")
     else:
-        print(f"Fetch prix {args.start}→{args.end} pour {len(universe)} titres (long)…")
-        px = fetch_daily_history(universe, args.start, args.end, progress=True)
+        print(f"Fetch prix {args.start}→{args.end} pour {len(universe)} titres "
+              f"via {args.source} (long)…")
+        if args.source == "yahoo":
+            from financial_analyzer.data.yahoo_history import fetch_daily_close
+            px = fetch_daily_close(universe, args.start, args.end, progress=True, pause=0.05)
+        else:
+            px = fetch_daily_history(universe, args.start, args.end, progress=True)
         px.to_csv(pxp)
     px = px.ffill().dropna(axis=1, thresh=int(0.5 * len(px))).dropna(how="all")
     print(f"Panel exploitable : {px.shape[0]} jours × {px.shape[1]} titres\n")
