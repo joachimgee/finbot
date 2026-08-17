@@ -84,6 +84,31 @@ def test_meta_filter_today_empty_scores_is_empty() -> None:
     assert meta_filter_today(pd.DataFrame(), pd.DataFrame(), {}) == {}
 
 
+def test_triple_barrier_label_first_touch() -> None:
+    import numpy as np
+
+    from financial_analyzer.backtest.meta_labeling import _triple_barrier_label
+
+    sigma = 0.01
+    up_path = np.array([0.02, 0.0, -0.05])   # touche le profit-take (long) en premier
+    dn_path = np.array([-0.05, 0.0, 0.02])   # touche le stop-loss en premier
+    assert _triple_barrier_label(up_path, side=1, sigma=sigma, pt_mult=1.0, sl_mult=1.0) == 1
+    assert _triple_barrier_label(dn_path, side=1, sigma=sigma, pt_mult=1.0, sl_mult=1.0) == 0
+    # Short : un chemin qui BAISSE gagne (side=-1).
+    assert _triple_barrier_label(dn_path, side=-1, sigma=sigma, pt_mult=1.0, sl_mult=1.0) == 1
+    # sigma non exploitable → repli sur le signe du rendement final.
+    flat = np.array([0.001, 0.001, 0.001])
+    assert _triple_barrier_label(flat, side=1, sigma=float("nan"), pt_mult=1.0, sl_mult=1.0) == 1
+
+
+def test_build_meta_samples_triple_barrier_runs() -> None:
+    scores, returns, features = _synth(seed=21, n=400)
+    s = build_meta_samples(scores, returns, features, quantile=0.25, horizon=10,
+                           label_method="triple_barrier", pt_mult=1.0, sl_mult=1.0)
+    assert not s.empty
+    assert set(s["y"].unique()).issubset({0, 1})
+
+
 def test_compare_meta_sizing_returns_three_schemes() -> None:
     from financial_analyzer.backtest.meta_labeling import compare_meta_sizing
 

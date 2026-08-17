@@ -463,6 +463,25 @@ DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
 certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
 le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
 
+**✅ Triple-barrier labeling (AFML ch.3) testé — ≈ équivalent au label horizon ici.**
+Le méta a une AUC de ~0.59 (labels bruités). López de Prado propose le **triple-barrier**
+(1ère barrière touchée : profit-take/stop-loss ∝ vol du titre, ou temps). Implémenté
+(`build_meta_samples(label_method='triple_barrier')`) et comparé au label horizon par les
+mêmes contrôles (`run_meta_triple_barrier_alpaca.py`, 18 ans, reb=21) :
+
+| labeling | AUC | méta Sharpe |
+|---|---|---|
+| horizon | 0.586 | +0.82 |
+| triple-barrier (pt=sl=1) | 0.588 (**+0.002**) | +0.90 (+0.09) |
+
+**AUC inchangée** → le triple-barrier ne rend pas le modèle plus discriminant ; le +0.09
+de Sharpe est dans le bruit et, sans gain d'AUC, n'est pas une vraie compétence. Raison :
+sur 21 j en large-caps **sans exits intra-holding**, « 1ère barrière vol-scalée » et « signe
+du rendement à 21 j » sont quasi équivalents — le triple-barrier paie surtout avec des
+**sorties réelles sur barrières** (intraday), hors périmètre (le book tient jusqu'au rééq.).
+**Label horizon conservé** (book inchangé) ; le code triple-barrier reste dispo pour un
+futur moteur d'exits réels. C'est la dernière idée AFML des docs de recherche — testée.
+
 **✅ Contrôle de drawdown branché — vol-target (Barroso) divise le drawdown par ~2.**
 Suite au Monte-Carlo, test des overlays de dé-risque *déjà présents* sur la série méta
 (RICH, reb=21), drawdown re-mesuré par bootstrap (`run_meta_drawdown_control_alpaca.py`) :

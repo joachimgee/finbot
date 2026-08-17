@@ -97,6 +97,32 @@ def _sharpe(r: pd.Series, ppy: int = 252) -> float:
     return float(r.mean() / sd * np.sqrt(ppy)) if len(r) > 1 and sd > 0 else 0.0
 
 
+def _triple_barrier_label(daily_rets: np.ndarray, side: int, sigma: float,
+                          pt_mult: float, sl_mult: float) -> int:
+    """Label triple-barrière (López de Prado, AFML ch.3) : 1ère barrière touchée.
+
+    Barrières profit-take/stop-loss dimensionnées par la vol du titre à l'entrée
+    (``mult·σ·√h``, côté-ajusté). Gain (1) si le profit-take est touché avant le
+    stop-loss ; perte (0) si l'inverse ; barrière verticale (temps) → signe du
+    rendement final. Sans σ exploitable → repli sur le signe (label horizon).
+    """
+    if not np.isfinite(sigma) or sigma <= 0 or len(daily_rets) == 0:
+        comp = float(np.prod(1.0 + daily_rets) - 1.0)
+        return 1 if side * comp > 0 else 0
+    path = side * (np.cumprod(1.0 + daily_rets) - 1.0)
+    scale = sigma * np.sqrt(len(daily_rets))
+    up, lo = pt_mult * scale, -sl_mult * scale
+    uh = np.where(path >= up)[0]
+    lh = np.where(path <= lo)[0]
+    fu = uh[0] if uh.size else np.inf
+    fl = lh[0] if lh.size else np.inf
+    if fu < fl:
+        return 1
+    if fl < fu:
+        return 0
+    return 1 if path[-1] > 0 else 0  # barrière verticale
+
+
 def build_meta_samples(
     scores: pd.DataFrame,
     returns: pd.DataFrame,
@@ -105,15 +131,27 @@ def build_meta_samples(
     quantile: float = 0.2,
     horizon: int = 10,
     feature_names: tuple[str, ...] = META_FEATURES,
+    label_method: str = "horizon",
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
+    vol_span: int = 63,
 ) -> pd.DataFrame:
     """Table d'échantillons méta : une ligne par (date, nom sélectionné par le primaire).
 
-    Label ``y = 1`` si le pari a **gagné** (rendement composé forward sur ``horizon``
-    dans le sens du pari > 0). ``label_end`` = index de la barre de fin d'horizon,
-    pour la purge/embargo à l'entraînement. Sans look-ahead : X à t, y sur t→t+h.
+    ``label_method`` :
+      * ``'horizon'`` (défaut) — ``y=1`` si le rendement composé forward sur ``horizon``
+        dans le sens du pari est > 0 (label simple) ;
+      * ``'triple_barrier'`` — López de Prado (AFML ch.3) : ``y`` = 1ère barrière touchée
+        (profit-take/stop-loss ∝ vol du titre, ou temps). Labels moins bruités.
+
+    ``label_end`` = index de fin d'horizon (purge/embargo). Sans look-ahead : X à t,
+    y sur t→t+h.
     """
     idx = scores.index
     fwd_simple = returns.shift(-1)  # rendement de t -> t+1 attribué à t
+    # Vol quotidienne EWMA par titre (pour dimensionner les barrières), causale.
+    daily_vol = returns.ewm(span=vol_span, min_periods=vol_span // 2).std() if \
+        label_method == "triple_barrier" else None
     rows: list[dict] = []
     for i, dt in enumerate(idx):
         if i + horizon >= len(idx):
@@ -131,7 +169,8 @@ def build_meta_samples(
         for sym, side in picks.items():
             if sym not in window.columns:
                 continue
-            compounded = float((1.0 + window[sym].fillna(0.0)).prod() - 1.0)
+            wr = window[sym].fillna(0.0).to_numpy()
+            compounded = float(np.prod(1.0 + wr) - 1.0)
             feats = {}
             ok = True
             for fn in feature_names:
@@ -144,10 +183,15 @@ def build_meta_samples(
                 feats[fn] = v
             if not ok:
                 continue
+            if label_method == "triple_barrier":
+                sig = float(daily_vol.at[dt, sym]) if (dt in daily_vol.index
+                                                       and sym in daily_vol.columns) else np.nan
+                y = _triple_barrier_label(wr, side, sig, pt_mult, sl_mult)
+            else:
+                y = 1 if side * compounded > 0 else 0
             rows.append({
                 "date": dt, "date_i": i, "label_end_i": i + horizon, "symbol": sym,
-                "side": side, "y": 1 if side * compounded > 0 else 0,
-                "bet_ret": float(side * compounded), **feats,
+                "side": side, "y": int(y), "bet_ret": float(side * compounded), **feats,
             })
     return pd.DataFrame(rows)
 
@@ -199,6 +243,9 @@ def walk_forward_meta(
     cost_rate: float = 0.00025,
     feature_names: tuple[str, ...] = META_FEATURES,
     max_train: int | None = None,
+    label_method: str = "horizon",
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
 ) -> MetaResult:
     """Évalue raw vs méta (filtre/sizing) en walk-forward, purge+embargo, coûts inclus.
 
@@ -207,14 +254,14 @@ def walk_forward_meta(
     ``P(gain)`` pour les paris courants, et construit les books méta.
 
     ``max_train`` (optionnel) plafonne la fenêtre d'entraînement aux N échantillons
-    les plus récents — borne le coût du cas quotidien et compare les cadences à
-    fenêtre égale.
+    les plus récents. ``label_method`` : ``'horizon'`` ou ``'triple_barrier'`` (AFML).
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
 
     samples = build_meta_samples(scores, returns, features, quantile=quantile,
-                                 horizon=horizon, feature_names=feature_names)
+                                 horizon=horizon, feature_names=feature_names,
+                                 label_method=label_method, pt_mult=pt_mult, sl_mult=sl_mult)
     if samples.empty:
         return MetaResult(0, 0.0, 0.5, 0, 0, 0, 0, 0, 0, 0, 0)
 
@@ -447,6 +494,9 @@ def meta_filter_today(
     embargo: int = 10,
     p_threshold: float = 0.5,
     feature_names: tuple[str, ...] = META_FEATURES,
+    label_method: str = "horizon",
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
 ) -> dict[str, float]:
     """Poids **du jour** (dernière date) du book momentum FILTRÉ par le méta-modèle.
 
@@ -476,7 +526,8 @@ def meta_filter_today(
 
     try:
         samples = build_meta_samples(scores, returns, features, quantile=quantile,
-                                     horizon=horizon, feature_names=feats)
+                                     horizon=horizon, feature_names=feats,
+                                     label_method=label_method, pt_mult=pt_mult, sl_mult=sl_mult)
         train = samples[samples["label_end_i"] + embargo <= last_i]
         if len(train) < min_train or train["y"].nunique() < 2:
             return {s: float(w) for s, w in picks.items()}  # pas encore de méta
@@ -572,6 +623,9 @@ def confirm_meta_labeling(
     n_random: int = 100,
     n_perm: int = 1000,
     seed: int = 0,
+    label_method: str = "horizon",
+    pt_mult: float = 1.0,
+    sl_mult: float = 1.0,
 ) -> MetaConfirm:
     """Confirme (ou infirme) l'edge du méta-filtre par CONTRÔLES d'artefact.
 
@@ -590,7 +644,8 @@ def confirm_meta_labeling(
     from sklearn.preprocessing import StandardScaler
 
     samples = build_meta_samples(scores, returns, features, quantile=quantile,
-                                 horizon=horizon, feature_names=feature_names)
+                                 horizon=horizon, feature_names=feature_names,
+                                 label_method=label_method, pt_mult=pt_mult, sl_mult=sl_mult)
     rng = np.random.default_rng(seed)
     feats = list(feature_names)
     reb_i = list(range(0, len(scores.index), rebalance_every))
