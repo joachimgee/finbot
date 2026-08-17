@@ -657,7 +657,39 @@ l'**alpha net du beta de son univers n'est pas distinguable du bruit**.
 critère vide — seul l'**excès sur le benchmark du même univers** mesure l'alpha ; (2)
 **le choix du benchmark peut fabriquer un faux alpha** (mon erreur : le tercile small-cap
 a un beta plus élevé que l'univers entier) ; (3) un **IC significatif n'implique pas un
-alpha exploitable** — même leçon que l'anomalie du combinateur. Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
+alpha exploitable** — même leçon que l'anomalie du combinateur.
+
+### 🚩 (c) COÛTS RÉELS — le point mort est à 76 bps, dans la plage small-cap
+
+`run_smallcap_cost_reality.py`. *La mesure de spreads live a échoué* (marché fermé → le
+feed IEX renvoie des cotations périmées : 888 bps sur des titres **liquides**, absurde ;
+le script détecte et refuse de conclure dessus). Le résultat **robuste** ne dépend que du
+turnover et de l'excédent mesurés en (a) :
+
+* turnover annualisé du book = **5.54 × le capital** ;
+* excédent brut = **+4.21 %/an** ;
+* → **POINT MORT = 75.9 bps** de coût aller simple.
+
+| coût aller simple | coût annuel | excédent net | profil |
+|---|---|---|---|
+| 2.5 bps | 0.14 % | +4.07 % | large-cap (calibré repo) |
+| 25 bps | 1.39 % | +2.82 % | small-cap liquide |
+| 50 bps | 2.77 % | +1.44 % | small-cap |
+| **75.9 bps** | 4.21 % | **0.00 %** | **point mort** |
+| 100 bps | 5.54 % | −1.33 % | small-cap peu liquide |
+| 200 bps | 11.09 % | −6.88 % | micro-cap / penny |
+
+Les small-caps ont typiquement **50-300 bps** d'écart effectif (Lesmond-Schill-Zhou 2004)
+→ l'excédent est **mangé ou proche de zéro** dans la plage réaliste, et **franchement
+négatif** en micro-cap/penny — exactement le segment de l'ancien book. **Et il n'était
+déjà pas significatif avant coûts** (t=0.52, DSR 0.05) : les frictions ne font qu'enfoncer
+un edge non prouvé.
+
+**Conclusion (a)+(c) :** le small-cap momentum long-only **ne constitue pas un edge
+exploitable** — pas d'alpha démontrable sur son propre univers, et le peu d'excédent brut
+qu'il affiche ne survit pas aux frictions réelles de ce segment. La famille visée par
+l'ancien système était la bonne *intuition* (Hong-Lim-Stein), mais son rendement observé
+reste **beta × régime × survivorship**, non un edge répétable. Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
 répliquent pas hors micro-caps sur-pondérés) ; Shumway (1997, delisting bias — les radiées
 à zéro sont invisibles dans un compte, gonflant l'affichage) ; Lesmond-Schill-Zhou (2004,
 momentum small-cap mangé par les coûts) ; Bali-Cakici-Whitelaw (2011, les titres loterie
