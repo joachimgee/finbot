@@ -33,6 +33,32 @@ UNIVERSE = sorted({
 })
 
 
+def _business_days_since_last_order(adapter, lookback: int = 100) -> int | None:
+    """Jours ouvrés depuis le dernier ordre broker (= dernier rééquilibrage), ou None.
+
+    L'historique d'ordres Alpaca est l'état persistant (survit aux sessions fraîches).
+    Fail-safe : toute erreur → None (on autorise le rééquilibrage plutôt que bloquer).
+    """
+    try:
+        import numpy as np
+
+        orders = adapter.get_orders(status="all", limit=lookback) or []
+        dates = []
+        for o in orders:
+            ts = o.get("submitted_at") or o.get("filled_at") or o.get("created_at")
+            if ts is not None:
+                dates.append(getattr(ts, "date", lambda: None)() or __import__("pandas").Timestamp(ts).date())
+        if not dates:
+            return None
+        last = max(dates)
+        from datetime import date
+
+        return max(0, int(np.busday_count(last.isoformat(), date.today().isoformat())))  # noqa: DTZ011
+    except Exception as e:  # noqa: BLE001 - une garde de cadence ne doit jamais casser le run
+        print(f"    (cadence : historique d'ordres illisible — {e} ; rééquilibrage autorisé)")
+        return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--execute", action="store_true",
@@ -53,7 +79,6 @@ def main() -> None:
     from financial_analyzer.trading.framework import MetaLabelConstruction
     from financial_analyzer.trading.journal import TradingJournal
     from financial_analyzer.trading.live_trading_pipeline import LiveTradingPipeline
-    from financial_analyzer.trading.rebalance_gate import RebalanceGate
     from financial_analyzer.trading.reconciliation import reconcile_orders
 
     dry_run = not args.execute
@@ -86,18 +111,22 @@ def main() -> None:
 
     # Garde de cadence : le book méta est meilleur espacé (reb≈21 mensuel : Sharpe net
     # +0.92 vs +0.35 en quotidien, turnover −88 %). N'exécute un rééquilibrage réel que
-    # tous les N jours ouvrés (état persistant). En dry-run on montre toujours le book.
-    gate = RebalanceGate(state_path="logs/metalabel_rebalance_state.json",
-                         rebalance_every=args.rebalance_every)
+    # tous les N jours ouvrés. IMPORTANT : la source d'état est l'HISTORIQUE D'ORDRES
+    # ALPACA (persistant côté broker), pas un fichier local — les runs planifiés sont
+    # des sessions fraîches à disque éphémère, un fichier ne survivrait pas. Le book ne
+    # trade qu'aux rééquilibrages, donc « dernier ordre » = « dernier rééquilibrage ».
+    # En dry-run, garde inactive (on montre toujours le book).
     gate_active = (not dry_run) and (not args.ignore_cadence)
-    if gate_active and not gate.is_due():
-        left = gate.sessions_until_due()
-        print(f"\nCadence : book TENU (rééquilibré il y a < {args.rebalance_every} j ouvrés ; "
-              f"prochain dans {left} j). Aucun ordre.")
-        journal.record_snapshot(equity=float(acct.get("equity", 0.0)),
-                                cash=float(acct.get("cash", 0.0)), event="run_end", mode=adapter.mode)
-        adapter.disconnect()
-        return
+    if gate_active:
+        dsince = _business_days_since_last_order(adapter)
+        if dsince is not None and dsince < args.rebalance_every:
+            left = args.rebalance_every - dsince
+            print(f"\nCadence : book TENU (dernier rééquilibrage il y a {dsince} j ouvrés < "
+                  f"{args.rebalance_every} ; prochain dans ~{left} j). Aucun ordre.")
+            journal.record_snapshot(equity=float(acct.get("equity", 0.0)),
+                                    cash=float(acct.get("cash", 0.0)), event="run_end", mode=adapter.mode)
+            adapter.disconnect()
+            return
 
     pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal,
                                    no_trade_band=band)
@@ -135,10 +164,8 @@ def main() -> None:
         recon = reconcile_orders(journal.orders(), adapter.get_orders(status="all", limit=300) or [])
         journal.record_reconciliation(recon.to_dict())
         print(f"    {'✅' if recon.ok else '🚨'} {recon.summary()}")
-        # Rééquilibrage réel effectué → persister la date pour la garde de cadence.
-        if gate_active and result.get("status") == "success":
-            gate.record()
-            print(f"    Cadence enregistrée (prochain rééquilibrage dans {args.rebalance_every} j ouvrés).")
+        # Pas d'état local à persister : les ordres de ce run sont eux-mêmes la trace
+        # du rééquilibrage (les prochains runs liront « 0 j depuis le dernier ordre »).
 
     acct_end = adapter.get_account()
     journal.record_snapshot(equity=float(acct_end.get("equity", 0.0)),
