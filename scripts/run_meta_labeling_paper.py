@@ -42,12 +42,18 @@ def main() -> None:
     ap.add_argument("--threshold", type=float, default=0.5, help="Seuil P(gain) du méta-filtre.")
     ap.add_argument("--no-trade-band", type=float, default=0.02, metavar="FRAC",
                     help="Bande de non-transaction (défaut 0.02 ; 0 = viser le cible).")
+    ap.add_argument("--rebalance-every", type=int, default=21, metavar="N",
+                    help="Cadence : ne rééquilibre que tous les N jours ouvrés (défaut 21 "
+                         "≈ mensuel — meilleure cadence mesurée pour ce book). Persistée.")
+    ap.add_argument("--ignore-cadence", action="store_true",
+                    help="Forcer le rééquilibrage même si la cadence n'est pas due.")
     args = ap.parse_args()
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
     from financial_analyzer.trading.framework import MetaLabelConstruction
     from financial_analyzer.trading.journal import TradingJournal
     from financial_analyzer.trading.live_trading_pipeline import LiveTradingPipeline
+    from financial_analyzer.trading.rebalance_gate import RebalanceGate
     from financial_analyzer.trading.reconciliation import reconcile_orders
 
     dry_run = not args.execute
@@ -77,6 +83,22 @@ def main() -> None:
         equity=float(acct.get("equity", 0.0)), cash=float(acct.get("cash", 0.0)),
         event="run_start", mode=adapter.mode,
     )
+
+    # Garde de cadence : le book méta est meilleur espacé (reb≈21 mensuel : Sharpe net
+    # +0.92 vs +0.35 en quotidien, turnover −88 %). N'exécute un rééquilibrage réel que
+    # tous les N jours ouvrés (état persistant). En dry-run on montre toujours le book.
+    gate = RebalanceGate(state_path="logs/metalabel_rebalance_state.json",
+                         rebalance_every=args.rebalance_every)
+    gate_active = (not dry_run) and (not args.ignore_cadence)
+    if gate_active and not gate.is_due():
+        left = gate.sessions_until_due()
+        print(f"\nCadence : book TENU (rééquilibré il y a < {args.rebalance_every} j ouvrés ; "
+              f"prochain dans {left} j). Aucun ordre.")
+        journal.record_snapshot(equity=float(acct.get("equity", 0.0)),
+                                cash=float(acct.get("cash", 0.0)), event="run_end", mode=adapter.mode)
+        adapter.disconnect()
+        return
+
     pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=UNIVERSE, journal=journal,
                                    no_trade_band=band)
     # Couche enfichable #5 : construction méta-labeling.
@@ -113,6 +135,10 @@ def main() -> None:
         recon = reconcile_orders(journal.orders(), adapter.get_orders(status="all", limit=300) or [])
         journal.record_reconciliation(recon.to_dict())
         print(f"    {'✅' if recon.ok else '🚨'} {recon.summary()}")
+        # Rééquilibrage réel effectué → persister la date pour la garde de cadence.
+        if gate_active and result.get("status") == "success":
+            gate.record()
+            print(f"    Cadence enregistrée (prochain rééquilibrage dans {args.rebalance_every} j ouvrés).")
 
     acct_end = adapter.get_account()
     journal.record_snapshot(equity=float(acct_end.get("equity", 0.0)),
