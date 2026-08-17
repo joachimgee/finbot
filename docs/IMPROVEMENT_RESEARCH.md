@@ -630,9 +630,34 @@ est **plus faible que +0.20**, d'un montant indéterminable sans base sans-biais
 small-cap sous-estimés (2,5 bps vs spreads réels de 1-10 %).
 
 **Le ~80 % de l'ancien système = beta d'un régime small-cap haussier × survivorship, pas
-un edge répétable.** *(Nuance après le test 18 ans : le ~80 % sur un seul bull reste
-dominé par le beta+survivorship, MAIS la famille sous-jacente — small-cap momentum
-long-only — porte un alpha réel modeste et significatif sur le long terme.)* Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
+un edge répétable.**
+
+### 🚩 (a) PORTAIL COMPLET — le small-cap momentum long-only ÉCHOUE (et ma « correction » était fausse)
+
+`run_smallcap_momentum_gate.py` (18 ans, tercile small-cap, reb=21). **Erreur de benchmark
+détectée** : ma « correction » comparait le book **small-cap** (+1.14) au benchmark
+équipondéré de l'**univers ENTIER** (+0.92) — apples-to-oranges. Le bon benchmark est
+l'équipondéré **du même univers small-cap**, qui vaut **+1.09**.
+
+| critère | valeur | seuil | verdict |
+|---|---|---|---|
+| IC t-stat | **+4.77** | > 2 | ✅ |
+| Sharpe net long-only | +1.14 | > 0 | ✅ *(trivial : contient le beta)* |
+| **Sharpe EXCÉDENTAIRE** (book − benchmark **même** univers) | **+0.12 (t=0.52)** | — | ❌ **non significatif** |
+| rendement excédentaire annualisé | +4.21 % | — | — |
+| **DSR sur l'excès** (32 essais) | **0.053** | ≥ 0.95 | ❌ |
+| PBO (CSCV, 32 configs) | 0.000 | ≤ 0.5 | ✅ |
+
+**Verdict : NE PASSE PAS.** Le momentum small-cap long-only **ne bat pas de façon
+démontrable le simple fait d'acheter le même univers small-cap équipondéré** (excès
+t=0.52, DSR 0.05). Son IC est réel (t=4.77 — le signal *classe* bien les titres) mais
+l'**alpha net du beta de son univers n'est pas distinguable du bruit**.
+
+**Trois enseignements méthodologiques :** (1) pour un long-only, « Sharpe > 0 » est un
+critère vide — seul l'**excès sur le benchmark du même univers** mesure l'alpha ; (2)
+**le choix du benchmark peut fabriquer un faux alpha** (mon erreur : le tercile small-cap
+a un beta plus élevé que l'univers entier) ; (3) un **IC significatif n'implique pas un
+alpha exploitable** — même leçon que l'anomalie du combinateur. Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
 répliquent pas hors micro-caps sur-pondérés) ; Shumway (1997, delisting bias — les radiées
 à zéro sont invisibles dans un compte, gonflant l'affichage) ; Lesmond-Schill-Zhou (2004,
 momentum small-cap mangé par les coûts) ; Bali-Cakici-Whitelaw (2011, les titres loterie
