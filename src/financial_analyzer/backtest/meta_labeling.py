@@ -197,12 +197,17 @@ def walk_forward_meta(
     p_threshold: float = 0.5,
     cost_rate: float = 0.00025,
     feature_names: tuple[str, ...] = META_FEATURES,
+    max_train: int | None = None,
 ) -> MetaResult:
     """Évalue raw vs méta (filtre/sizing) en walk-forward, purge+embargo, coûts inclus.
 
     À chaque date de rééquilibrage, entraîne la logistique sur les échantillons
     **passés à horizon clos** (``label_end_i + embargo ≤ date_i`` courant), prédit
     ``P(gain)`` pour les paris courants, et construit les books méta.
+
+    ``max_train`` (optionnel) plafonne la fenêtre d'entraînement aux N échantillons
+    les plus récents — borne le coût du cas quotidien et compare les cadences à
+    fenêtre égale.
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
@@ -233,6 +238,8 @@ def walk_forward_meta(
 
         # Entraînement : échantillons passés à horizon clos + embargo.
         train = samples[samples["label_end_i"] + embargo <= i]
+        if max_train is not None and len(train) > max_train:
+            train = train.tail(max_train)
         if len(train) < min_train or train["y"].nunique() < 2:
             # Pas encore de méta-modèle : méta = raw (mise en place).
             w_filter[dt] = _norm_gross(picks.copy())

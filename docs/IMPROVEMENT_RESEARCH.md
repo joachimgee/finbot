@@ -463,6 +463,24 @@ DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
 certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
 le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
 
+**✅ Cadence testée — le QUOTIDIEN est le pire, mensuel (reb=21) le meilleur.**
+`run_meta_cadence_sweep_alpaca.py` (18 ans, book méta RICH, horizon = cadence, coûts
+calibrés, fenêtre train plafonnée identiquement) :
+
+| reb (jours) | Sharpe net | turnover | AUC |
+|---|---|---|---|
+| 1 (quotidien) | +0.35 | 0.360 | 0.515 |
+| 5 | +0.47 | 0.129 | 0.528 |
+| 10 | +0.63 | 0.074 | 0.535 |
+| **21 (~mensuel)** | **+0.92** | 0.044 | 0.558 |
+
+Amélioration **monotone** avec l'espacement (+0.35→+0.92, turnover **−88 %**) : (1) moins
+de turnover = moins de coûts sur un signal lent ; (2) un horizon de label plus long est
+*moins bruité* → l'AUC monte aussi (0.515→0.558). Le book méta préfère **plus** d'espacement
+que le momentum brut (dont le sweep retenait reb=10) — et reb=21 = **cadence mensuelle
+standard de la littérature momentum**, donc principiel, pas sur-ajusté. **Cadence à adopter
+pour le forward-test : reb=21** (via `RebalanceGate`), au lieu du quotidien actuel.
+
 **✅ (c) fait — câblage forward-test paper.** `framework.MetaLabelConstruction`
 (couche enfichable #5) + `run_meta_labeling_paper.py` : le book momentum méta-labelé
 tourne sur le compte **paper** via le chemin audité (OrderGateway + journal +
