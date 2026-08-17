@@ -84,6 +84,21 @@ def test_meta_filter_today_empty_scores_is_empty() -> None:
     assert meta_filter_today(pd.DataFrame(), pd.DataFrame(), {}) == {}
 
 
+def test_compare_meta_sizing_returns_three_schemes() -> None:
+    from financial_analyzer.backtest.meta_labeling import compare_meta_sizing
+
+    scores, returns, features = _synth(seed=13, n=500)
+    r = compare_meta_sizing(scores, returns, features, rebalance_every=10, horizon=10,
+                            min_train=200, feature_names=META_FEATURES)
+    assert {"equal", "confidence", "kelly"}.issubset(r)
+    for name in ("equal", "confidence", "kelly"):
+        assert set(r[name]) == {"net_sharpe", "turnover", "maxdd", "avg_gross"}
+    # equal est équipondéré → brut ≈ 1 ; kelly cape le brut ≤ 1.
+    assert abs(r["equal"]["avg_gross"] - 1.0) < 0.2
+    assert r["kelly"]["avg_gross"] <= 1.0 + 1e-9
+    assert "win_loss_ratio" in r["_kelly_b"]
+
+
 def test_regime_features_are_broadcast_and_rich_set_runs() -> None:
     import numpy as np
     import pandas as pd

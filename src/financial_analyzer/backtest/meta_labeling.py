@@ -146,7 +146,8 @@ def build_meta_samples(
                 continue
             rows.append({
                 "date": dt, "date_i": i, "label_end_i": i + horizon, "symbol": sym,
-                "side": side, "y": 1 if side * compounded > 0 else 0, **feats,
+                "side": side, "y": 1 if side * compounded > 0 else 0,
+                "bet_ret": float(side * compounded), **feats,
             })
     return pd.DataFrame(rows)
 
@@ -309,6 +310,130 @@ def walk_forward_meta(
         raw_turnover=raw_to, meta_filter_turnover=filt_to, meta_size_turnover=size_to,
         raw_avg_names=raw_names, meta_filter_avg_names=filt_names,
     )
+
+
+def _maxdd(net: pd.Series) -> float:
+    """Max drawdown (%) d'une série de rendements nets."""
+    eq = (1.0 + pd.Series(net).dropna()).cumprod()
+    return float(((eq / eq.cummax()) - 1.0).min() * 100.0) if len(eq) else 0.0
+
+
+def compare_meta_sizing(
+    scores: pd.DataFrame,
+    returns: pd.DataFrame,
+    features: dict[str, pd.DataFrame],
+    *,
+    quantile: float = 0.2,
+    horizon: int = 10,
+    rebalance_every: int = 10,
+    min_train: int = 400,
+    embargo: int = 10,
+    p_threshold: float = 0.5,
+    cost_rate: float = 0.00025,
+    feature_names: tuple[str, ...] = META_FEATURES,
+    kelly_fraction: float = 0.25,
+    max_train: int | None = None,
+) -> dict[str, dict[str, float]]:
+    """Compare le **sizing** des paris retenus par le méta (López de Prado ch.10).
+
+    Trois schémas sur les *mêmes* paris retenus (P ≥ seuil), la logistique n'étant
+    entraînée qu'une fois par rééq. :
+
+    * ``equal`` — équipondéré (le book méta actuel), brut = 1 ;
+    * ``confidence`` — taille ∝ ``bet_size_from_probability(P)`` (AFML 10.1), brut = 1
+      (réalloue par conviction, exposition totale identique) ;
+    * ``kelly`` — Kelly fractionnaire ``f=0.25`` par pari (ratio gain/perte estimé sur
+      l'historique), **brut variable capé à 1** (parie plus quand la conviction moyenne
+      est haute, dé-lève quand elle est basse — jamais de levier).
+
+    Renvoie ``{schéma: {net_sharpe, turnover, maxdd, avg_gross}}``.
+    """
+    from financial_analyzer.trading.bet_sizing import bet_size_from_probability, kelly_criterion
+
+    samples = build_meta_samples(scores, returns, features, quantile=quantile,
+                                 horizon=horizon, feature_names=feature_names)
+    if samples.empty:
+        return {}
+    # Ratio gain/perte global (Kelly b) estimé sur les paris à label clos.
+    br = samples["bet_ret"].to_numpy()
+    win, loss = br[br > 0], -br[br < 0]
+    b = float(win.mean() / loss.mean()) if len(win) and len(loss) and loss.mean() > 0 else 1.0
+
+    feats = list(feature_names)
+    reb_i = list(range(0, len(scores.index), rebalance_every))
+    w_eq: dict = {}
+    w_conf: dict = {}
+    w_kelly: dict = {}
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    for i in reb_i:
+        dt = scores.index[i]
+        row = scores.loc[dt].dropna()
+        if len(row) < 5:
+            continue
+        k = max(1, int(round(len(row) * quantile)))
+        ranked = row.sort_values()
+        sides = pd.Series(0.0, index=row.index)
+        sides.loc[ranked.index[-k:]] = +1.0
+        sides.loc[ranked.index[:k]] = -1.0
+        picks = sides[sides != 0.0]
+
+        train = samples[samples["label_end_i"] + embargo <= i]
+        if max_train is not None and len(train) > max_train:
+            train = train.tail(max_train)
+        if len(train) < min_train or train["y"].nunique() < 2:
+            for wd in (w_eq, w_conf, w_kelly):
+                wd[dt] = _norm_gross(picks.copy())
+            continue
+        scaler = StandardScaler().fit(train[feats].to_numpy())
+        clf = LogisticRegression(max_iter=1000, C=1.0).fit(
+            scaler.transform(train[feats].to_numpy()), train["y"].to_numpy())
+        rows, syms = [], []
+        for sym in picks.index:
+            vals, ok = [], True
+            for fn in feats:
+                fdf = features.get(fn)
+                v = float(fdf.loc[dt, sym]) if (fdf is not None and sym in fdf.columns
+                                                and dt in fdf.index) else np.nan
+                if not np.isfinite(v):
+                    ok = False
+                    break
+                vals.append(v)
+            if ok:
+                rows.append(vals)
+                syms.append(sym)
+        if not rows:
+            for wd in (w_eq, w_conf, w_kelly):
+                wd[dt] = _norm_gross(picks.copy())
+            continue
+        p = pd.Series(clf.predict_proba(scaler.transform(np.array(rows)))[:, 1], index=syms)
+        keep = [s for s in syms if p[s] >= p_threshold]
+        if not keep:
+            for wd in (w_eq, w_conf, w_kelly):
+                wd[dt] = pd.Series(dtype=float)
+            continue
+        kp = picks[keep]
+        # equal
+        w_eq[dt] = _norm_gross(kp.copy())
+        # confidence (AFML 10.1), brut=1
+        conf = pd.Series({s: bet_size_from_probability(float(p[s]), 2, side=int(kp[s]),
+                                                       kelly_fraction=1.0) for s in keep})
+        w_conf[dt] = _norm_gross(conf) if conf.abs().sum() > 0 else _norm_gross(kp.copy())
+        # kelly fractionnaire, brut variable capé à 1
+        kel = pd.Series({s: kelly_criterion(float(p[s]), b, kelly_fraction=kelly_fraction) * int(kp[s])
+                         for s in keep})
+        g = kel.abs().sum()
+        w_kelly[dt] = (kel / g if g > 1.0 else kel) if g > 0 else _norm_gross(kp.copy())
+
+    out = {}
+    for name, wd in (("equal", w_eq), ("confidence", w_conf), ("kelly", w_kelly)):
+        net, to, _ = _simulate_book(wd, returns, cost_rate)
+        gross = float(np.mean([w.abs().sum() for w in wd.values() if len(w)])) if wd else 0.0
+        out[name] = {"net_sharpe": _sharpe(net), "turnover": to,
+                     "maxdd": _maxdd(net), "avg_gross": gross}
+    out["_kelly_b"] = {"win_loss_ratio": b}
+    return out
 
 
 def meta_filter_today(

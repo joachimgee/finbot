@@ -463,6 +463,25 @@ DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
 certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
 le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
 
+**✅ Kelly / bet-sizing testé (AFML ch.10) — pas de gain, équipondération gardée.**
+López de Prado appaire meta-labeling (ch.3) et bet-sizing (ch.10) : le méta donne
+P(gain) par pari ; on a testé si sizer par P améliore vs l'équipondéré actuel
+(`run_meta_kelly_sizing_alpaca.py`, 18 ans, reb=21, `bet_sizing.py` réutilisé) :
+
+| schéma | Sharpe net | turnover | maxDD | brut moy. |
+|---|---|---|---|---|
+| **equal (actuel)** | **+0.92** | 0.044 | **−37.6 %** | 1.00 |
+| confidence (AFML 10.1) | +0.97 | 0.042 | −41.2 % | 1.00 |
+| kelly (f=0.25, b≈1.0) | +0.71 | 0.019 | −31.3 % | 0.46 |
+
+**Aucun gain robuste.** « confidence » gagne +0.05 de Sharpe (bruit) mais **aggrave le
+drawdown** (−41 % vs −38 %) ; Kelly dé-lève (brut 0.46) → moins de drawdown mais Sharpe
+en baisse. Cause : le méta ne garde que P ≥ 0.5, **tous serrés près du seuil** (AUC 0.56)
+→ dispersion de conviction trop faible pour différencier les tailles ; Kelly exige un
+edge fort et bien estimé, P≈0.5 n'en fournit pas. **Équipondération conservée** (meilleur
+compromis Sharpe/drawdown, plus diversifiée). `bet_sizing`/Kelly restent disponibles pour
+un futur signal à conviction dispersée. `compare_meta_sizing` testé.
+
 **✅ Cadence testée — le QUOTIDIEN est le pire, mensuel (reb=21) le meilleur.**
 `run_meta_cadence_sweep_alpaca.py` (18 ans, book méta RICH, horizon = cadence, coûts
 calibrés, fenêtre train plafonnée identiquement) :
