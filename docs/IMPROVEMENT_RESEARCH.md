@@ -578,6 +578,38 @@ sans biais de survie avant toute inscription.*
 
 ---
 
+### ✅ Fait — UNIVERS LARGE (1895 small/mid-caps) + long-only : l'angle mort levé
+
+Déclencheur : l'ancien FinBot a fait ~+80 % (déc. 2025) sur un panier **small/micro-cap
+long-only** (payoffs asymétriques, quelques 5×). Tous nos tests étaient sur ~50-80
+large-caps **en L/S market-neutral** — un double angle mort (univers ET forme de
+stratégie). Testé (`run_broad_universe_momentum.py`, 1895 titres Alpaca, 2023-2026, reb=21) :
+
+| univers | IC t | **Sh net L/S** | **Sh net long-only** |
+|---|---|---|---|
+| large-cap ~50 (réf) | +2.56 | +0.76 | — |
+| tout (1895) | +2.97 | **−0.28** | **+1.18** |
+| T1 grand/liquide | +2.92 | +0.52 | +1.32 |
+| T3 petit (small-cap) | +2.46 | **−0.70** | +1.03 |
+| **benchmark « acheter TOUT équipondéré »** | — | — | **+1.43** |
+
+**Deux enseignements décisifs.** (1) En **L/S** (qui isole l'alpha), le momentum small-cap
+**perd** (−0.70) : le côté **short** en small-cap = squeezes, coûts d'emprunt, les −99 %
+qui rebondissent. (2) En **long-only** (l'approche de l'ancien système), le Sharpe est beau
+(+1.18) **mais le benchmark equipondéré sans aucun signal fait MIEUX (+1.43)** → c'est du
+**BETA** (univers +29 %/an en 2023-26), **pas de l'alpha**. Le momentum ne bat même pas
+« acheter tout ».
+
+**Le ~80 % de l'ancien système = beta d'un régime small-cap haussier × survivorship, pas
+un edge répétable.** Cohérent avec la littérature : Hou-Xue-Zhang (2020, les anomalies ne
+répliquent pas hors micro-caps sur-pondérés) ; Shumway (1997, delisting bias — les radiées
+à zéro sont invisibles dans un compte, gonflant l'affichage) ; Lesmond-Schill-Zhou (2004,
+momentum small-cap mangé par les coûts) ; Bali-Cakici-Whitelaw (2011, les titres loterie
+sous-performent en moyenne — on voit les gagnants). ⚠️ Tout ci-dessus est **encore
+survivor-biased à la hausse** (Alpaca = cotés). L'edge *répétable* reste le momentum **L/S
+large-cap modeste** ; le reste est beta + convexité + survivorship — un choix d'**appétit
+au risque** (rendement/drawdown élevés, régime-dépendant), pas un edge validé.
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
