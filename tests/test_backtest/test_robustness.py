@@ -138,3 +138,24 @@ def test_pbo_low_when_one_config_has_persistent_skill() -> None:
 def test_pbo_rejects_too_few_configs() -> None:
     with pytest.raises(ValueError):
         probability_of_backtest_overfitting(pd.DataFrame(np.zeros((100, 1))))
+
+
+def test_block_bootstrap_metrics_shape_and_probabilities() -> None:
+    from financial_analyzer.backtest.robustness import block_bootstrap_metrics
+
+    rng = np.random.default_rng(0)
+    # Série à Sharpe nettement positif → P(Sharpe>0) doit être élevée.
+    r = pd.Series(rng.normal(0.0008, 0.008, 1500))
+    m = block_bootstrap_metrics(r, n_boot=1000, block=21)
+    assert {"sharpe_median", "sharpe_p05", "sharpe_p95", "prob_sharpe_pos",
+            "maxdd_median", "maxdd_worst", "ann_ret_median"}.issubset(m)
+    assert m["sharpe_p05"] <= m["sharpe_median"] <= m["sharpe_p95"]
+    assert 0.0 <= m["prob_sharpe_pos"] <= 1.0 and m["prob_sharpe_pos"] > 0.8
+    assert m["maxdd_worst"] <= m["maxdd_median"] <= 0.0  # drawdowns négatifs, pire ≤ médiane
+
+
+def test_block_bootstrap_metrics_short_series_is_safe() -> None:
+    from financial_analyzer.backtest.robustness import block_bootstrap_metrics
+
+    m = block_bootstrap_metrics(pd.Series([0.01, -0.01, 0.0]), n_boot=100, block=21)
+    assert m["n_obs"] == 3.0  # trop court → renvoie juste n_obs, pas d'exception

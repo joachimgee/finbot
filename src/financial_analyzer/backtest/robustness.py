@@ -31,6 +31,7 @@ import pandas as pd
 from scipy.stats import norm
 
 __all__ = [
+    "block_bootstrap_metrics",
     "deflated_sharpe_ratio",
     "expected_max_sharpe",
     "probabilistic_sharpe_ratio",
@@ -40,6 +41,61 @@ __all__ = [
 ]
 
 _EULER = 0.5772156649015329  # constante d'Euler-Mascheroni (γ)
+
+
+def block_bootstrap_metrics(
+    returns: pd.Series | np.ndarray,
+    *,
+    n_boot: int = 2000,
+    block: int = 21,
+    periods_per_year: int = 252,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Monte-Carlo **non-paramétrique** (block bootstrap) d'une série de rendements.
+
+    Ré-échantillonne la série réelle par **blocs circulaires** (préserve les queues
+    empiriques et l'autocorrélation courte, contrairement à un tirage gaussien/t
+    paramétrique), puis calcule sur chaque chemin le Sharpe annualisé, le rendement
+    annualisé et le max drawdown. Renvoie médiane + intervalle 5-95 % de chaque
+    métrique, plus des probabilités de résultat (Sharpe>0, période positive).
+
+    Complète le DSR : le DSR corrige le biais de sélection ; le bootstrap donne la
+    **dispersion** de ce qu'on aurait observé si l'histoire s'était rejouée un peu
+    différemment. ``block`` ≈ période de détention (21 j = mensuel) pour respecter
+    la structure de corrélation intra-holding.
+    """
+    r = np.asarray(pd.Series(returns).dropna(), dtype=float)
+    n = len(r)
+    if n < block + 2:
+        return {"n_obs": float(n)}
+    rng = np.random.default_rng(seed)
+    n_blocks = int(np.ceil(n / block))
+    sharpes = np.empty(n_boot)
+    ann_rets = np.empty(n_boot)
+    maxdds = np.empty(n_boot)
+    finals = np.empty(n_boot)
+    for k in range(n_boot):
+        starts = rng.integers(0, n, n_blocks)
+        idx = np.concatenate([(np.arange(s, s + block) % n) for s in starts])[:n]
+        path = r[idx]
+        sd = path.std(ddof=1)
+        sharpes[k] = path.mean() / sd * math.sqrt(periods_per_year) if sd > 0 else 0.0
+        ann_rets[k] = path.mean() * periods_per_year
+        eq = np.cumprod(1.0 + path)
+        maxdds[k] = float((eq / np.maximum.accumulate(eq) - 1.0).min()) * 100.0
+        finals[k] = eq[-1] - 1.0
+
+    def _p(a, q):
+        return float(np.percentile(a, q))
+
+    return {
+        "n_obs": float(n), "n_boot": float(n_boot), "block": float(block),
+        "sharpe_median": _p(sharpes, 50), "sharpe_p05": _p(sharpes, 5), "sharpe_p95": _p(sharpes, 95),
+        "prob_sharpe_pos": float((sharpes > 0).mean()),
+        "ann_ret_median": _p(ann_rets, 50), "ann_ret_p05": _p(ann_rets, 5), "ann_ret_p95": _p(ann_rets, 95),
+        "maxdd_median": _p(maxdds, 50), "maxdd_p05": _p(maxdds, 5), "maxdd_worst": _p(maxdds, 1),
+        "prob_period_pos": float((finals > 0).mean()),
+    }
 
 
 def sharpe_per_period(returns: pd.Series) -> float:

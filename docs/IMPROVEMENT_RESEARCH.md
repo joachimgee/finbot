@@ -463,6 +463,30 @@ DSR 0.028). Mais le DSR n'atteint pas le seuil strict de 0.95 : queues épaisses
 certitude. Verdict honnête : **candidat le plus crédible jamais produit, encore sous
 le seuil formel** ; la réserve dominante reste le **biais de survie** (45 survivants).
 
+**✅ Monte-Carlo (block bootstrap) — edge robuste, mais DRAWDOWN SÉVÈRE révélé.**
+`block_bootstrap_metrics` (robustness.py) + `run_meta_montecarlo_alpaca.py` : 5000
+chemins ré-échantillonnés par blocs de 21 j de la série de rendements réelle du book
+méta (RICH, reb=21) — non-paramétrique, préserve queues + autocorrélation.
+
+| métrique | médiane | 5 % | 95 % |
+|---|---|---|---|
+| Sharpe annualisé | +0.83 | **+0.39** | +1.26 |
+| Rendement net an. | +19.4 % | +9.8 % | +28.1 % |
+| **Max drawdown** | **−51 %** | −73 % | (pire 1 % **−83 %**) |
+| P(Sharpe>0) = **99.9 %** · P(période positive) = 99.6 % | | | |
+
+**Deux conclusions.** (1) **L'edge est robuste au ré-échantillonnage** : Sharpe positif
+dans ~100 % des chemins, borne 5 % = +0.39 > 0, rendement pessimiste +9.8 %/an — ça
+complète le DSR (le DSR jugeait la *magnitude* limite ; le bootstrap montre la
+*positivité* quasi certaine face à l'incertitude d'échantillonnage). (2) **Le risque de
+drawdown est SÉVÈRE et le backtest le cachait** : le drawdown réalisé (−37.6 %) était le
+côté chanceux ; la médiane bootstrap est **−51 %**, un −73 à −83 % est plausible.
+Cohérent avec le L/S momentum (krachs, kurtosis 10). **Implication actionnable** : avant
+tout live, le book méta appelle un **contrôle de drawdown** (overlay régime-HMM ou
+vol-target, déjà testés et réducteurs de drawdown) — le Sharpe est là, la maîtrise du
+risque de queue ne l'est pas. *Réserve inchangée : le bootstrap ne corrige pas le biais
+de survie.*
+
 **✅ Kelly / bet-sizing testé (AFML ch.10) — pas de gain, équipondération gardée.**
 López de Prado appaire meta-labeling (ch.3) et bet-sizing (ch.10) : le méta donne
 P(gain) par pari ; on a testé si sizer par P améliore vs l'équipondéré actuel
