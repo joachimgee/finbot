@@ -25,9 +25,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 _EXIT = {"healthy": 0, "degraded": 1, "dead": 2}
-#: Référence du backtest 18 ans (2008-2026, coûts 60 bps).
-BASELINE_SHARPE = 2.16
-BASELINE_IC_T = 2.29
+#: Référence du backtest 18 ans (2008-2026, coûts 60 bps), mesurée par le MÊME
+#: chemin de code que ce moniteur (``evaluate_signal``, IC à l'horizon de détention
+#: de 21 j, sans recouvrement) — sinon la base et la mesure ne sont pas comparables.
+BASELINE_SHARPE = 2.12
+BASELINE_IC_T = 4.37
 
 
 def main() -> int:
@@ -48,7 +50,7 @@ def main() -> int:
     import pandas as pd
 
     from financial_analyzer.backtest.classic_factors import daily_returns
-    from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
+    from financial_analyzer.backtest.signal_evaluation import CostModel, evaluate_signal
     from financial_analyzer.data.yahoo_history import fetch_daily_ohlcv_yahoo
 
     # Univers : même tercile small-cap que le book.
@@ -80,37 +82,26 @@ def main() -> int:
     recent = amihud.index[-args.lookback:]
     amihud, rets = amihud.reindex(recent), rets.reindex(recent)
 
-    cost = args.cost_bps / 1e4
-    fwd = rets.shift(-1)
-    reb_set = {amihud.index[i] for i in range(0, len(amihud.index), args.reb)}
-    cur = prev = pd.Series(dtype=float)
-    out, ics = {}, []
-    for dt in amihud.index:
-        to = 0.0
-        row = amihud.loc[dt].dropna()
-        if dt in reb_set and len(row) >= 10:
-            w = cross_sectional_weights(row, quantile=args.quantile, long_short=True)
-            w = w[w.abs() > 1e-12]
-            idx = w.index.union(prev.index)
-            to = float((w.reindex(idx).fillna(0.0) - prev.reindex(idx).fillna(0.0)).abs().sum())
-            cur = prev = w
-            if dt in fwd.index:
-                b = fwd.loc[dt]
-                m = row.notna() & b.notna()
-                if m.sum() >= 10:
-                    ics.append(float(row[m].corr(b[m], method="spearman")))
-        if dt in fwd.index and len(cur):
-            f = fwd.loc[dt]
-            out[dt] = float((cur.reindex(f.index).fillna(0.0) * f.fillna(0.0)).sum()) - to * cost
-    s = pd.Series(out).dropna()
-    if len(s) < 30:
+    # Évaluation par le MÊME primitif que le portail (``evaluate_signal``) plutôt que
+    # par une boucle recopiée : un moniteur qui mesure autrement que le portail finit
+    # par diverger de lui. C'est précisément ce qui s'était produit ici — l'IC était
+    # calculé contre le rendement du LENDEMAIN alors que le book détient 21 jours.
+    # Sur la fenêtre récente : t=+0.62 à 1 j contre t=+3.91 à 21 j ; et sur 18 ans
+    # l'IC à 1 j est NÉGATIF (t=-1.74), donc l'alarme « edge inversé » se serait
+    # déclenchée à tort sur un signal parfaitement sain. ``evaluate_signal`` mesure
+    # désormais l'IC à l'horizon de détention, sans recouvrement.
+    res = evaluate_signal(
+        amihud, rets,
+        cost_model=CostModel(commission_bps=args.cost_bps, slippage_bps=0.0),
+        quantile=args.quantile, long_short=True, rebalance_every=args.reb,
+    )
+    if res.n_periods < 30:
         print("❌ Trop peu d'observations — statut inconnu.")
         return 1
 
-    sharpe = float(s.mean() / s.std(ddof=1) * np.sqrt(252)) if s.std(ddof=1) > 0 else 0.0
-    ic = pd.Series(ics).dropna()
-    ic_mean = float(ic.mean()) if len(ic) else 0.0
-    ic_t = float(ic.mean() / ic.std(ddof=1) * np.sqrt(len(ic))) if len(ic) > 2 and ic.std(ddof=1) > 0 else 0.0
+    sharpe = res.net_sharpe
+    ic_mean, ic_t = res.ic_mean, res.ic_t_stat
+    n_ic = max(1, res.n_periods // args.reb)
 
     reasons = []
     if sharpe < 0:
@@ -123,8 +114,8 @@ def main() -> int:
                        f"(fenêtre courte — informatif, non bloquant)")
 
     print(f"\n  [{status.upper()}] Sharpe L/S récent {sharpe:+.2f} (base {BASELINE_SHARPE:+.2f}) | "
-          f"IC moyen {ic_mean:+.4f} (t={ic_t:+.2f}, base t={BASELINE_IC_T:+.2f}) | "
-          f"{len(s)} jours, {len(ic)} rééq.")
+          f"IC(h={res.ic_horizon}j) {ic_mean:+.4f} (t={ic_t:+.2f}, base t={BASELINE_IC_T:+.2f}) | "
+          f"{res.n_periods} jours, ~{n_ic} rééq.")
     for r in reasons:
         print(f"    • {r}")
 
@@ -135,7 +126,8 @@ def main() -> int:
             f.write(json.dumps({
                 "ts": datetime.now(timezone.utc).isoformat(), "kind": "signal_health",
                 "signal": "amihud_illiquidity", "status": status, "net_sharpe": sharpe,
-                "ic_mean": ic_mean, "ic_t_stat": ic_t, "n_days": len(s), "reasons": reasons,
+                "ic_mean": ic_mean, "ic_t_stat": ic_t, "ic_horizon": res.ic_horizon,
+                "n_days": res.n_periods, "reasons": reasons,
             }, ensure_ascii=False) + "\n")
     except Exception as e:  # noqa: BLE001
         print(f"  (journal non écrit : {e})")
@@ -152,7 +144,10 @@ def main() -> int:
         print("\n  ✅ Signal sain — aucune alerte.")
 
     print("\nRappel : fenêtre courte → Sharpe/IC bruités ; les alarmes portent sur les SIGNES")
-    print("(Sharpe < 0, IC < 0), pas sur l'écart de magnitude à la base 18 ans.")
+    print("(Sharpe < 0, IC < 0), pas sur l'écart de magnitude à la base 18 ans. L'IC est")
+    print(f"mesuré à l'horizon de DÉTENTION ({args.reb} j), pas au lendemain : pour un signal")
+    print("d'illiquidité, l'IC à 1 jour est du bruit (négatif sur 18 ans) et ferait hurler")
+    print("l'alarme sur un signal sain.")
     return _EXIT.get(status, 1)
 
 

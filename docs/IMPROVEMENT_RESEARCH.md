@@ -990,6 +990,19 @@ signal ne décide. Conséquences vérifiées, toutes conformes :
 Le rapport de live-readiness dit désormais la vérité : **aucun signal n'est autorisé à
 passer en live**. Le seul candidat (Amihud) attend son forward-test.
 
+**Le moniteur Amihud portait le même bug** — il recopiait la boucle du book au lieu
+d'appeler `evaluate_signal`, et calculait donc son IC contre le rendement du lendemain.
+Sur sa propre fenêtre récente : **t = +0.62 à 1 j contre t = +3.91 à 21 j**. Comme l'IC à
+1 j est *négatif* sur 18 ans (t = −1.74), le critère d'alarme « IC < 0 = edge inversé »
+se serait déclenché **à tort sur un signal parfaitement sain**, à la première fenêtre un
+peu longue. Le moniteur passe désormais par `evaluate_signal` (le primitif du portail —
+une seule définition de la mesure, plus de dérive possible entre les deux) et ses bases
+sont recalculées par ce même chemin : `BASELINE_SHARPE` 2.16 → **2.12**, `BASELINE_IC_T`
+2.29 → **4.37** (horizon 21 j). État actuel : **HEALTHY**, Sharpe récent +4.53, IC(h=21j)
++0.1755 (t = +3.91) contre une base de +4.37. Le moniteur momentum, lui, appelait déjà
+`evaluate_signal` et a hérité du correctif sans modification ; il tire correctement sa
+base de `DECLASSED_SIGNALS` (IC t = +1.83).
+
 ### ✅ Robustesse microstructure (Asparouhova-Bessembinder-Kalcheva) — l'edge SURVIT
 
 La critique la plus sérieuse contre un résultat d'illiquidité : le **bruit de
