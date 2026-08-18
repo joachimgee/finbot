@@ -272,6 +272,65 @@ class MetaLabelConstruction:
         return book
 
 
+class AmihudConstruction:
+    """Construction **illiquidité d'Amihud** (2002) sur small-caps — long/short.
+
+    Score = ``moyenne(|rendement| / $volume)`` sur ``window`` jours : élevé = illiquide.
+    Book long/short cross-section : **long les plus illiquides**, **short les plus
+    liquides** (prime d'illiquidité). Utilise les volumes du panel fourni par le
+    pipeline (``data['prices'][sym]['volume']``).
+
+    ⚠️ **Discipline** : ce facteur a montré le meilleur profil de la campagne (Sharpe L/S
+    net +1.55, t=3.72, stable sur 3 régimes, robuste jusqu'à 300 bps) **mais** il est
+    celui où le **biais de survie** frappe le plus fort (acheter les plus illiquides =
+    acheter les futurs radiés, absents des panels historiques). → **paper uniquement**,
+    le forward-test étant justement exempt de ce biais.
+    """
+
+    def __init__(self, pipeline: object, window: int = 60, quantile: float = 0.2,
+                 min_names: int = 20) -> None:
+        self._p = pipeline
+        self.window = window
+        self.quantile = quantile
+        self.min_names = min_names
+
+    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        import numpy as np
+        import pandas as pd
+
+        from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
+
+        prices = (data or {}).get("prices", {}) or {}
+        closes, vols = {}, {}
+        for s, df in prices.items():
+            if df is None or df.empty or "close" not in df or "volume" not in df:
+                continue
+            closes[s] = df["close"]
+            vols[s] = df["volume"]
+        if len(closes) < self.min_names:
+            return self._p._construct_weights(signals, data)  # repli BL
+        try:
+            close = pd.DataFrame(closes).dropna(how="all")
+            vol = pd.DataFrame(vols).reindex(columns=close.columns, index=close.index)
+            rets = close.pct_change()
+            dollar_vol = (close * vol).replace(0, np.nan)
+            amihud = (rets.abs() / dollar_vol).rolling(self.window).mean()
+            row = amihud.iloc[-1].dropna()
+            if len(row) < self.min_names:
+                return self._p._construct_weights(signals, data)
+            w = cross_sectional_weights(row, quantile=self.quantile, long_short=True)
+            book = {s: float(x) for s, x in w.items() if abs(x) > 1e-9}
+        except Exception:  # noqa: BLE001 - une construction ne doit jamais crasher le run
+            return self._p._construct_weights(signals, data)
+        if not book:
+            return self._p._construct_weights(signals, data)
+        if getattr(self._p, "target_vol", None):
+            book = self._p._apply_vol_overlay(book, data)
+        if getattr(self._p, "no_trade_band", 0.0) > 0:
+            book = self._p._apply_no_trade_band(book)
+        return book
+
+
 class PipelineRisk:
     """Risque par défaut : contrôle pré-trade portefeuille (``_portfolio_risk_ok``)."""
 
