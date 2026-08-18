@@ -741,6 +741,27 @@ values) et l'**illiquidité d'Amihud** sur small-caps — ils exigent des fondam
 et des volumes sur 1458 titres × 18 ans, hors de portée des sources actuelles (quota
 Polygon 5 req/min ; panel Yahoo close-only).
 
+### ✅ VALUE / QUALITY sur SMALL-CAPS (fondamentaux PIT réels) — REJETÉS
+
+Les facteurs value/quality n'avaient été testés que sur **50 large-caps**. Or Fama-French
+(value plus fort en small) et surtout **Piotroski (2000)** — dont le F-score a été conçu
+*pour* les small value stocks — les y attendent. Re-testés sur **123 small-caps** avec
+**fondamentaux point-in-time réels** (Polygon, ``filing_date``, `allow_synthetic_fallback=
+False` → aucune donnée synthétique), coûts 60 bps, 2016-2026
+(`run_smallcap_value_quality.py`) :
+
+| facteur | couverture | IC t | L/S Sharpe | LO excès Sh | excès t |
+|---|---|---|---|---|---|
+| earnings_yield (E/P) | 61 % | +0.30 | −0.65 | −0.12 | −0.37 |
+| book_to_price (B/P) | 65 % | +0.37 | +0.19 | −0.03 | −0.10 |
+| roe | 63 % | +0.19 | −0.93 | −0.25 | −0.76 |
+| gross_profitability (GP/A) | 46 % | +0.34 | +0.13 | +0.05 | +0.14 |
+
+**Aucun signal, même pas au niveau de l'IC** (t entre 0.19 et 0.37 — nul). Le résultat
+large-cap se reproduit en small-cap : la value/quality n'a pas d'edge exploitable ici.
+*Réserves : sous-échantillon de 123 titres (quota Polygon 5 req/min), couverture
+fondamentale partielle (46-65 %), univers survivant.*
+
 ### ⭐ ILLIQUIDITÉ D'AMIHUD EN SMALL-CAP — le meilleur candidat de toute la campagne
 
 Correction d'un **contresens** : Amihud (2002) avait été testé sur **50 large-caps** et
