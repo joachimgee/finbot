@@ -698,6 +698,49 @@ survivor-biased à la hausse** (Alpaca = cotés). L'edge *répétable* reste le 
 large-cap modeste** ; le reste est beta + convexité + survivorship — un choix d'**appétit
 au risque** (rendement/drawdown élevés, régime-dépendant), pas un edge validé.
 
+### 🚩 ÉTUDE SYSTÉMATIQUE FACTEURS × TAILLE (8 facteurs × 3 terciles, 18 ans, coûts par segment)
+
+Trou comblé : les tests small-cap précédents ne portaient que sur **un** facteur (momentum).
+`run_size_factor_study.py` teste **les 8 facteurs classiques × 3 terciles de taille** sur
+18 ans, avec deux corrections méthodologiques : **coûts différenciés par segment**
+(grand 5 / moyen 25 / petit 60 bps aller simple) et **alpha excédentaire** en long-only
+(book − équipondéré du *même* tercile).
+
+Benchmarks équipondérés : T1 grand **+0.90**, T2 moyen **+0.84**, T3 petit **+0.93** —
+acheter n'importe quel segment équipondéré donnait déjà un excellent Sharpe.
+
+**Meilleurs alphas excédentaires par segment (aucun significatif) :**
+
+| tercile | meilleur facteur | IC t | excès Sharpe | excès t | excès an. |
+|---|---|---|---|---|---|
+| T1 grand | reversal_21 | +1.06 | +0.10 | +0.43 | +3.6 % |
+| T2 moyen | reversal_5 | +1.93 | +0.17 | **+0.75** | **+12.6 %** |
+| T3 petit | momentum_12_1 | +1.98 | +0.03 | +0.11 | +0.9 % |
+
+**AUCUN facteur ne passe** (aucun `|IC t| > 2` **et** `excès t > 2`) dans **aucun**
+segment après coûts réalistes. Trois observations :
+
+1. **Le short est ruineux en small-cap** : tous les Sharpe L/S y sont négatifs
+   (−0.42 à −1.68) — squeezes + coûts d'emprunt, cohérent avec (a).
+2. **Reversal court terme en mid-cap** est le « moins mort » (+12.6 %/an) mais avec
+   **t = 0.75** : rendement élevé, volatilité énorme, non significatif. C'est le seul
+   candidat que la littérature (Jegadeesh 1990/Lehmann 1990, reversal plus fort en
+   illiquide) rendrait plausible — mais les données ne le confirment pas.
+3. **IC significatif ≠ book profitable** : `max_lottery` a IC t = +2.70 en small-cap mais
+   un excès de **−0.37** — relation **non monotone** (même artefact de queue que
+   l'anomalie du combinateur, cf. P1). Confirme aussi Bali-Cakici-Whitelaw (2011) :
+   acheter les titres « loterie » sous-performe.
+
+**Conclusion :** l'hypothèse « l'edge est ailleurs, en small/mid-cap » est **testée et
+non confirmée** pour l'ensemble des facteurs *prix*. Le beta du segment (≈ +0.9 de Sharpe)
+domine tout ce que les facteurs prix peuvent ajouter, dans les trois tailles.
+
+**Reste honnêtement non testé (limite de données, pas de conclusion possible) :** les
+facteurs **fondamentaux** (value/quality — Piotroski F-score conçu *pour* les small
+values) et l'**illiquidité d'Amihud** sur small-caps — ils exigent des fondamentaux PIT
+et des volumes sur 1458 titres × 18 ans, hors de portée des sources actuelles (quota
+Polygon 5 req/min ; panel Yahoo close-only).
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
