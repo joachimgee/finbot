@@ -70,6 +70,69 @@ def _business_days_since_last_order(adapter, lookback: int = 200) -> int | None:
         return None
 
 
+def _peak_equity_from_journals(pattern: str = "logs/amihud_paper_*.jsonl") -> float | None:
+    """Pic d'equity observé dans les journaux du book (pour le drawdown)."""
+    import glob
+
+    from financial_analyzer.trading.pnl import load_snapshots
+
+    try:
+        snaps = load_snapshots(sorted(glob.glob(pattern)))
+        eqs = [float(s["equity"]) for s in snaps if isinstance(s.get("equity"), (int, float))]
+        return max(eqs) if eqs else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _daily_health_check(adapter, journal, equity: float, since: int, cadence: int) -> None:
+    """Audit quotidien du book détenu, les jours SANS rééquilibrage."""
+    from financial_analyzer.trading.book_health import check_book_health
+
+    print(f"\nCadence : book TENU (dernier rééq. il y a {since} j < {cadence}) — "
+          f"aucun ordre. AUDIT du book :")
+    try:
+        positions = adapter.get_positions() or []
+    except Exception as e:  # noqa: BLE001
+        print(f"    ⚠️ positions illisibles ({e}) — audit impossible.")
+        return
+
+    peak = _peak_equity_from_journals()
+    h = check_book_health(positions, equity, peak_equity=peak)
+    print(f"    {h.summary()}")
+    print(f"    exposition brute {h.gross_exposure:.2f}× | nette {h.net_exposure:+.2%} "
+          f"| equity {h.equity:,.0f} (pic {h.peak_equity:,.0f})")
+    if h.worst:
+        pires = ", ".join(f"{s} {p:+,.0f}$" for s, p in h.worst[:3])
+        print(f"    pires lignes : {pires}")
+    if h.alerts:
+        for a in h.alerts:
+            print(f"    🚨 {a}")
+    else:
+        print("    ✅ aucune anomalie (neutralité, levier, concentration, drawdown).")
+
+    # Journalise l'audit + alerte via l'AlertManager si anomalie.
+    try:
+        journal.record_snapshot(
+            equity=h.equity, cash=None, event="health_check", mode=adapter.mode,
+            status=h.status, n_positions=h.n_positions, gross=h.gross_exposure,
+            net=h.net_exposure, drawdown_pct=h.drawdown_pct, alerts=h.alerts,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    if h.status != "ok":
+        try:
+            from financial_analyzer.trading.alerts import AlertLevel, AlertManager
+
+            mgr = AlertManager(alert_log_path="logs/alerts.jsonl", mode=adapter.mode)
+            lvl = AlertLevel.ERROR if h.status == "critical" else AlertLevel.WARNING
+            mgr.alert(lvl, f"Book Amihud — audit {h.status}", " ; ".join(h.alerts),
+                      n_positions=h.n_positions, net=h.net_exposure,
+                      drawdown_pct=h.drawdown_pct)
+            print(f"    (alerte {lvl.value} émise)")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--execute", action="store_true", help="Ordres PAPER réels (sinon dry-run).")
@@ -121,8 +184,10 @@ def main() -> None:
     if gate_active:
         since = _business_days_since_last_order(adapter)
         if since is not None and since < args.rebalance_every:
-            print(f"\nCadence : book TENU (dernier rééq. il y a {since} j < "
-                  f"{args.rebalance_every}). Aucun ordre.")
+            # Jour SANS rééquilibrage : on ne se contente pas de « rien à faire » — on
+            # AUDITE le book détenu (dérive de neutralité/levier, concentration,
+            # drawdown, positions orphelines) et on alerte si nécessaire.
+            _daily_health_check(adapter, journal, equity, since, args.rebalance_every)
             journal.record_snapshot(equity=equity, cash=float(acct.get("cash", 0.0)),
                                     event="run_end", mode=adapter.mode)
             adapter.disconnect()
