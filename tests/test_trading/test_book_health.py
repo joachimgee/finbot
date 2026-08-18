@@ -79,3 +79,26 @@ def test_worst_positions_sorted() -> None:
     h = check_book_health(pos, equity=100_000.0,
                           thresholds=HealthThresholds(min_gross_exposure=0.0))
     assert h.worst[0][0] == "C" and h.worst[0][1] == -1500.0
+
+
+def test_halt_cycle(tmp_path) -> None:
+    from financial_analyzer.trading.book_health import clear_halt, raise_halt, read_halt
+
+    p = tmp_path / "halt.json"
+    assert read_halt(p).active is False          # absent -> pas de halte
+    st = raise_halt("drawdown -18%", {"dd": -18.0}, path=p)
+    assert st.active and "drawdown" in st.reason
+    back = read_halt(p)
+    assert back.active and back.metrics["dd"] == -18.0 and back.raised_at
+    assert clear_halt(p) is True                 # levée manuelle
+    assert read_halt(p).active is False
+    assert clear_halt(p) is False                # déjà levée
+
+
+def test_halt_read_is_fail_open_on_corruption(tmp_path) -> None:
+    """Un état corrompu ne doit pas geler le book silencieusement (fail-open assumé)."""
+    from financial_analyzer.trading.book_health import read_halt
+
+    p = tmp_path / "halt.json"
+    p.write_text("{ ceci n'est pas du json", encoding="utf-8")
+    assert read_halt(p).active is False

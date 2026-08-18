@@ -19,12 +19,14 @@ Lecture seule : ce module **observe et alerte**, il ne trade pas et ne corrige r
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from financial_analyzer.utils.helpers import get_logger
 
 logger = get_logger(__name__)
 
-__all__ = ["BookHealth", "HealthThresholds", "check_book_health"]
+__all__ = ["BookHealth", "HealthThresholds", "check_book_health",
+           "HaltState", "read_halt", "raise_halt", "clear_halt"]
 
 
 @dataclass
@@ -153,3 +155,92 @@ def check_book_health(
         unexpected=unexpected, missing=missing, concentrated=concentrated,
         worst=worst, alerts=alerts,
     )
+
+
+# ---------------------------------------------------------------------------
+# Politique de réponse aux anomalies : HALTE (pas de liquidation automatique)
+# ---------------------------------------------------------------------------
+#
+# Que faire quand l'audit détecte une anomalie ? La littérature et la pratique
+# convergent sur une réponse **graduée**, et surtout sur ce qu'il ne faut PAS faire :
+#
+# * **Alerter seul** sur une anomalie mineure (dérive de neutralité, concentration) :
+#   un book market-neutral dérive naturellement entre deux rééquilibrages ; réagir à
+#   chaque bruit détruit de la valeur en coûts de transaction.
+# * **Halte des nouvelles prises de risque** sur une anomalie grave (drawdown au-delà
+#   du seuil) : on cesse de rééquilibrer et on exige une revue humaine.
+# * **NE PAS liquider automatiquement.** C'est le point le plus important et le plus
+#   contre-intuitif. Pour une stratégie de retour à la moyenne / market-neutral, un
+#   stop-loss sur drawdown vend structurellement au pire moment et transforme une perte
+#   latente en perte réalisée, sans améliorer l'espérance (cf. la littérature sur les
+#   règles de stop : Kaminski & Lo, *When Do Stop-Loss Rules Stop Losses?* (2014) —
+#   les stops n'ajoutent de la valeur que pour des rendements à **momentum**, et en
+#   détruisent pour des rendements à **retour à la moyenne**). Le runbook du projet suit
+#   déjà cette logique : le kill-switch **bloque les nouveaux ordres** et ne liquide pas.
+#
+# La halte est donc un **fichier d'état** : présent → le prochain rééquilibrage est
+# refusé jusqu'à levée **manuelle** (revue humaine). Les positions existantes restent
+# en place ; l'opérateur décide en connaissance de cause.
+
+DEFAULT_HALT_PATH = "logs/book_halt.json"
+
+
+@dataclass
+class HaltState:
+    """État de halte d'un book (présent = rééquilibrages bloqués)."""
+
+    active: bool
+    reason: str = ""
+    raised_at: str = ""
+    metrics: dict = field(default_factory=dict)
+
+
+def read_halt(path: str | Path = DEFAULT_HALT_PATH) -> HaltState:
+    """Lit l'état de halte. Fichier absent/illisible → pas de halte (fail-open).
+
+    *Fail-open assumé* : une halte est une décision de risque explicite ; un fichier
+    corrompu ne doit pas geler le book silencieusement (l'audit ré-alertera de toute
+    façon au prochain cycle si l'anomalie persiste).
+    """
+    import json
+
+    p = Path(path)
+    if not p.exists():
+        return HaltState(active=False)
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return HaltState(active=bool(d.get("active", True)), reason=str(d.get("reason", "")),
+                         raised_at=str(d.get("raised_at", "")), metrics=d.get("metrics", {}))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("État de halte illisible (%s) — pas de halte appliquée.", e)
+        return HaltState(active=False)
+
+
+def raise_halt(reason: str, metrics: dict | None = None,
+               path: str | Path = DEFAULT_HALT_PATH) -> HaltState:
+    """Lève une halte : les prochains rééquilibrages seront refusés (levée manuelle)."""
+    import json
+    from datetime import datetime, timezone
+
+    p = Path(path)
+    state = {"active": True, "reason": reason,
+             "raised_at": datetime.now(timezone.utc).isoformat(),
+             "metrics": metrics or {}}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.critical("HALTE levée sur le book : %s", reason)
+    except Exception as e:  # noqa: BLE001
+        logger.error("Impossible d'écrire l'état de halte (%s)", e)
+    return HaltState(active=True, reason=reason, raised_at=state["raised_at"],
+                     metrics=state["metrics"])
+
+
+def clear_halt(path: str | Path = DEFAULT_HALT_PATH) -> bool:
+    """Lève la halte (action **manuelle** après revue). True si un état existait."""
+    p = Path(path)
+    if p.exists():
+        p.unlink()
+        logger.info("Halte levée manuellement (%s supprimé).", p)
+        return True
+    return False

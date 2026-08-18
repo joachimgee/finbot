@@ -35,6 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 UNIVERSE_CACHE = "/tmp/alpaca_broad_universe.json"
 PRICES_CACHE = "/tmp/yahoo_broad_prices_18y.csv"
+#: Fichier de halte : présent → les rééquilibrages sont bloqués (levée manuelle).
+HALT_PATH = "logs/amihud_halt.json"
 
 
 def _small_cap_universe(n: int) -> list[str]:
@@ -131,6 +133,19 @@ def _daily_health_check(adapter, journal, equity: float, since: int, cadence: in
             print(f"    (alerte {lvl.value} émise)")
         except Exception:  # noqa: BLE001
             pass
+    # Anomalie CRITIQUE (drawdown au-delà du seuil) → HALTE : on bloque les prochains
+    # rééquilibrages jusqu'à revue humaine. On ne liquide PAS (un stop sur un book
+    # market-neutral vend au pire moment — cf. book_health, Kaminski & Lo 2014).
+    if h.status == "critical":
+        from financial_analyzer.trading.book_health import raise_halt
+
+        raise_halt(f"audit critique : {' ; '.join(h.alerts)}",
+                   {"drawdown_pct": h.drawdown_pct, "equity": h.equity,
+                    "peak_equity": h.peak_equity},
+                   path=HALT_PATH)
+        print(f"    ⛔ HALTE levée → les rééquilibrages sont BLOQUÉS jusqu'à revue.")
+        print(f"       Positions conservées (pas de liquidation automatique).")
+        print(f"       Pour reprendre après analyse : rm {HALT_PATH}")
 
 
 def main() -> None:
@@ -179,6 +194,24 @@ def main() -> None:
         f"logs/amihud_paper_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")  # noqa: DTZ005
     journal.record_snapshot(equity=equity, cash=float(acct.get("cash", 0.0)),
                             event="run_start", mode=adapter.mode)
+
+    # HALTE : si une anomalie critique a été détectée précédemment, aucun nouveau
+    # rééquilibrage tant qu'un humain n'a pas levé la halte. Les positions restent en
+    # place (pas de liquidation automatique). L'audit continue de tourner.
+    if not dry_run:
+        from financial_analyzer.trading.book_health import read_halt
+
+        halt = read_halt(HALT_PATH)
+        if halt.active:
+            print(f"\n⛔ HALTE ACTIVE depuis {halt.raised_at[:19]} — rééquilibrage REFUSÉ.")
+            print(f"   Motif : {halt.reason}")
+            print(f"   Positions conservées. Audit du book quand même :")
+            _daily_health_check(adapter, journal, equity, -1, args.rebalance_every)
+            print(f"\n   Pour reprendre après revue : rm {HALT_PATH}")
+            journal.record_snapshot(equity=equity, cash=float(acct.get("cash", 0.0)),
+                                    event="run_end", mode=adapter.mode, halted=True)
+            adapter.disconnect()
+            return
 
     gate_active = (not dry_run) and (not args.ignore_cadence)
     if gate_active:
