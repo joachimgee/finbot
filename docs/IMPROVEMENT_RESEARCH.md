@@ -848,6 +848,132 @@ liquidité. **Reste NON INSCRIT** tant que le **biais de survie** n'est pas lev�
 demeure non mesuré (l'univers reste celui des titres cotés aujourd'hui) et frappe
 précisément la jambe longue. → **forward-test paper**, qui en est par construction exempt.
 
+### 🔴 TRANSFERT DES MODULES momentum → Amihud : un **bug de production** trouvé
+
+Huit modules avaient été construits pendant la campagne momentum (`vol_management`,
+`regime`, `cost_aware`, `meta_labeling`, `multi_strategy`, `robustness`, `tearsheet`,
+`execution_algos`). Inventaire : **aucun n'était branché sur le book Amihud** — sauf un,
+la **bande de non-transaction à 0.02**, héritée par copie du book méta-momentum et
+**jamais testée pour Amihud**. (`run_amihud_module_transfer.py`, 453 small-caps × 18 ans.)
+
+| module | meilleure config | Sharpe | vs référence | verdict |
+|---|---|---|---|---|
+| — | **band = 0 (référence)** | **+2.13** | — | — |
+| `cost_aware` | band = 0.02 **← ce qui tournait en live** | **+0.27** | **−1.87** | 🔴 **BUG** |
+| `cost_aware` | band = 10 % de \|w\| (0.0009) | +2.14 | +0.00 | neutre → non retenu |
+| `vol_management` | vol-target 15 % | +2.15 | +0.02 | neutre (rdt +25 %, DD −9.4 %) |
+| `vol_management` | filtre tendance 200 j | +2.17 | +0.04 | neutre |
+| `regime` | HMM risk-off (×0.5) | +2.11 | −0.02 | neutre |
+| — | stop-loss 5 % / 10 % / 15 % | +2.08…+2.13 | ≤ 0 | ✅ conforme Kaminski-Lo |
+
+**Le bug, et sa mécanique exacte.** La bande est un seuil en poids **absolu** : elle n'a
+de sens que rapportée à la taille d'une ligne. Le book méta-momentum tenait ~10 lignes à
+\|w\| ≈ 0.10 → 0.02 = 20 % d'une position, un vrai filtre anti-churn. Le book Amihud tient
+**68 lignes à \|w\| ≈ 0.0148**, dont le mouvement maximal mesuré est **\|Δw\| = 0.0263** et
+le p99 **0.0185** : une bande de 0.02 **gèle 100 % des mouvements**. Mesuré sur l'univers
+exact du runner live (188 titres) : turnover 0.155 → **0.009**, Sharpe **+1.69 → +0.55**.
+Le book aurait cessé de se rééquilibrer **définitivement**, sans qu'aucune erreur ne
+remonte — la panne silencieuse la plus dangereuse qui soit.
+
+Le book n'a pas encore été touché (`apply_no_trade_band` est un no-op à la mise en place,
+`prev = None`) : le gel aurait frappé au **prochain rééquilibrage**. Deux correctifs :
+
+1. `run_amihud_paper.py` : `--no-trade-band` **par défaut 0.0**. Correctement dimensionnée
+   (≤ 25 % de \|w\|) la bande ne rapporte rien ici (+2.14 vs +2.13, turnover inchangé) —
+   on ne paie pas la complexité d'un paramètre sans gain.
+2. `live_trading_pipeline._apply_no_trade_band` : **garde d'échelle** — si
+   `band ≥ poids médian d'une ligne`, la bande est neutralisée et journalisée en `error`.
+   Le paramètre ne peut plus geler un book en silence, quel que soit le book.
+   (Tests de régression : `test_no_trade_band_larger_than_position_is_neutralised`.)
+
+**PBO = 61.5 %** sur les 16 configurations ci-dessus. C'est la bonne lecture du tableau :
+*choisir* le meilleur overlay serait du sur-apprentissage 6 fois sur 10. Les overlays ne
+sont pas « légèrement positifs », ils sont **indiscernables du bruit** → **book nu**,
+aucun overlay inscrit. Le vol-target 15 % est le seul à mériter d'être reconsidéré un jour
+(même Sharpe, rendement quasi doublé) — mais au prix d'un levier moyen de 1.93×, hors du
+mandat de risque actuel.
+
+### ✅ Robustesse microstructure (Asparouhova-Bessembinder-Kalcheva) — l'edge SURVIT
+
+La critique la plus sérieuse contre un résultat d'illiquidité : le **bruit de
+microstructure** (bid-ask bounce) biaise à la hausse les portefeuilles **équipondérés**
+de titres illiquides — exactement notre jambe longue (ABK, *JFE* 2010 ; *JF* 2013). Leur
+correction : pondérer les rendements par `(1 + r_{t−1})`. Testé, plus un saut d'un jour
+(`t+2`) qui casse le bounce par construction :
+
+| variante | Sharpe |
+|---|---|
+| référence (équipondérée, t+1) | **+2.16** |
+| saut d'un jour (t+2) | +2.18 |
+| **correction ABK (return-weighted)** | **+2.14** |
+| ABK + t+2 | +2.15 |
+| pondérée par le $volume | +0.83 |
+
+L'edge **survit à toutes les corrections de microstructure** (−0.02 au pire). La chute à
++0.83 en pondération $volume est attendue et cohérente : pondérer par le volume, c'est
+sous-pondérer les illiquides — donc désactiver le signal lui-même, pas le corriger.
+
+### ❌ Combinaison multi-facteurs sur Amihud — DÉGRADE (et pourquoi c'était prévisible)
+
+Grinold-Kahn (IR ≈ IC·√Breadth) suppose des composantes à IR **toutes positives**. En
+small-cap, les autres facteurs sont **négatifs** : momentum −0.69, reversal −0.44,
+low_vol −1.63. Combiner Amihud avec eux fait passer le book de **+2.16 à +0.79**.
+Amihud + momentum seul : +1.28. Corrélations : amihud/momentum −0.26, amihud/reversal
+−0.02, amihud/low_vol −0.44. **Conclusion : ne pas combiner.** Ajouter un facteur à IR
+négatif ne diversifie pas, il dilue.
+
+### 📚 Littérature — la critique la plus sérieuse : *the vanishing illiquidity premium*
+
+Recherche académique ciblée sur ce qui **contredit** notre résultat, pas sur ce qui le
+conforte :
+
+- **Amihud (2002)** et la littérature d'origine documentent un alpha 4-facteurs de
+  **0.43 %/mois (t = 2.83)** pour l'illiquidité — cohérent avec nos ordres de grandeur.
+- **Mais** : *The Vanishing Illiquidity Premium* (Alpha Architect / IBKR Quant, d'après
+  Ben-Rephael, Kadan & Wohl) montre que la prime a **fortement décliné, voire disparu**
+  dans les marchés développés depuis les années 2000 — la cause étant précisément ce qui
+  rend notre stratégie exécutable : **resserrement des spreads, effondrement des
+  commissions, décimalisation**. Ce qui subsiste se concentre sur les **microcaps**.
+- **Lu & Marisetty (2014)**, *Why is the Amihud measure priced?* : ce que la mesure
+  capture n'est pas seulement l'illiquidité mais aussi un **effet de compensation du
+  risque de prix** — l'interprétation économique n'est pas univoque.
+- **Amihud (2019, *Critical Finance Review*)** réaffirme le pricing de l'illiquidité, y
+  compris hors États-Unis — le débat n'est **pas tranché**.
+
+**Ce que cela impose intellectuellement.** Notre backtest 18 ans (2008-2026) dit +2.16
+sur *toute* la période, y compris la seconde moitié où la littérature dit la prime
+éteinte. Deux lectures, et je ne peux pas trancher entre elles depuis le backtest :
+(a) notre construction en **quantiles cross-sectionnels** capture un différentiel
+*relatif* d'illiquidité, qui survit même quand le niveau absolu de la prime s'effondre ;
+(b) c'est le **biais de survie** qui maintient le chiffre (l'univers est celui des titres
+cotés *aujourd'hui*, et la jambe longue illiquide est exactement là où les disparitions
+frappent). Ces deux explications produisent le même backtest. **Seul le forward-test
+paper les sépare** — ce qui renforce, plutôt qu'il n'affaiblit, la décision de ne pas
+inscrire le signal avant d'avoir du hors-échantillon réel. Le moniteur
+`monitor_amihud_decay.py` est calibré exactement pour ça : il alarme sur le **signe**
+(Sharpe < 0, IC < 0), pas sur l'écart de magnitude à la base 18 ans.
+
+### 🔍 Systèmes comparables (GitHub) — ce qui existe, et ce qu'on n'y trouve pas
+
+- **[SystemicRisk](https://github.com/TommasoBelluzzo/SystemicRisk)** — implémentation de
+  référence de l'ILLIQ d'Amihud parmi une batterie d'indicateurs de risque systémique.
+  Confirme notre formule ; usage **descriptif**, pas de book long/short.
+- **[Stock_master](https://github.com/Brent-Morrison/Stock_master)** — pipeline de données
+  calculant les mesures d'Amihud à **1 mois et 3 mois** en parallèle. Notre fenêtre de
+  60 j se situe entre les deux ; suggère qu'un test de sensibilité de fenêtre serait
+  banal et attendu (non fait — et à ne faire que via le portail, essais comptés).
+- **[paperswithbacktest — Amihud Illiquidity Ratio](https://paperswithbacktest.com/course/amihud-illiquidity-ratio)**
+  — matériel pédagogique sur le ratio comme signal de trading.
+- **Microsoft Qlib**, **QuantConnect-LEAN** — architecture (couches enfichables, PIT),
+  déjà source d'inspiration du `framework.py` local.
+
+**Constat honnête de cette revue** : on trouve en abondance le *calcul* de la mesure
+d'Amihud, et très peu de **books long/short d'illiquidité validés hors échantillon avec
+coûts réels**. C'est cohérent avec la littérature ci-dessus (une prime réputée éteinte
+n'attire pas les implémentations publiques) et cela veut dire qu'il n'existe **pas de
+référence externe** contre laquelle recouper notre +2.16. Aucun repo trouvé ne traite le
+biais de survie sur ce facteur.
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige

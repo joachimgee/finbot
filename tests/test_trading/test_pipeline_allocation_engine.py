@@ -245,6 +245,30 @@ def test_no_trade_band_no_holdings_is_passthrough() -> None:
     assert out == {"A": 0.6, "B": 0.4}
 
 
+def test_no_trade_band_larger_than_position_is_neutralised() -> None:
+    """Garde d'échelle : une bande ≥ au poids d'une ligne gèlerait le book -> ignorée.
+
+    Régression du bug de production Amihud : bande 0.02 héritée d'un book concentré,
+    appliquée à un book de ~68 lignes (|w| ≈ 0.015) -> 100 % des mouvements gelés.
+    """
+    n = 40
+    positions = [{"symbol": f"S{i}", "market_value": 2500.0} for i in range(n)]
+    pipe = _pipe_with_holdings(0.02, positions)  # |w| détenu = 0.025
+    target = {f"S{i}": 0.025 for i in range(1, n)}  # S0 sort, les autres tiennent
+    out = pipe._apply_no_trade_band(target)
+    assert out == target, "la bande aurait dû être neutralisée, pas appliquée"
+
+
+def test_no_trade_band_applies_when_scaled_to_positions() -> None:
+    """Correctement dimensionnée (< poids d'une ligne), la bande fait son office."""
+    n = 40
+    positions = [{"symbol": f"S{i}", "market_value": 2500.0} for i in range(n)]
+    pipe = _pipe_with_holdings(0.005, positions)  # 20 % d'une ligne
+    target = {f"S{i}": 0.027 for i in range(n)}   # Δ = 0.002 < bande -> tenu
+    out = pipe._apply_no_trade_band(target)
+    assert out["S0"] == pytest.approx(0.025)
+
+
 def test_dry_run_flows_through_to_gateway(monkeypatch) -> None:
     """run(dry_run=True) fait passer dry_run jusqu'au gateway (aucune soumission réelle)."""
     pipe, monitor, risk = _make_pipeline(["UP"])

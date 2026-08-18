@@ -588,6 +588,15 @@ class LiveTradingPipeline:
 
         Poids détenus = valeur de marché des positions / valeur du portefeuille
         (via le moniteur). Fail-safe : toute erreur -> poids inchangés.
+
+        **Garde d'échelle** : la bande est un seuil en poids *absolu*, elle n'a donc de
+        sens que rapportée à la taille typique d'une ligne. Une bande supérieure au poids
+        médian d'une position **gèle le book** : plus aucun mouvement ne franchit le
+        seuil, le portefeuille cesse de se rééquilibrer sans qu'aucune erreur ne remonte.
+        C'est exactement ce qui s'est produit en transposant à Amihud (~68 lignes,
+        |w| ≈ 0.015) une bande de 0.02 calibrée sur un book concentré (~10 lignes,
+        |w| ≈ 0.10) : 100 % des mouvements gelés, Sharpe 18 ans +1.69 → +0.55. La garde
+        neutralise la bande dans ce cas et le signale au niveau ``error``.
         """
         try:
             import pandas as pd
@@ -598,6 +607,17 @@ class LiveTradingPipeline:
             positions = getattr(self.monitor, "positions", None) or []
             if pv <= 0 or not positions:
                 return weights  # pas de book détenu -> mise en place, rien à tenir
+            nz = [abs(w) for w in weights.values() if abs(w) > 1e-9]
+            if nz:
+                median_w = float(pd.Series(nz).median())
+                if self.no_trade_band >= median_w:
+                    logger.error(
+                        "Bande de non-transaction (%.4f) ≥ poids médian d'une ligne "
+                        "(%.4f) : elle gèlerait le book (%d lignes). Bande ignorée — "
+                        "recalibrer par rapport à la taille des positions.",
+                        self.no_trade_band, median_w, len(nz),
+                    )
+                    return weights
             current = {}
             for p in positions:
                 sym = p.get("symbol") if isinstance(p, dict) else None

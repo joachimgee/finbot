@@ -158,7 +158,14 @@ def main() -> None:
     ap.add_argument("--quantile", type=float, default=0.2)
     ap.add_argument("--rebalance-every", type=int, default=21,
                     help="Cadence (jours ouvrés) — 21 = celle testée.")
-    ap.add_argument("--no-trade-band", type=float, default=0.02)
+    # Bande de non-transaction : DÉSACTIVÉE pour ce book. Le 0.02 hérité du book
+    # méta-momentum (~10 lignes, |w| ≈ 0.10) est ici supérieur au poids d'une ligne
+    # (~68 lignes, |w| ≈ 0.015) : il gèle 100 % des mouvements et écroule le Sharpe
+    # 18 ans de +1.69 à +0.55 (scripts/run_amihud_module_transfer.py). Testée à
+    # l'échelle du book, la bande n'apporte rien (0.01 → +1.71 vs +1.69, turnover
+    # inchangé) : on ne paie pas la complexité d'un paramètre sans gain.
+    ap.add_argument("--no-trade-band", type=float, default=0.0,
+                    help="Bande de non-transaction (0 = désactivée, valeur testée).")
     ap.add_argument("--ignore-cadence", action="store_true")
     args = ap.parse_args()
 
