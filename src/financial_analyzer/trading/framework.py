@@ -288,18 +288,40 @@ class AmihudConstruction:
     """
 
     def __init__(self, pipeline: object, window: int = 60, quantile: float = 0.2,
-                 min_names: int = 20) -> None:
+                 min_names: int = 20, lookback_days: int = 400,
+                 consolidated_volume: bool = True) -> None:
         self._p = pipeline
         self.window = window
         self.quantile = quantile
         self.min_names = min_names
+        self.lookback_days = lookback_days
+        # ⚠️ CRITIQUE : le feed Alpaca IEX ne rapporte que le volume de la bourse IEX
+        # (~4 % du consolidé, ratio mesuré 20-73×). Amihud calculé dessus est un proxy
+        # dégradé (Sharpe +1.55 vs +3.48 sur la même période avec le volume consolidé).
+        # On récupère donc les volumes CONSOLIDÉS (Yahoo) pour la décision.
+        self.consolidated_volume = consolidated_volume
 
-    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
-        import numpy as np
+    def _panels(self, data: Dict):
+        """(close, volume) — volumes **consolidés** (Yahoo) si disponibles."""
         import pandas as pd
 
-        from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
+        if self.consolidated_volume:
+            try:
+                from datetime import datetime, timedelta
 
+                from financial_analyzer.data.yahoo_history import fetch_daily_ohlcv_yahoo
+
+                tickers = list(getattr(self._p, "tickers", []) or [])
+                end = datetime.now()  # noqa: DTZ005
+                start = end - timedelta(days=self.lookback_days)
+                o = fetch_daily_ohlcv_yahoo(tickers, start.strftime("%Y-%m-%d"),
+                                            end.strftime("%Y-%m-%d"))
+                if len(o) >= self.min_names:
+                    c = pd.DataFrame({s: d["close"] for s, d in o.items()}).sort_index()
+                    v = pd.DataFrame({s: d["volume"] for s, d in o.items()}).sort_index()
+                    return c.ffill().dropna(how="all"), v
+            except Exception:  # noqa: BLE001 - repli sur les données du pipeline
+                pass
         prices = (data or {}).get("prices", {}) or {}
         closes, vols = {}, {}
         for s, df in prices.items():
@@ -307,8 +329,21 @@ class AmihudConstruction:
                 continue
             closes[s] = df["close"]
             vols[s] = df["volume"]
-        if len(closes) < self.min_names:
+        if not closes:
+            return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(closes).dropna(how="all"), pd.DataFrame(vols)
+
+    def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
+        import numpy as np
+        import pandas as pd
+
+        from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
+
+        close_df, vol_df = self._panels(data)
+        if close_df.shape[1] < self.min_names:
             return self._p._construct_weights(signals, data)  # repli BL
+        closes = {c: close_df[c] for c in close_df.columns}
+        vols = {c: vol_df[c] for c in vol_df.columns if c in close_df.columns}
         try:
             close = pd.DataFrame(closes).dropna(how="all")
             vol = pd.DataFrame(vols).reindex(columns=close.columns, index=close.index)

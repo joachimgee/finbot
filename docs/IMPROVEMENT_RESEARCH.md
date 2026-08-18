@@ -805,6 +805,49 @@ la prime d'illiquidité est une compensation POUR le coût de transaction — sa
 apparente aux coûts (+1.07 à 300 bps) est cohérente avec la théorie, mais mérite la même
 prudence.*
 
+#### ⭐⭐ Extension 18 ANS (volumes consolidés) — le seul signal à passer le portail complet
+
+Le test ci-dessus était limité à 6 ans (profondeur du feed Alpaca). Extension du fetcher
+Yahoo aux **volumes** (`fetch_daily_ohlcv_yahoo`) → **486 small-caps × 18 ans (2008-2026)** :
+
+| grandeur | valeur |
+|---|---|
+| **Sharpe L/S net** (60 bps) | **+2.16** (t = **+9.24**) |
+| Rendement net / max drawdown | +13.8 %/an / **−5.7 %** |
+| **DSR** | **1.000** — à N=3, N=11 **et N=32** |
+| Sensibilité coûts (25→300 bps) | +2.26 / +2.16 / +2.05 / +1.75 / **+1.46** |
+
+**Positif dans les SIX régimes** — y compris la crise de 2008 :
+
+| régime | Sharpe | t | rdt an |
+|---|---|---|---|
+| 2008-2009 (crise) | +2.22 | +2.94 | +21.1 % |
+| 2010-2014 (reprise) | +0.75 | +1.67 | +3.6 % |
+| 2015-2019 (bull calme) | +1.52 | +3.39 | +7.8 % |
+| 2020-2021 (COVID) | +2.48 | +3.51 | +19.3 % |
+| 2022-2023 (bear/taux) | +2.72 | +3.83 | +15.0 % |
+| 2024-2026 | +4.61 | +7.39 | +35.0 % |
+
+**Capacité et implémentabilité — vérifiées :** la jambe « illiquide » a un $volume médian
+de **31 M$/jour** (ce ne sont PAS des penny stocks, mais les titres *relativement* moins
+liquides d'un univers déjà filtré) → capacité ≈ **19 M$** à 1 % de participation. Le
+signal **survit aux planchers de liquidité** : +2.16 (aucun) → +1.75 (>1 M$/j) → **+1.14
+(>10 M$/j)**, décroissance monotone conforme à une vraie prime d'illiquidité.
+
+**🔧 Défaut d'implémentation critique corrigé.** Le feed **Alpaca IEX ne rapporte que le
+volume de la bourse IEX** — mesuré à **~4 % du consolidé** (ratios 20-73× sur AMC, ALGT,
+ACIW…). Un Amihud calculé dessus est un proxy dégradé : **+1.55 (IEX) vs +3.48 (consolidé)
+sur la même période**. *Cela réfute au passage mon hypothèse initiale* (« l'écart 6 ans vs
+18 ans = signature du biais de survie ») : les deux panels contenaient les **mêmes titres**
+à 2 près — l'écart venait de la **source des volumes**, pas de la survie.
+`AmihudConstruction` récupère donc les volumes **consolidés (Yahoo)** pour la décision.
+
+**Statut : premier signal à franchir le portail complet** (IC t > 2, Sharpe net > 0,
+**DSR ≥ 0.95 même à 32 essais**), stable sur 6 régimes, robuste aux coûts et à la
+liquidité. **Reste NON INSCRIT** tant que le **biais de survie** n'est pas levé — il
+demeure non mesuré (l'univers reste celui des titres cotés aujourd'hui) et frappe
+précisément la jambe longue. → **forward-test paper**, qui en est par construction exempt.
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
