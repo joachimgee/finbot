@@ -893,6 +893,103 @@ aucun overlay inscrit. Le vol-target 15 % est le seul à mériter d'être recons
 (même Sharpe, rendement quasi doublé) — mais au prix d'un levier moyen de 1.93×, hors du
 mandat de risque actuel.
 
+### 🔧 SENSIBILITÉ DE LA FENÊTRE au portail — et un **bug de mesure du portail lui-même**
+
+La fenêtre de 60 j d'Amihud n'avait jamais été justifiée : elle a été posée, pas choisie.
+Testée par le **portail** (pas par un sweep) sur 5 fenêtres **pré-enregistrées** — 21, 42,
+60, 90, 126 j — avec les essais comptés cumulativement (**N = 36** : les 32 de la campagne
++ 4 nouvelles fenêtres) et la **PBO** du choix de fenêtre. Critère de succès **déclaré
+avant** le test : le résultat souhaitable n'est pas « 60 j gagne » mais que **toutes** les
+fenêtres passent — un signal qui ne survit qu'à un réglage est un artefact de réglage.
+
+**Premier passage : 0/5 fenêtres, IC t négatif partout** (−1.22 à −0.66), y compris celle
+en production. Plutôt que d'accepter le verdict, diagnostic de l'écart avec le +2.29 de la
+campagne. La cause n'était pas dans le signal :
+
+| horizon de mesure de l'IC | IC moyen | t |
+|---|---|---|
+| 1 jour (ce que mesurait le portail) | −0.0028 | **−1.74** |
+| 1 jour, aux dates de rééquilibrage | −0.0032 | −0.43 |
+| **21 jours (l'horizon de détention réel)** | **+0.0335** | **+4.37** |
+
+**Le portail mesurait une décision que la stratégie ne prend pas.** `evaluate_signal`
+acceptait `rebalance_every=N` — le book tient donc ses poids N périodes — mais calculait
+l'IC contre le rendement à **une** période. Incohérence par construction, pour *tout*
+signal. Économiquement, c'est aussi le bon sens : une prime d'illiquidité est une
+compensation lente, elle ne prédit pas le lendemain.
+
+Vérification que le Sharpe n'était pas, lui, fabriqué par une queue épaisse (le piège que
+le double critère est censé attraper) : médiane quotidienne **+3.74 bps** vs moyenne
++5.33 bps, **54.5 %** de jours positifs, et Sharpe **+1.64 en retirant le top 1 %** des
+jours. L'edge est large, pas concentré sur quelques dates.
+
+**Correctif** (`signal_evaluation.evaluate_signal`) : l'IC est mesuré à l'horizon de
+détention (`ic_horizon`, défaut = `rebalance_every`) et **échantillonné sans
+recouvrement** — une observation tous les h pas, pour ne pas gonfler le t-stat avec des
+fenêtres qui partagent leurs rendements. `rebalance_every=1` → comportement historique
+inchangé. 5 tests de régression.
+
+**Second passage — 5/5 fenêtres passent** (IC t > 2, Sharpe net > 0, DSR ≥ 0.95 à N=36,
+PBO ≤ 0.50) :
+
+| fenêtre | IC t | Sharpe net | DSR | verdict |
+|---|---|---|---|---|
+| 21 j | +4.43 | +2.19 | 1.000 | ✅ |
+| 42 j | +4.34 | +2.26 | 1.000 | ✅ |
+| **60 j ← production** | **+4.36** | **+2.26** | **1.000** | ✅ |
+| 90 j | +4.44 | +2.26 | 1.000 | ✅ |
+| 126 j | +4.54 | +2.30 | 1.000 | ✅ |
+
+**PBO du choix de fenêtre = 43.7 %** — sous le seuil, mais assez haut pour interdire de
+« passer à la meilleure » : basculer sur 126 j pour +0.04 de Sharpe serait exactement le
+sur-apprentissage que la PBO mesure. **La production reste à 60 j.**
+
+**⚠️ Nuance essentielle : ce ne sont pas 5 confirmations indépendantes.** Corrélation de
+rang entre panels : **0.965 à 0.996** ; recouvrement de la jambe longue entre 21 j et
+126 j : **75 %**. L'illiquidité est une **caractéristique quasi permanente** d'un titre,
+pas un état rapide — la moyenner sur 1 mois ou 6 mois classe presque à l'identique. Le
+bon énoncé est donc : *la fenêtre n'est pas un levier*, pas *l'edge a été confirmé cinq
+fois*. C'est rassurant (aucun risque de réglage) sans rien ajouter à la preuve.
+
+### 🔻 Effet collatéral du correctif : **momentum_12_1 ne franchit plus le portail**
+
+Le correctif d'horizon tranche **dans les deux sens** — c'est ce qui atteste qu'il mesure
+quelque chose de réel plutôt que d'avoir été taillé pour sauver Amihud. Sur les 486
+large-caps × 18 ans, reb=10, walk-forward 5 fenêtres :
+
+| horizon de mesure | IC moyen | IC t | Sharpe net | portail |
+|---|---|---|---|---|
+| 1 j (avant) | +0.0170 | **+4.85** | +0.27 | ✅ |
+| **10 j (après)** | **+0.0193** | **+1.83** | +0.27 | ❌ |
+
+L'IC moyen **monte** ; c'est son *t* qui s'effondre, parce que le comptage passe de ~3 900
+observations à ~390 — le nombre de **paris réellement indépendants**. Le +4.85 était
+gonflé par des fenêtres chevauchantes. La qualité de tri de momentum n'est pas contestée ;
+sa **significativité** ne l'est plus sur cet échantillon.
+
+**Décision prise : momentum_12_1 est DÉCLASSÉ.** La suite de tests portait déjà
+l'invariant qui tranche — *toute entrée du registre doit réellement passer le portail* —
+et le registre est la source de vérité de ce qui a le droit de trader : il ne peut pas
+contenir un signal que le portail rejette. L'entrée est déplacée vers un registre
+`DECLASSED_SIGNALS` qui **conserve toute la preuve** (décision auditable et réversible),
+et dont aucune entrée n'a le droit de décider (`require_validated` la refuse comme un
+inconnu).
+
+**`VALIDATED_SIGNALS` est donc VIDE — et c'est l'état honnête du système.** Un registre
+vide est aussi l'état le plus **sûr** : `is_validated` renvoie faux pour tout, donc aucun
+signal ne décide. Conséquences vérifiées, toutes conformes :
+
+| consommateur | comportement avec registre vide |
+|---|---|
+| `live_trading_pipeline` (daemon) | abandonne sa composante momentum et **s'abstient** — mécanisme déjà prévu |
+| `readiness` critère #3 | **échec** : « registre VIDE » → système **non prêt pour le live** |
+| `RebalanceGate` | repli sur cadence 1 — sans effet réel : sans signal validé, il n'y a rien à rééquilibrer |
+| `signal_monitor` | garde la base de comparaison via `DECLASSED_SIGNALS` (surveiller la dérive reste utile) |
+| **book paper Amihud** | **inchangé** — il n'a jamais dépendu du registre (délibérément non inscrit) |
+
+Le rapport de live-readiness dit désormais la vérité : **aucun signal n'est autorisé à
+passer en live**. Le seul candidat (Amihud) attend son forward-test.
+
 ### ✅ Robustesse microstructure (Asparouhova-Bessembinder-Kalcheva) — l'edge SURVIT
 
 La critique la plus sérieuse contre un résultat d'illiquidité : le **bruit de

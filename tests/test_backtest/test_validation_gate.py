@@ -14,6 +14,7 @@ import pytest
 
 from financial_analyzer.backtest.signal_evaluation import CostModel
 from financial_analyzer.backtest.validation_gate import (
+    DECLASSED_SIGNALS,
     VALIDATED_SIGNALS,
     GateThresholds,
     ValidatedSignal,
@@ -183,16 +184,36 @@ def test_empty_oos_is_rejected() -> None:
 # --- Registre : source de vérité de « ce qui a le droit de trader » ----------
 
 def test_registry_entries_actually_pass_the_gate() -> None:
-    """Toute entrée du registre satisfait réellement le double critère."""
-    assert VALIDATED_SIGNALS, "le registre ne doit pas être vide"
+    """Toute entrée du registre satisfait réellement le double critère.
+
+    L'invariant porte sur le CONTENU, pas sur la taille : un registre **vide** est
+    légitime (et sûr — plus rien n'a le droit de décider). Le remplir sans preuve
+    serait la seule violation possible.
+    """
     for sig in VALIDATED_SIGNALS.values():
         assert sig.verdict().passed, f"{sig.name} enregistré mais ne passe pas le portail"
 
 
-def test_momentum_12_1_is_registered() -> None:
-    assert is_validated("momentum_12_1")
-    sig = require_validated("momentum_12_1")
-    assert sig.rebalance_every == 10  # config retenue par le sweep
+def test_momentum_12_1_is_declassed_not_validated() -> None:
+    """momentum_12_1 a été retiré du registre : IC t=+1.83 à l'horizon de détention.
+
+    Le t précédent (+4.85) était gonflé par des observations chevauchantes ; mesuré
+    sans recouvrement, le signal ne franchit plus le seuil. La preuve est conservée
+    dans ``DECLASSED_SIGNALS`` pour que la décision reste auditable.
+    """
+    assert not is_validated("momentum_12_1")
+    sig = DECLASSED_SIGNALS["momentum_12_1"]
+    assert sig.rebalance_every == 10
+    assert not sig.verdict().passed
+    assert "DÉCLASSÉ" in sig.evidence
+
+
+def test_declassed_signals_cannot_trade() -> None:
+    """Un signal déclassé est refusé par la garde d'exécution, comme un inconnu."""
+    for name in DECLASSED_SIGNALS:
+        assert not is_validated(name)
+        with pytest.raises(ValueError, match="non validé"):
+            require_validated(name)
 
 
 def test_require_validated_rejects_unknown() -> None:
@@ -200,15 +221,23 @@ def test_require_validated_rejects_unknown() -> None:
         require_validated("reversal_5")  # net-négatif -> jamais enregistré
 
 
+def _sample_signal(ic_t: float = 2.56, sharpe: float = 0.73) -> ValidatedSignal:
+    """Entrée de registre construite localement — ces tests portent sur le TYPE,
+    pas sur le contenu du registre (qui peut légitimement être vide)."""
+    return ValidatedSignal(name="demo", rebalance_every=10, ic_t_stat=ic_t,
+                           net_sharpe=sharpe, evidence="fixture de test")
+
+
 def test_stricter_thresholds_can_reject_a_registered_signal() -> None:
     """Les seuils sont configurables : un portail plus exigeant peut resserrer."""
+    sig = _sample_signal()
+    assert sig.verdict().passed  # portail par défaut : 2.56 > 2.0 et 0.73 > 0
     strict = GateThresholds(ic_t_stat_min=3.0, net_sharpe_min=1.0)
-    verdict = VALIDATED_SIGNALS["momentum_12_1"].verdict(thresholds=strict)
-    assert not verdict.passed  # 2.56 < 3.0 et 0.73 < 1.0
+    assert not sig.verdict(thresholds=strict).passed  # 2.56 < 3.0 et 0.73 < 1.0
 
 
 def test_validated_signal_is_immutable() -> None:
-    sig = require_validated("momentum_12_1")
+    sig = _sample_signal()
     # frozen dataclass -> l'assignation lève FrozenInstanceError (sous-classe
     # d'AttributeError) : la preuve enregistrée ne peut pas être altérée en place.
     with pytest.raises(AttributeError):

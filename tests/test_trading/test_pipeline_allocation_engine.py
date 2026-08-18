@@ -37,6 +37,26 @@ def _price_df(daily_drift: float, n: int = 260, seed: int = 0) -> pd.DataFrame:
     )
 
 
+@pytest.fixture
+def momentum_registered(monkeypatch):
+    """Inscrit temporairement momentum_12_1 au registre du portail.
+
+    Le registre réel est **vide** depuis le déclassement de momentum (correctif
+    d'horizon d'IC) : le pipeline s'abstient donc de toute source non validée, ce
+    qui est le comportement voulu. Les tests ci-dessous portent sur le *mécanisme*
+    d'allocation (inclinaison par le signal, overlay de vol), pas sur le contenu du
+    registre — ils lui fournissent donc une entrée de test explicite.
+    """
+    from financial_analyzer.backtest import validation_gate as vg
+
+    entry = vg.ValidatedSignal(
+        name="momentum_12_1", rebalance_every=10, ic_t_stat=2.56,
+        net_sharpe=0.76, evidence="fixture de test",
+    )
+    monkeypatch.setitem(vg.VALIDATED_SIGNALS, "momentum_12_1", entry)
+    return entry
+
+
 def _make_pipeline(tickers, journal=None):
     """Pipeline avec broker/moniteur/risk mockés (aucun appel réseau)."""
     broker = MagicMock()
@@ -77,7 +97,7 @@ def test_requires_connected_broker() -> None:
 
 # --- compute_target_weights : allocation pilotée par le signal ---------------
 
-def test_weights_are_signal_tilted_long_only() -> None:
+def test_weights_are_signal_tilted_long_only(momentum_registered) -> None:
     """Un titre en tendance haussière est retenu ; un baissier est exclu."""
     pipe, _, _ = _make_pipeline(["UP", "DOWN"])
     data = {
@@ -170,7 +190,7 @@ def test_compute_target_weights_applies_concentration_cap() -> None:
     assert max(weights.values()) <= 0.25 + 1e-9
 
 
-def test_vol_overlay_off_by_default_leaves_weights() -> None:
+def test_vol_overlay_off_by_default_leaves_weights(momentum_registered) -> None:
     """Sans target_vol, l'exposition reste pleine (somme des poids ≈ 1)."""
     pipe, _, _ = _make_pipeline(["UP", "DOWN"])
     assert pipe.target_vol is None
@@ -180,7 +200,7 @@ def test_vol_overlay_off_by_default_leaves_weights() -> None:
     assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
 
 
-def test_vol_overlay_reduces_exposure_when_enabled() -> None:
+def test_vol_overlay_reduces_exposure_when_enabled(momentum_registered) -> None:
     """Avec target_vol bas et des titres volatils, l'exposition est réduite (< 1)."""
     broker = MagicMock()
     broker.connected = True

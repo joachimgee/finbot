@@ -41,6 +41,7 @@ from financial_analyzer.backtest.signal_evaluation import (
 )
 
 __all__ = [
+    "DECLASSED_SIGNALS",
     "VALIDATED_SIGNALS",
     "GateThresholds",
     "ValidatedSignal",
@@ -245,11 +246,26 @@ class ValidatedSignal:
 # Chiffres issus de scripts/run_factor_validation_alpaca.py et
 # scripts/run_rebalance_sweep_alpaca.py. Ajouter une entrée EXIGE d'avoir fait
 # passer le signal par evaluate_signal_gate (test verrouillé dans la suite).
-VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {
+#
+# ⚠️ **Le registre est actuellement VIDE, et c'est l'état honnête du système.**
+# `momentum_12_1` en a été retiré (voir ``DECLASSED_SIGNALS``) après le correctif
+# d'horizon d'IC : mesuré à sa période de détention réelle et sans recouvrement, son
+# t tombe à +1.83 et ne franchit plus le seuil. Le seul candidat sérieux restant
+# (illiquidité d'Amihud) est délibérément **non inscrit** tant que son forward-test
+# paper n'a pas levé le doute sur le biais de survie. Un registre vide est l'état le
+# plus **sûr** possible : ``is_validated`` renvoie faux pour tout, donc aucun signal
+# n'a le droit de décider. Il ne doit pas être « rempli » pour faire joli.
+VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {}
+
+
+# Signaux **déclassés** : ils ont figuré au registre, n'y sont plus, et la preuve est
+# conservée ici pour que la décision reste auditable (et réversible si un échantillon
+# futur rétablit la significativité). Aucune entrée d'ici n'a le droit de trader.
+DECLASSED_SIGNALS: dict[str, ValidatedSignal] = {
     "momentum_12_1": ValidatedSignal(
         name="momentum_12_1",
         rebalance_every=10,
-        ic_t_stat=2.56,
+        ic_t_stat=1.83,
         net_sharpe=0.76,
         evidence="run_rebalance_sweep_alpaca.py — 80 US large-caps, 5 fenêtres OOS, "
                  "coûts Alpaca calibrés (commission 0 + slippage 2.5 bps) : "
@@ -272,7 +288,28 @@ VALIDATED_SIGNALS: dict[str, ValidatedSignal] = {
                  "l'edge IC est réel et robuste, sa rentabilité nette est modeste et "
                  "régime-dépendante. L'histoire courte n'était donc PAS le vrai plafond "
                  "(Yahoo la lève gratuitement) ; les blocages restants sont le biais de "
-                 "survie (Yahoo/Alpaca = titres encore cotés) et l'homogénéité large-cap.",
+                 "survie (Yahoo/Alpaca = titres encore cotés) et l'homogénéité large-cap. "
+                 "⚠️ RÉVISION (correctif d'horizon d'IC, run_amihud_window_gate.py) : le "
+                 "portail mesurait l'IC contre le rendement à UNE période alors que ce "
+                 "signal tient ses poids 10 périodes. Mesuré à l'horizon de détention et "
+                 "SANS RECOUVREMENT (une observation tous les 10 jours), l'IC moyen est "
+                 "inchangé, voire meilleur (+0.0193 vs +0.0170), mais son t tombe de "
+                 "+4.85 à +1.83 : le t précédent était gonflé par un comptage de ~10× "
+                 "plus d'observations qu'il n'y a de paris indépendants. Sous mesure "
+                 "corrigée, momentum_12_1 NE FRANCHIT PLUS le seuil IC t > 2. L'entrée "
+                 "est conservée au registre — la qualité de tri n'est pas contestée (IC "
+                 "moyen positif et stable, prior de littérature massif), c'est sa "
+                 "SIGNIFICATIVITÉ qui n'est plus établie sur cet échantillon — mais elle "
+                 "ne doit plus être présentée comme validée par le portail. Aucun book "
+                 "ne trade ce signal aujourd'hui (le forward-test paper en cours est "
+                 "l'illiquidité d'Amihud). DÉCLASSÉ le 2026-08-18 : le registre est la "
+                 "source de vérité de ce qui a le droit de trader, il ne peut pas "
+                 "contenir un signal que le portail rejette. La qualité de tri de "
+                 "momentum n'est pas contestée (IC moyen positif, stable, prior de "
+                 "littérature massif) — c'est sa significativité qui n'est plus établie "
+                 "sur cet échantillon. Réinscription possible sur un échantillon offrant "
+                 "assez de paris INDÉPENDANTS (univers plus large, ou horizon plus court "
+                 "si le signal le supporte).",
     ),
 }
 

@@ -571,6 +571,23 @@ class TestStatusAndMetrics:
 # Run with: pytest tests/trading/test_live_trading_pipeline.py -v --cov
 
 
+@pytest.fixture
+def momentum_registered(monkeypatch):
+    """Inscrit temporairement momentum_12_1 au registre du portail.
+
+    Le registre réel est **vide** depuis le déclassement de momentum (correctif
+    d'horizon d'IC : t=+1.83 mesuré sans recouvrement, sous le seuil). Le pipeline
+    s'abstient donc de cette source — comportement voulu, verrouillé par
+    ``test_momentum_source_gated_by_registry``. Les tests qui exercent le *calcul*
+    du signal momentum lui fournissent une entrée de test explicite.
+    """
+    from financial_analyzer.backtest import validation_gate as vg
+
+    monkeypatch.setitem(vg.VALIDATED_SIGNALS, "momentum_12_1", vg.ValidatedSignal(
+        name="momentum_12_1", rebalance_every=10, ic_t_stat=2.56,
+        net_sharpe=0.76, evidence="fixture de test"))
+
+
 class TestGenerateSignalsAbstention:
     """P1: stub sources abstain (no fabricated 0.0); weights renormalise over
     the signal sources that truly produced a value."""
@@ -590,7 +607,7 @@ class TestGenerateSignalsAbstention:
         mom = df["close"].iloc[-21] / df["close"].iloc[-252] - 1
         return float(np.tanh(mom * 3))
 
-    def test_ml_stub_does_not_dilute(self, pipeline):
+    def test_ml_stub_does_not_dilute(self, pipeline, momentum_registered):
         """With only momentum available, the signal equals the momentum signal
         (renormalised to weight 1.0) — the dead ML source no longer scales it down."""
         df = self._rising_df()
@@ -601,7 +618,7 @@ class TestGenerateSignalsAbstention:
             signals = pipeline._generate_signals(data)
         assert signals["AAPL"] == pytest.approx(self._momentum(df), abs=1e-9)
 
-    def test_sentiment_included_when_present(self, pipeline):
+    def test_sentiment_included_when_present(self, pipeline, momentum_registered):
         df = self._rising_df()
         data = {"prices": {"AAPL": df}, "sentiment": {"AAPL": 0.5}}
         with patch(
@@ -702,7 +719,7 @@ class TestValidatedMomentumSignal:
         close = pd.Series(np.linspace(100.0, 200.0, n), index=idx)
         return pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1e6}, index=idx)
 
-    def test_uses_12_1_momentum_when_history_long(self, pipeline):
+    def test_uses_12_1_momentum_when_history_long(self, pipeline, momentum_registered):
         df = self._rising(300)
         data = {"prices": {"AAPL": df}, "sentiment": {}}
         with patch("financial_analyzer.trading.live_trading_pipeline.TechnicalFeatureEngine", None):

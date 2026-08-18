@@ -52,8 +52,34 @@ def test_streak_counts_only_trailing_clean_runs(tmp_path: Path) -> None:
     assert crit1.status == "fail"  # 3 < 20
 
 
+def test_empty_registry_blocks_readiness(tmp_path: Path, monkeypatch) -> None:
+    """Registre vide -> critère #3 en échec, système NON prêt pour le live.
+
+    C'est l'état réel depuis le déclassement de momentum : plus aucun signal n'a
+    passé le portail, donc rien ne doit passer en live. Le rapport doit le dire.
+    """
+    from financial_analyzer.backtest.validation_gate import VALIDATED_SIGNALS
+
+    assert not VALIDATED_SIGNALS, "registre attendu vide (momentum déclassé)"
+    paths = [_run(tmp_path, f"2026-05-{i:02d}", recon_ok=True, equity=100000.0)
+             for i in range(1, CLEAN_RUN_TARGET + 1)]
+    (tmp_path / "rebalance_state.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("FINBOT_ALERT_WEBHOOK", "https://hook.example")
+    rep = evaluate_readiness(paths, rebalance_state=tmp_path / "rebalance_state.json")
+    crit3 = next(c for c in rep.criteria if c.id == 3)
+    assert crit3.status == "fail" and "VIDE" in crit3.measured
+    assert not rep.ready
+
+
 def test_ready_when_all_auto_pass(tmp_path: Path, monkeypatch) -> None:
     # 20 runs propres consécutifs avec equity stable (drawdown 0) + env/état requis.
+    from financial_analyzer.backtest import validation_gate as vg
+
+    # Le registre réel est vide : ce test porte sur la logique d'agrégation des
+    # critères, il lui fournit donc un signal validé explicite.
+    monkeypatch.setitem(vg.VALIDATED_SIGNALS, "momentum_12_1", vg.ValidatedSignal(
+        name="momentum_12_1", rebalance_every=10, ic_t_stat=2.56,
+        net_sharpe=0.76, evidence="fixture de test"))
     paths = [_run(tmp_path, f"2026-02-{i:02d}", recon_ok=True, equity=100000.0)
              for i in range(1, CLEAN_RUN_TARGET + 1)]
     (tmp_path / "rebalance_state.json").write_text("{}", encoding="utf-8")

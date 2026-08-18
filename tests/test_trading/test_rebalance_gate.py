@@ -18,9 +18,32 @@ def _bd_offset(d: date, n: int) -> date:
     return date.fromisoformat(str(np.busday_offset(d.isoformat(), n)))
 
 
-def test_reads_cadence_from_validated_registry(tmp_path) -> None:
+def test_reads_cadence_from_validated_registry(tmp_path, monkeypatch) -> None:
+    """La cadence vient bien de l'entrée du registre — quand il y en a une.
+
+    Le registre réel est vide depuis le déclassement de momentum : le test fournit
+    donc une entrée explicite plutôt que de dépendre de son contenu.
+    """
+    from financial_analyzer.backtest import validation_gate as vg
+
+    monkeypatch.setitem(vg.VALIDATED_SIGNALS, "momentum_12_1", vg.ValidatedSignal(
+        name="momentum_12_1", rebalance_every=10, ic_t_stat=2.56,
+        net_sharpe=0.76, evidence="fixture de test"))
     gate = RebalanceGate.from_validated_signal(tmp_path / "state.json")
-    assert gate.rebalance_every == 10  # momentum_12_1 @ reb=10
+    assert gate.rebalance_every == 10
+
+
+def test_empty_registry_falls_back_open(tmp_path) -> None:
+    """Registre vide -> repli sur cadence 1 (pas de gate), sans échec.
+
+    Ce repli n'ouvre rien en pratique : sans signal validé, le pipeline s'abstient
+    de toute position, donc il n'y a rien à rééquilibrer.
+    """
+    from financial_analyzer.backtest.validation_gate import VALIDATED_SIGNALS
+
+    assert not VALIDATED_SIGNALS, "registre attendu vide (momentum déclassé)"
+    gate = RebalanceGate.from_validated_signal(tmp_path / "state.json")
+    assert gate.rebalance_every == 1
 
 
 def test_unknown_signal_falls_back_open(tmp_path) -> None:

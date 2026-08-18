@@ -43,8 +43,9 @@ def test_inverted_edge_flagged_dead() -> None:
 def test_baseline_pulled_from_registry() -> None:
     scores, returns = _panels(sign=+1.0, seed=3)
     h = evaluate_signal_health("momentum_12_1", scores, returns, lookback=150)
-    # La base vient du registre (momentum_12_1 : IC t 2.56, Sharpe net 0.76).
-    assert h.baseline_ic_t == 2.56
+    # La base vient du registre — y compris pour un signal DÉCLASSÉ : surveiller sa
+    # dérive reste utile même s'il n'a plus le droit de trader.
+    assert h.baseline_ic_t == 1.83
     assert h.baseline_net_sharpe == 0.76
 
 

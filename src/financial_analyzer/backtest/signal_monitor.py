@@ -87,9 +87,15 @@ def evaluate_signal_health(
         d'exception propagée (un moniteur ne doit pas casser le run qui l'appelle).
     """
     from financial_analyzer.backtest.signal_evaluation import CostModel, evaluate_signal
-    from financial_analyzer.backtest.validation_gate import VALIDATED_SIGNALS
+    from financial_analyzer.backtest.validation_gate import (
+        DECLASSED_SIGNALS,
+        VALIDATED_SIGNALS,
+    )
 
-    baseline = VALIDATED_SIGNALS.get(name)
+    # Un signal **déclassé** garde une base de comparaison : surveiller sa dérive reste
+    # utile (c'est même ce qui dirait qu'il mérite d'être re-testé), alors qu'il n'a
+    # plus le droit de trader. Le registre validé prime s'il contient le nom.
+    baseline = VALIDATED_SIGNALS.get(name) or DECLASSED_SIGNALS.get(name)
     base_ic_t = float(getattr(baseline, "ic_t_stat", 0.0) or 0.0)
     base_sharpe = float(getattr(baseline, "net_sharpe", 0.0) or 0.0)
     if rebalance_every is None:

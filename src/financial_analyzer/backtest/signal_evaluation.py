@@ -94,10 +94,14 @@ class SignalEvalResult:
     avg_turnover: float
     n_periods: int
     net_equity_curve: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
+    #: Horizon (en périodes) sur lequel l'IC a été mesuré — égal à la période de
+    #: détention, cf. ``evaluate_signal``. 1 = IC à une période (ancien comportement).
+    ic_horizon: int = 1
 
     def summary(self) -> str:
         return (
-            f"IC={self.ic_mean:+.4f} (t={self.ic_t_stat:+.2f}, hit={self.ic_hit_rate:.0%}) | "
+            f"IC(h={self.ic_horizon})={self.ic_mean:+.4f} "
+            f"(t={self.ic_t_stat:+.2f}, hit={self.ic_hit_rate:.0%}) | "
             f"Sharpe brut={self.gross_sharpe:+.2f} net={self.net_sharpe:+.2f} | "
             f"Rdt an. net={self.net_ann_return:+.1%} | turnover={self.avg_turnover:.2f}/pér. | "
             f"{self.n_periods} périodes"
@@ -114,6 +118,7 @@ class SignalEvalResult:
             "net_ann_return": self.net_ann_return,
             "avg_turnover": self.avg_turnover,
             "n_periods": float(self.n_periods),
+            "ic_horizon": float(self.ic_horizon),
         }
 
 
@@ -167,6 +172,7 @@ def evaluate_signal(
     periods_per_year: int = 252,
     rebalance_every: int = 1,
     no_trade_band: float = 0.0,
+    ic_horizon: Optional[int] = None,
 ) -> SignalEvalResult:
     """Évalue un signal cross-sectionnel, coûts inclus.
 
@@ -186,6 +192,10 @@ def evaluate_signal(
         no_trade_band: bande de non-transaction (cost-aware). 0 (défaut) = viser
             exactement le cible. > 0 : ne trader un actif que si son poids bouge de
             plus de ``no_trade_band`` — réduit le turnover (cf. ``cost_aware``).
+        ic_horizon: horizon (en périodes) sur lequel mesurer l'IC. ``None`` (défaut)
+            = ``rebalance_every``, c'est-à-dire la **période de détention réelle** du
+            book — le seul horizon dont la stratégie décide. Forcer ``1`` restaure
+            l'ancien comportement (IC à une période).
 
     Returns:
         SignalEvalResult (IC, Sharpe brut/net, rendement net, turnover).
@@ -198,7 +208,30 @@ def evaluate_signal(
     forward_returns = returns.shift(-1)
 
     # --- IC (qualité de tri, indépendant des coûts) ---
-    ic = compute_cross_sectional_ic(scores, forward_returns)
+    # L'IC doit être mesuré sur l'horizon de DÉTENTION, pas sur une période.
+    # Avec ``rebalance_every=N``, le book tient ses poids N périodes : sa décision
+    # porte sur le rendement à N périodes. Mesurer l'IC contre le rendement à *une*
+    # période évalue une décision que la stratégie ne prend pas — et le désaccord
+    # n'est pas cosmétique : pour un signal lent (illiquidité d'Amihud, reb=21),
+    # l'IC à 1 jour ressort à t=-1.74 (bruit) quand l'IC à 21 jours ressort à
+    # t=+4.37 sur le même panel. Le portail rejetait le signal pour une raison
+    # purement instrumentale.
+    #
+    # L'IC à horizon h est en outre échantillonné **sans recouvrement** (une
+    # observation tous les h pas) : des fenêtres qui se chevauchent partagent leurs
+    # rendements, ce qui gonfle mécaniquement le t-stat (le classique biais des
+    # observations non indépendantes). ``h=1`` → comportement historique inchangé.
+    h = max(1, int(ic_horizon if ic_horizon is not None else rebalance_every))
+    if h == 1:
+        ic = compute_cross_sectional_ic(scores, forward_returns)
+    else:
+        # Rendement composé à h périodes. Un rendement manquant est traité comme un
+        # jour plat (les prix sont ffill-és en amont : c'est l'hypothèse déjà faite),
+        # mais une date sans rendement observé ne fournit pas d'observation d'IC.
+        cum = (1.0 + returns.fillna(0.0)).cumprod()
+        fwd_h = (cum.shift(-h) / cum - 1.0).where(returns.notna())
+        stride = slice(None, None, h)
+        ic = compute_cross_sectional_ic(scores.iloc[stride], fwd_h.iloc[stride])
     ics = ic_summary(ic)
 
     # --- Portefeuille long/short ajusté des coûts ---
@@ -259,6 +292,7 @@ def evaluate_signal(
         avg_turnover=float(np.mean(turnovers)) if turnovers else 0.0,
         n_periods=len(net_s),
         net_equity_curve=net_equity,
+        ic_horizon=h,
     )
 
 
@@ -284,6 +318,7 @@ def walk_forward_evaluate(
     periods_per_year: int = 252,
     rebalance_every: int = 1,
     no_trade_band: float = 0.0,
+    ic_horizon: Optional[int] = None,
 ) -> Dict[str, object]:
     """Évaluation walk-forward strictement out-of-sample.
 
@@ -334,6 +369,7 @@ def walk_forward_evaluate(
             predicted, returns.loc[test_idx], cost_model=cost_model,
             quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
             rebalance_every=rebalance_every, no_trade_band=no_trade_band,
+            ic_horizon=ic_horizon,
         )
         per_window.append(res)
 
@@ -343,6 +379,7 @@ def walk_forward_evaluate(
         oos_scores, returns.reindex(oos_scores.index), cost_model=cost_model,
         quantile=quantile, long_short=long_short, periods_per_year=periods_per_year,
         rebalance_every=rebalance_every, no_trade_band=no_trade_band,
+        ic_horizon=ic_horizon,
     ) if not oos_scores.empty else None
 
     return {"oos": oos, "per_window": per_window, "n_splits": len(per_window)}
