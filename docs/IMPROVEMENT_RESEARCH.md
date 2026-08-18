@@ -741,6 +741,49 @@ values) et l'**illiquidité d'Amihud** sur small-caps — ils exigent des fondam
 et des volumes sur 1458 titres × 18 ans, hors de portée des sources actuelles (quota
 Polygon 5 req/min ; panel Yahoo close-only).
 
+### ⭐ ILLIQUIDITÉ D'AMIHUD EN SMALL-CAP — le meilleur candidat de toute la campagne
+
+Correction d'un **contresens** : Amihud (2002) avait été testé sur **50 large-caps** et
+rejeté — or la prime d'illiquidité est *par construction* un phénomène **small-cap**.
+Re-testé au bon endroit (`run_smallcap_illiquidity.py`, 484 small-caps, **vrais volumes**
+Alpaca 2020-2026, 3 hypothèses **pré-enregistrées**, coûts 60 bps) :
+
+| facteur | IC t | **L/S Sharpe net** | LO excès Sh | excès t |
+|---|---|---|---|---|
+| **amihud (illiquidité)** | **+2.29** | **+1.55** | +0.74 | +1.77 |
+| turnover_low (négligé) | +2.23 | +1.47 | +0.62 | +1.50 |
+| volume_shock (attention) | +0.56 | −1.91 | −0.53 | −1.26 |
+
+**Examen approfondi du candidat Amihud (L/S market-neutral — son Sharpe *est* l'alpha) :**
+
+| test | résultat |
+|---|---|
+| Sharpe net total | **+1.55** (t = **+3.72**) |
+| Sous-périodes (COVID / bear 2022 / 2024-26) | **+1.58 / +1.95 / +1.83** — stable partout |
+| Rendement net an. / max drawdown | **+29.4 %** / **−7.4 %** |
+| Sensibilité coûts (25→300 bps) | +1.62 / +1.55 / +1.47 / +1.27 / **+1.07 à 300 bps** |
+| DSR | **0.995** (N=3) · 0.708 (N=11) · 0.233 (N=32) |
+
+C'est le **premier signal de toute la campagne** à combiner : IC significatif, Sharpe L/S
+net élevé, **stabilité sur trois régimes distincts**, drawdown faible, et **robustesse
+extrême aux coûts** (survit à 300 bps). Structure favorable à l'implémentation : on
+**shorte les plus liquides** (borrow facile) et on **achète les plus illiquides** (côté
+achat seulement).
+
+**⚠️ RÉSERVE FATALE — le biais de survie est MAXIMALEMENT concentré sur ce facteur.**
+Acheter les titres **les plus illiquides** revient à acheter exactement ceux qui ont le
+plus de probabilité d'être **radiés** — et les radiés sont **absents** du panel (Alpaca =
+cotés aujourd'hui). Pour tout autre facteur ce biais gonfle modérément ; ici il frappe
+**directement le côté long**. Ajoutons : fenêtre de **6 ans seulement** (profondeur IEX)
+démarrant au creux COVID, et DSR qui échoue si l'on compte les ~32 essais de la campagne.
+
+**Statut : CANDIDAT SÉRIEUX, non inscrit.** La seule validation qui compte pour ce facteur
+précis est un panel **incluant les radiés** (Sharadar/CRSP). Sans lui, impossible de
+distinguer une vraie prime d'illiquidité d'un artefact de survivants. *Note théorique :
+la prime d'illiquidité est une compensation POUR le coût de transaction — sa robustesse
+apparente aux coûts (+1.07 à 300 bps) est cohérente avec la théorie, mais mérite la même
+prudence.*
+
 ## Tier 3 — Durcir le portail contre le sur-apprentissage (multiple testing)
 
 **Externe.** Bailey & López de Prado : le **Deflated Sharpe Ratio (DSR)** corrige
