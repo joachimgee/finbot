@@ -66,9 +66,16 @@ class ReconciliationReport:
         }
 
 
+def _submitted_at(order: dict[str, Any]) -> str | None:
+    """Horodatage de soumission côté broker, en texte ISO (comparable lexicalement)."""
+    val = order.get("submitted_at") or order.get("created_at") or order.get("filled_at")
+    return str(val) if val not in (None, "") else None
+
+
 def reconcile_orders(
     journal_orders: list[dict[str, Any]],
     broker_orders: list[dict[str, Any]],
+    since: str | None = None,
 ) -> ReconciliationReport:
     """Compare les ordres journalisés (réellement soumis) aux ordres du broker.
 
@@ -78,6 +85,22 @@ def reconcile_orders(
             portant un ``order_id``) sont réconciliés.
         broker_orders: ordres tels que rapportés par le broker (``get_orders``),
             avec un identifiant (``order_id`` ou ``id``) et un ``status``.
+        since: horodatage ISO du **début du run**. Les ordres du broker soumis
+            AVANT ce moment sont ignorés du test « inattendu chez le broker ».
+
+            Sans ce bornage, le test est structurellement voué à l'échec sur tout
+            compte ayant un historique : ``get_orders`` renvoie les N derniers
+            ordres du compte — y compris ceux des stratégies précédentes — et
+            chacun est compté comme un ordre ayant contourné le chokepoint. C'est
+            exactement ce qui s'est produit ici : le seul rapport écrit sortait
+            ``ok=false`` à cause d'ordres ORCL/ABT d'une session antérieure, ce qui
+            rendait le critère #1 du runbook (20 runs propres) **inatteignable**.
+            Une alarme qui ne peut jamais s'éteindre n'est plus une alarme.
+
+            Le bornage ne relâche rien du côté qui compte : un ordre journalisé
+            introuvable chez le broker (``missing_at_broker``) reste détecté quel
+            que soit ``since``, et tout ordre postérieur au début du run qui n'est
+            pas au journal reste un drapeau rouge.
 
     Returns:
         :class:`ReconciliationReport`.
@@ -87,8 +110,17 @@ def reconcile_orders(
         for o in journal_orders
         if o.get("status") not in _NON_SUBMITTED and _oid(o) is not None
     ]
+    journal_id_set = {_oid(o) for o in submitted}
+    if since:
+        broker_orders = [
+            o for o in broker_orders
+            # On garde un ordre antérieur au run s'il est au journal (il doit
+            # rester apparié), et tout ordre postérieur au début du run.
+            if _oid(o) in journal_id_set
+            or (_submitted_at(o) or "") >= since
+        ]
     broker_by_id = {_oid(o): o for o in broker_orders if _oid(o) is not None}
-    journal_ids = {_oid(o) for o in submitted}
+    journal_ids = journal_id_set
 
     report = ReconciliationReport()
 

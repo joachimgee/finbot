@@ -28,7 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -199,6 +199,10 @@ def main() -> None:
 
     journal = TradingJournal(
         f"logs/amihud_paper_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")  # noqa: DTZ005
+    # Début du run : borne la réconciliation. Sans elle, get_orders renvoie aussi les
+    # ordres des stratégies précédentes du compte, tous comptés comme « ayant contourné
+    # le chokepoint » -> ok=false perpétuel et critère #1 du runbook inatteignable.
+    run_start = datetime.now(timezone.utc).isoformat()
     journal.record_snapshot(equity=equity, cash=float(acct.get("cash", 0.0)),
                             event="run_start", mode=adapter.mode)
 
@@ -287,7 +291,8 @@ def main() -> None:
     if not dry_run:
         print("\n[3] Réconciliation journal vs broker…")
         recon = reconcile_orders(journal.orders(),
-                                 adapter.get_orders(status="all", limit=400) or [])
+                                 adapter.get_orders(status="all", limit=400) or [],
+                                 since=run_start)
         journal.record_reconciliation(recon.to_dict())
         print(f"    {'✅' if recon.ok else '🚨'} {recon.summary()}")
 

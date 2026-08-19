@@ -300,3 +300,84 @@ Ces points améliorent **robustesse, sûreté et maintenabilité**, pas l'**edge
 La performance reste plafonnée par la **donnée** (univers profond sans biais de
 survie) — établi empiriquement sur 4 familles de signaux dans
 `IMPROVEMENT_RESEARCH.md`. Ne pas confondre les deux axes.
+
+---
+
+## 14. Revue d'état 2026-08-19 — « reste-t-il quelque chose à faire ? »
+
+Audit contradictoire du système tel qu'il tourne, croisé avec
+[NautilusTrader](https://nautilustrader.io/) (parité backtest/live, réconciliation,
+persistance d'état, risque pré-trade) et [QuantConnect/LEAN](https://www.quantconnect.com/)
+(chaîne recherche → backtest → paper → live). Chiffres mesurés, pas estimés :
+**203 modules src / 56 436 LOC / 2 404 tests**.
+
+### 14.1 🔴 Défaut corrigé — la réconciliation ne pouvait JAMAIS passer
+
+`reconcile_orders` compare le journal du run aux ordres du broker, et signale comme
+« inattendu chez le broker » (= ordre ayant contourné le chokepoint audité) tout ordre
+broker absent du journal. Or le runner passait `get_orders(status="all", limit=400)` :
+les **400 derniers ordres du COMPTE**, stratégies précédentes comprises.
+
+Mesuré sur le compte réel, en rejouant le seul run qui avait produit un rapport :
+
+| | appariés | manquants | **inattendus** | verdict |
+|---|---|---|---|---|
+| avant (sans bornage) | 56 | 0 | **88** | 🚨 ÉCART |
+| après (borné au run) | 56 | 0 | **0** | ✅ OK |
+
+Les 88 « anomalies » étaient des ordres ORCL/ABT du book momentum et de la liquidation.
+Conséquence : le **critère #1 du runbook (20 runs consécutifs sans écart) était
+structurellement inatteignable** — et une alarme qui ne peut jamais s'éteindre n'est
+plus une alarme, elle éduque à l'ignorer.
+
+Correctif : `reconcile_orders(..., since=run_start)` ignore les ordres antérieurs au
+début du run. **Le bornage ne relâche rien du côté qui compte** : un ordre journalisé
+introuvable chez le broker reste détecté quel que soit `since`, et tout ordre postérieur
+au début du run absent du journal reste un drapeau rouge (5 tests de régression).
+
+### 14.2 ⚠️ Défauts identifiés, NON corrigés (décision à prendre)
+
+| # | Constat | Gravité | Pourquoi c'est laissé ouvert |
+|---|---|---|---|
+| A | **Le critère #1 n'avance que les jours de rééquilibrage.** La réconciliation est appelée après exécution ; les jours où la garde de cadence tient le book, aucun rapport n'est écrit. 20 runs propres × 21 j ≈ **1,7 an** pour satisfaire le critère. | haute | Le corriger, c'est **redéfinir ce qu'est un « run propre »** pour la porte d'accès au live. Changer unilatéralement la sémantique d'un garde-fou de sûreté serait exactement le genre de décision qui ne m'appartient pas. Piste : les jours tenus, réconcilier les **positions** (broker ↔ book cible) plutôt que les ordres. |
+| B | **La formule d'Amihud est écrite 5 fois** — 1 dans le live (`framework.py:352`), 4 dans les scripts. Elles concordent aujourd'hui (le `×1e9` est un rescale monotone, neutre sur les rangs cross-sectionnels), rien ne garantit qu'elles restent alignées. | haute | C'est la faiblesse structurelle n°1, et **la cause racine des deux bugs du 18-08** (bande gelante, horizon d'IC du moniteur). C'est précisément ce que NautilusTrader vend comme cœur de valeur : *« the same event model, clock, cache and execution flow run in backtest and live »*. Le correctif est un refactor de conception (définition unique du signal, partagée), pas une retouche. |
+| C | **Aucun contrôle de « shortable / easy-to-borrow » dans le chemin d'ordre.** | **basse** | Vérifié sur le book réel : **28/28 des shorts sont `shortable` ET `easy_to_borrow`**. Structurel, pas chanceux : on shorte par construction les titres *les plus liquides*. Reste un contrôle pré-trade standard ailleurs, à ajouter par hygiène. |
+| D | **Aucun plafond de participation / ADV à l'ordre.** La capacité (~19 M$) a été mesurée en backtest, rien ne l'applique en live. | basse | À 97 k$ d'equity sur des titres à 31 M$/jour de volume médian, la participation est de l'ordre de **0,003 %** — immatériel. Devient réel si le capital change d'ordre de grandeur. |
+| E | **`execution_algos` (Almgren-Chriss/TWAP) et `SlicedExecution` existent mais ne sont pas câblés** : les ordres partent au marché. | basse | Même raison que D : sans contrainte de capacité, découper n'apporte rien. À câbler le jour où le capital le justifie. |
+
+### 14.3 Comparaison honnête aux systèmes de référence
+
+| capacité | FinBot | NautilusTrader / LEAN |
+|---|---|---|
+| Portail de validation statistique (IC t, Sharpe net, **DSR, PBO**, purged CV) | ✅ **plus strict** que les deux | ⚪ absent (ce sont des moteurs, pas des juges) |
+| Réconciliation journal ↔ broker | ✅ (bornée depuis ce jour) | ✅ |
+| Chokepoint d'exécution unique + double-verrou paper/live | ✅ | ✅ |
+| Kill-switch + halte gradée sans liquidation auto | ✅ (fondée Kaminski & Lo 2014) | ⚪ variable |
+| Audit quotidien du book + moniteur de décroissance du signal | ✅ | ⚪ à écrire soi-même |
+| Fondamentaux et univers **point-in-time** | ✅ | ⚪ dépend du fournisseur |
+| **Parité backtest/live (un seul chemin de code)** | ❌ **écart n°1** | ✅ argument central |
+| Persistance d'état / redémarrage | ⚠️ contourné (garde de cadence via l'historique broker, sessions éphémères) | ✅ (Redis) |
+| Contrôles pré-trade (notionnel, borrow, rate-limit, marge) | ⚠️ partiels (RiskGuard : concentration, levier, drawdown ; pas de borrow) | ✅ complets |
+| Modèle de fill / latence / carnet | ❌ coûts en bps constants | ✅ configurable |
+
+**Lecture.** Le système est **en avance** sur la partie que la plupart des dépôts
+bâclent — la discipline de preuve — et **en retard** sur la partie que les moteurs
+industriels traitent par construction — l'unicité du chemin de code. Ce n'est pas un
+hasard : ce dépôt a été construit comme un laboratoire de validation, pas comme un
+moteur d'exécution.
+
+### 14.4 Ce qui reste vraiment à faire, par ordre
+
+1. **(B) Définition unique du signal**, partagée backtest ↔ live. Cause racine
+   démontrée de deux bugs en une journée. Le seul chantier de conception restant.
+2. **(A) Décider** de la sémantique de « run propre » pour le critère #1, sinon le
+   passage au live est bloqué ~1,7 an par construction.
+3. **Le forward-test Amihud doit tourner.** C'est la seule chose qui puisse trancher
+   la question du biais de survie, et aucun refactor ne la remplacera. Rien à coder :
+   il faut du **temps calendaire**.
+4. (C) puis (E)/(D) — hygiène, à faire quand le capital le justifie.
+
+**Non, le système n'est pas « fini » — mais ce qui manque n'est plus de la recherche.**
+Les quatre bloquants du rapport de live-readiness sont : #1 réconciliation (voir A),
+#3 **registre vide** (aucun signal validé — c'est l'état honnête), #6 état de cadence,
+#7 webhook d'alerte. Aucun ne se résout par un modèle de plus.
