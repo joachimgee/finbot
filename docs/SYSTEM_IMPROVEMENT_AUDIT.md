@@ -340,7 +340,7 @@ au début du run absent du journal reste un drapeau rouge (5 tests de régressio
 | # | Constat | Gravité | Pourquoi c'est laissé ouvert |
 |---|---|---|---|
 | A | **Le critère #1 n'avance que les jours de rééquilibrage.** La réconciliation est appelée après exécution ; les jours où la garde de cadence tient le book, aucun rapport n'est écrit. 20 runs propres × 21 j ≈ **1,7 an** pour satisfaire le critère. | haute | Le corriger, c'est **redéfinir ce qu'est un « run propre »** pour la porte d'accès au live. Changer unilatéralement la sémantique d'un garde-fou de sûreté serait exactement le genre de décision qui ne m'appartient pas. Piste : les jours tenus, réconcilier les **positions** (broker ↔ book cible) plutôt que les ordres. |
-| B | **La formule d'Amihud est écrite 5 fois** — 1 dans le live (`framework.py:352`), 4 dans les scripts. Elles concordent aujourd'hui (le `×1e9` est un rescale monotone, neutre sur les rangs cross-sectionnels), rien ne garantit qu'elles restent alignées. | haute | C'est la faiblesse structurelle n°1, et **la cause racine des deux bugs du 18-08** (bande gelante, horizon d'IC du moniteur). C'est précisément ce que NautilusTrader vend comme cœur de valeur : *« the same event model, clock, cache and execution flow run in backtest and live »*. Le correctif est un refactor de conception (définition unique du signal, partagée), pas une retouche. |
+| B | ~~La formule d'Amihud est écrite 5 fois~~ → **CORRIGÉ le 2026-08-19**, cf. §15. | ~~haute~~ | Définition unique dans `backtest/illiquidity.py`, consommée par le live, le moniteur et les 5 scripts. Parité vérifiée sur données + garde-fou anti-duplication. |
 | C | **Aucun contrôle de « shortable / easy-to-borrow » dans le chemin d'ordre.** | **basse** | Vérifié sur le book réel : **28/28 des shorts sont `shortable` ET `easy_to_borrow`**. Structurel, pas chanceux : on shorte par construction les titres *les plus liquides*. Reste un contrôle pré-trade standard ailleurs, à ajouter par hygiène. |
 | D | **Aucun plafond de participation / ADV à l'ordre.** La capacité (~19 M$) a été mesurée en backtest, rien ne l'applique en live. | basse | À 97 k$ d'equity sur des titres à 31 M$/jour de volume médian, la participation est de l'ordre de **0,003 %** — immatériel. Devient réel si le capital change d'ordre de grandeur. |
 | E | **`execution_algos` (Almgren-Chriss/TWAP) et `SlicedExecution` existent mais ne sont pas câblés** : les ordres partent au marché. | basse | Même raison que D : sans contrainte de capacité, découper n'apporte rien. À câbler le jour où le capital le justifie. |
@@ -381,3 +381,69 @@ moteur d'exécution.
 Les quatre bloquants du rapport de live-readiness sont : #1 réconciliation (voir A),
 #3 **registre vide** (aucun signal validé — c'est l'état honnête), #6 état de cadence,
 #7 webhook d'alerte. Aucun ne se résout par un modèle de plus.
+
+
+---
+
+## 15. Correctif B — définition unique du signal, partagée backtest ↔ live
+
+Le point (B) du §14 était l'écart n°1 face aux moteurs industriels, et la **cause
+racine démontrée** des deux bugs du 18-08 (bande de non-transaction gelante, horizon
+d'IC du moniteur). Aucun des deux n'était une erreur de formule : les deux étaient des
+erreurs de **duplication** — deux endroits censés dire la même chose, et rien pour
+l'imposer.
+
+### Ce qui a été fait
+
+`backtest/illiquidity.py` devient la **définition canonique** et unique :
+
+* `amihud_illiquidity(close, volume, window)` — la formule ;
+* `prepare_panels(close, volume, min_history_frac)` — le prétraitement (c'était aussi
+  une divergence : les scripts filtraient sur l'historique, le chemin live non) ;
+* `amihud_weights(row, quantile, min_names)` — la construction du book, avec abstention
+  sous `min_names` ;
+* `AmihudSpec` (frozen) — les **paramètres validés** : `window=60`, `quantile=0.2`,
+  `rebalance_every=21`, `cost_bps=60`, `min_names=20`, `no_trade_band=0.0`. Le chemin
+  live ne redéfinit plus ses défauts, il **lit** la spécification.
+
+Consommateurs branchés : `trading/framework.py` (`AmihudConstruction`),
+`monitor_amihud_decay.py`, `run_smallcap_illiquidity.py`,
+`run_amihud_module_transfer.py`, `run_amihud_window_gate.py`,
+`run_microstructure_validation_alpaca.py`.
+
+### La sixième copie
+
+Le grep manuel en avait trouvé cinq. Le **test anti-duplication** en a trouvé une
+**sixième** — `run_microstructure_validation_alpaca.py` — et elle utilisait déjà une
+échelle `×1e6` là où les autres utilisaient `×1e9`. Neutre sur les rangs, donc sans
+conséquence numérique, mais c'était **la dérive en train de commencer**. C'est
+exactement l'argument pour lequel ce test existe : la vigilance humaine avait déjà
+laissé passer 1 copie sur 6.
+
+### Vérification — un refactor ne doit RIEN changer
+
+| contrôle | avant | après |
+|---|---|---|
+| `run_amihud_window_gate.py` (5 fenêtres, PBO, DSR) | 5/5, PBO 43.7 %, IC t +4.43/+4.34/+4.36/+4.44/+4.54 | **identique au bit près** |
+| `run_amihud_module_transfer.py` (16 configs) | réf. +2.13, PBO 61.5 %, DSR 0.999 | **identique** |
+| **book live** (mêmes données, ancien vs nouveau chemin) | 50 lignes | **50 lignes, mêmes symboles, écart de poids max 0.00e+00** |
+| moniteur Amihud | HEALTHY | HEALTHY |
+| suites de tests | vertes | **815 passés** + 15 nouveaux |
+
+### Ce qui garantit que ça tient
+
+Deux tests, et c'est la distinction qui compte :
+
+1. **Parité sur données** (`test_live_and_backtest_produce_the_same_book`, plus une
+   variante sur panel dégradé — trous, titres lacunaires, volumes nuls). Vérifier
+   « les deux chemins appellent la même fonction » ne suffit pas : une refactorisation
+   peut défaire ça sans bruit. On vérifie qu'ils **produisent le même book**.
+2. **Garde anti-duplication** (`test_no_duplicate_amihud_formula_in_the_repo`) : la
+   signature `|r| / $volume` ne doit apparaître que dans le module canonique. Sans lui,
+   le prochain script de recherche la recopiera — c'est ainsi qu'on est arrivé à six.
+
+**Limite assumée** : ce chantier unifie *le signal d'Amihud*, pas *l'ensemble du
+moteur*. La parité complète à la NautilusTrader (même horloge, même modèle
+d'événements, même simulateur de fill en backtest et en live) reste hors de portée de
+ce dépôt, et n'est pas nécessaire pour un book rééquilibré à 21 jours. Ce qui est
+désormais garanti, c'est que **le book qui trade est celui qui a été validé**.

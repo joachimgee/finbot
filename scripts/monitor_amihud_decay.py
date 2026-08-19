@@ -46,10 +46,9 @@ def main() -> int:
 
     from datetime import datetime, timedelta, timezone
 
-    import numpy as np
     import pandas as pd
 
-    from financial_analyzer.backtest.classic_factors import daily_returns
+    from financial_analyzer.backtest.illiquidity import amihud_illiquidity, prepare_panels
     from financial_analyzer.backtest.signal_evaluation import CostModel, evaluate_signal
     from financial_analyzer.data.yahoo_history import fetch_daily_ohlcv_yahoo
 
@@ -71,14 +70,13 @@ def main() -> int:
     if len(o) < 20:
         print("❌ Données insuffisantes — statut inconnu.")
         return 1
-    close = pd.DataFrame({s: d["close"] for s, d in o.items()}).sort_index().ffill()
-    vol = pd.DataFrame({s: d["volume"] for s, d in o.items()}).sort_index()
-    close = close.dropna(axis=1, thresh=int(0.6 * len(close))).dropna(how="all")
-    vol = vol.reindex(columns=close.columns, index=close.index)
-
-    rets = daily_returns(close)
-    dv = (close * vol).replace(0, np.nan)
-    amihud = (rets.abs() / dv).rolling(args.window).mean() * 1e9
+    # Définition du signal : importée, jamais recalculée (cf. backtest/illiquidity.py).
+    close, vol = prepare_panels(
+        pd.DataFrame({s: d["close"] for s, d in o.items()}),
+        pd.DataFrame({s: d["volume"] for s, d in o.items()}),
+    )
+    amihud = amihud_illiquidity(close, vol, window=args.window)
+    rets = close.pct_change()
     recent = amihud.index[-args.lookback:]
     amihud, rets = amihud.reindex(recent), rets.reindex(recent)
 

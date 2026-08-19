@@ -59,6 +59,7 @@ def main() -> int:
     import pandas as pd
 
     from financial_analyzer.backtest.classic_factors import daily_returns
+    from financial_analyzer.backtest.illiquidity import amihud_illiquidity, prepare_panels
     from financial_analyzer.backtest.robustness import probability_of_backtest_overfitting
     from financial_analyzer.backtest.signal_evaluation import (
         CostModel,
@@ -67,13 +68,11 @@ def main() -> int:
     from financial_analyzer.backtest.validation_gate import evaluate_signal_gate
 
     ohlcv = pd.read_pickle(args.ohlcv_cache)
-    close = pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}).sort_index()
-    vol = pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}).sort_index()
-    close = close.ffill().dropna(axis=1, thresh=int(0.6 * len(close))).dropna(how="all")
-    vol = vol.reindex(columns=close.columns, index=close.index)
+    close, vol = prepare_panels(
+        pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}),
+        pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}),
+    )
     rets = daily_returns(close)
-    dollar_vol = (close * vol).replace(0, np.nan)
-    illiq = rets.abs() / dollar_vol  # brut, avant lissage : la fenêtre est LE paramètre
 
     n_trials = PRIOR_TRIALS + len([w for w in WINDOWS if w != LIVE_WINDOW])
     cost = CostModel(commission_bps=COST_BPS, slippage_bps=0.0)
@@ -88,7 +87,8 @@ def main() -> int:
     # --- 1er passage : séries de rendements par fenêtre (pour PBO + dispersion) ---
     panels, series = {}, {}
     for w in WINDOWS:
-        panel = illiq.rolling(w).mean() * 1e9
+        # Définition importée, jamais recalculée — seule la FENÊTRE varie ici.
+        panel = amihud_illiquidity(close, vol, window=w)
         panels[w] = panel
         cur = prev = pd.Series(dtype=float)
         fwd, out = rets.shift(-1), {}

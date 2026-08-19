@@ -54,19 +54,19 @@ def main() -> None:
 
     from financial_analyzer.backtest.classic_factors import daily_returns
     from financial_analyzer.backtest.cost_aware import apply_no_trade_band
+    from financial_analyzer.backtest.illiquidity import amihud_illiquidity, prepare_panels
     from financial_analyzer.backtest.regime import regime_risk_series
     from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
     from financial_analyzer.backtest.vol_management import apply_vol_target
 
     ohlcv = pd.read_pickle(args.ohlcv_cache)
-    close = pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}).sort_index()
-    vol = pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}).sort_index()
-    close = close.ffill().dropna(axis=1, thresh=int(0.6 * len(close))).dropna(how="all")
-    vol = vol.reindex(columns=close.columns, index=close.index)
-
+    close, vol = prepare_panels(
+        pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}),
+        pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}),
+    )
     rets = daily_returns(close)
-    dollar_vol = (close * vol).replace(0, np.nan)
-    amihud = (rets.abs() / dollar_vol).rolling(args.window).mean() * 1e9
+    # Définition importée, jamais recalculée (cf. backtest/illiquidity.py).
+    amihud = amihud_illiquidity(close, vol, window=args.window)
     fwd = rets.shift(-1)
     cost_rate = COST_BPS / 1e4
     reb_set = {amihud.index[i] for i in range(0, len(amihud.index), args.reb)}

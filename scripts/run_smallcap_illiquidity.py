@@ -42,13 +42,14 @@ def main() -> None:
     import pandas as pd
 
     from financial_analyzer.backtest.classic_factors import daily_returns
+    from financial_analyzer.backtest.illiquidity import amihud_illiquidity, prepare_panels
     from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
 
     ohlcv = pd.read_pickle(args.ohlcv_cache)
-    close = pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}).sort_index()
-    vol = pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}).sort_index()
-    close = close.ffill().dropna(axis=1, thresh=int(0.6 * len(close))).dropna(how="all")
-    vol = vol.reindex(columns=close.columns, index=close.index)
+    close, vol = prepare_panels(
+        pd.DataFrame({s: d["close"] for s, d in ohlcv.items()}),
+        pd.DataFrame({s: d["volume"] for s, d in ohlcv.items()}),
+    )
     print(f"Small-caps avec volumes : {close.shape[1]} titres × {close.shape[0]} jours "
           f"({close.index.min():%Y-%m} → {close.index.max():%Y-%m})")
 
@@ -56,7 +57,8 @@ def main() -> None:
     dollar_vol = (close * vol).replace(0, np.nan)
 
     # --- Facteurs pré-enregistrés ---
-    amihud = (rets.abs() / dollar_vol).rolling(args.window).mean() * 1e9  # échelle lisible
+    # Définition importée, jamais recalculée (cf. backtest/illiquidity.py).
+    amihud = amihud_illiquidity(close, vol, window=args.window)
     volume_shock = dollar_vol.rolling(5).mean() / dollar_vol.rolling(args.window).mean()
     turnover_low = -dollar_vol.rolling(args.window).mean()  # signe : long = peu négocié
 

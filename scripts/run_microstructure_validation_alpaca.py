@@ -63,6 +63,7 @@ def main() -> None:
     ap.add_argument("--cache", default="/tmp/alpaca_ohlcv_micro.pkl")
     args = ap.parse_args()
 
+    from financial_analyzer.backtest.illiquidity import amihud_illiquidity
     from financial_analyzer.backtest.classic_factors import compute_classic_factors, daily_returns
     from financial_analyzer.backtest.signal_evaluation import CostModel, evaluate_signal
     from financial_analyzer.data.alpaca_history import fetch_daily_ohlcv
@@ -86,10 +87,11 @@ def main() -> None:
     micro = MicrostructureFeatures(window=args.window)
     ofi = pd.DataFrame({s: micro.compute_order_flow_imbalance(ohlcv[s]) for s in syms}).reindex(close.index)
 
-    # Amihud illiquidité : moyenne glissante de |rdt| / $volume (× 1e6 pour l'échelle).
-    ret = close.pct_change()
-    dollar_vol = pd.DataFrame({s: ohlcv[s]["close"] * ohlcv[s]["volume"] for s in syms}).reindex(close.index)
-    illiq = (ret.abs() / dollar_vol.replace(0, np.nan)).rolling(args.window).mean() * 1e6
+    # Amihud illiquidité : définition IMPORTÉE, jamais recalculée
+    # (cf. backtest/illiquidity.py). Cette copie utilisait une échelle × 1e6 quand les
+    # autres utilisaient × 1e9 : neutre sur les rangs, mais c'était déjà une dérive.
+    volume = pd.DataFrame({s: ohlcv[s]["volume"] for s in syms}).reindex(close.index)
+    illiq = amihud_illiquidity(close, volume, window=args.window)
 
     returns = daily_returns(close)
     fwd = returns.shift(-1)

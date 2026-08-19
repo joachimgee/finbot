@@ -287,13 +287,21 @@ class AmihudConstruction:
     le forward-test étant justement exempt de ce biais.
     """
 
-    def __init__(self, pipeline: object, window: int = 60, quantile: float = 0.2,
-                 min_names: int = 20, lookback_days: int = 400,
-                 consolidated_volume: bool = True) -> None:
+    def __init__(self, pipeline: object, window: int | None = None,
+                 quantile: float | None = None, min_names: int | None = None,
+                 lookback_days: int = 400, consolidated_volume: bool = True,
+                 spec: object | None = None) -> None:
+        # Paramètres par défaut : ceux de la spécification VALIDÉE, pas des valeurs de
+        # confort réécrites ici. Un appelant peut toujours surcharger explicitement.
+        from financial_analyzer.backtest.illiquidity import DEFAULT_SPEC
+
+        sp = spec or DEFAULT_SPEC
         self._p = pipeline
-        self.window = window
-        self.quantile = quantile
-        self.min_names = min_names
+        self.spec = sp
+        self.window = sp.window if window is None else window
+        self.quantile = sp.quantile if quantile is None else quantile
+        self.min_names = sp.min_names if min_names is None else min_names
+        self.min_history_frac = sp.min_history_frac
         self.lookback_days = lookback_days
         # ⚠️ CRITIQUE : le feed Alpaca IEX ne rapporte que le volume de la bourse IEX
         # (~4 % du consolidé, ratio mesuré 20-73×). Amihud calculé dessus est un proxy
@@ -334,26 +342,28 @@ class AmihudConstruction:
         return pd.DataFrame(closes).dropna(how="all"), pd.DataFrame(vols)
 
     def construct(self, signals: Dict[str, float], data: Dict) -> Dict[str, float]:
-        import numpy as np
-        import pandas as pd
-
-        from financial_analyzer.backtest.signal_evaluation import cross_sectional_weights
+        # Définition du signal : **importée**, jamais recalculée ici. Le backtest, le
+        # moniteur et ce book live appellent les mêmes fonctions — c'est ce qui rend
+        # une divergence de définition impossible plutôt qu'improbable
+        # (cf. backtest/illiquidity.py, et tests/test_backtest/test_amihud_parity.py
+        # qui vérifie que les deux chemins produisent le même book).
+        from financial_analyzer.backtest.illiquidity import (
+            amihud_illiquidity,
+            amihud_weights,
+            prepare_panels,
+        )
 
         close_df, vol_df = self._panels(data)
         if close_df.shape[1] < self.min_names:
             return self._p._construct_weights(signals, data)  # repli BL
-        closes = {c: close_df[c] for c in close_df.columns}
-        vols = {c: vol_df[c] for c in vol_df.columns if c in close_df.columns}
         try:
-            close = pd.DataFrame(closes).dropna(how="all")
-            vol = pd.DataFrame(vols).reindex(columns=close.columns, index=close.index)
-            rets = close.pct_change()
-            dollar_vol = (close * vol).replace(0, np.nan)
-            amihud = (rets.abs() / dollar_vol).rolling(self.window).mean()
-            row = amihud.iloc[-1].dropna()
-            if len(row) < self.min_names:
+            close, vol = prepare_panels(close_df, vol_df,
+                                        min_history_frac=self.min_history_frac)
+            amihud = amihud_illiquidity(close, vol, window=self.window)
+            if amihud.empty:
                 return self._p._construct_weights(signals, data)
-            w = cross_sectional_weights(row, quantile=self.quantile, long_short=True)
+            w = amihud_weights(amihud.iloc[-1], quantile=self.quantile,
+                               min_names=self.min_names)
             book = {s: float(x) for s, x in w.items() if abs(x) > 1e-9}
         except Exception:  # noqa: BLE001 - une construction ne doit jamais crasher le run
             return self._p._construct_weights(signals, data)
