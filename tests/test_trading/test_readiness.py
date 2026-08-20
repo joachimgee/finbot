@@ -120,3 +120,30 @@ def test_live_risk_config_criterion_passes(tmp_path: Path) -> None:
     rep = evaluate_readiness([_run(tmp_path, "2026-06-01", recon_ok=True)])
     crit5 = next(c for c in rep.criteria if c.id == 5)
     assert crit5.kind == "auto" and crit5.status == "pass"
+
+
+def test_readiness_report_watches_the_live_book() -> None:
+    """Les motifs par défaut du rapport doivent couvrir le book qui tourne vraiment.
+
+    Régression : la liste nommait ``multistrat_paper_*`` en dur et ne voyait donc pas
+    ``amihud_paper_*``. Le rapport mesurait la préparation au live de stratégies
+    éteintes en ignorant la seule en forward-test — un garde-fou qui regarde ailleurs
+    ne garde rien.
+    """
+    import fnmatch
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2]
+           / "scripts/live_readiness_report.py").read_text(encoding="utf-8")
+    block = re.search(r"patterns = args\.glob or \[(.*?)\]", src, re.S)
+    assert block, "liste de motifs par défaut introuvable"
+    patterns = re.findall(r'"([^"]+)"', block.group(1))
+
+    # Noms de journaux réellement produits par les runners de books paper.
+    for journal in ("logs/amihud_paper_20260820_1318.jsonl",
+                    "logs/multistrat_paper_20260813_2332.jsonl",
+                    "logs/metalabel_paper_20260817_2115.jsonl"):
+        assert any(fnmatch.fnmatch(journal, p) for p in patterns), (
+            f"{journal} n'est couvert par aucun motif par défaut : {patterns}"
+        )

@@ -37,9 +37,14 @@ def main() -> int:
     ap.add_argument("--alert-log", default="logs/alerts.jsonl")
     args = ap.parse_args()
 
+    # Motifs par défaut : ils doivent couvrir le book qui tourne RÉELLEMENT. La liste
+    # précédente nommait `multistrat_paper_*` en dur et ne voyait donc pas
+    # `amihud_paper_*` — le rapport mesurait la préparation de stratégies éteintes et
+    # ignorait la seule en forward-test. Le motif générique `*_paper_*` s'auto-entretient
+    # : tout nouveau book paper est pris en compte sans qu'on ait à y penser.
     patterns = args.glob or [
         "logs/execution_journal_*.jsonl",
-        "logs/multistrat_paper_*.jsonl",
+        "logs/*_paper_*.jsonl",
         "logs/paper_validation_*.jsonl",
     ]
     paths = args.journals or sorted({p for pat in patterns for p in globlib.glob(pat)})

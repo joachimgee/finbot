@@ -18,7 +18,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["ReconciliationReport", "reconcile_orders"]
+__all__ = [
+    "PositionReconciliationReport",
+    "ReconciliationReport",
+    "positions_from_orders",
+    "reconcile_orders",
+    "reconcile_positions",
+]
 
 # Statuts journalisés qui NE correspondent pas à un ordre réellement envoyé.
 _NON_SUBMITTED = {"rejected", "dry_run", "duplicate_skipped"}
@@ -144,5 +150,168 @@ def reconcile_orders(
     for oid, broker in broker_by_id.items():
         if oid not in journal_ids:
             report.unexpected_at_broker.append(broker)
+
+    return report
+
+
+# ---------------------------------------------------------------------------
+# Réconciliation de POSITIONS — les jours où le book est tenu
+# ---------------------------------------------------------------------------
+#
+# La réconciliation d'ordres ci-dessus ne peut s'exécuter que les jours de
+# rééquilibrage : les autres jours, aucun ordre n'est émis. Or le book est tenu 20 jours
+# sur 21. Sans contrôle ces jours-là, le critère « 20 runs consécutifs sans écart » du
+# runbook n'avance que d'un cran toutes les 21 séances — soit ~1,7 an pour être
+# satisfait, ce qui n'est pas une porte d'accès, c'est un mur.
+#
+# Le contrôle des jours tenus porte donc sur l'**état** plutôt que sur les événements :
+# *chaque position détenue est-elle expliquée par l'historique d'ordres du broker ?*
+# C'est la réconciliation de position au sens des moteurs d'exécution (reconstruire
+# depuis les fills, comparer aux positions du venue).
+#
+# **Contrainte durable** : les journaux locaux ne survivent pas aux sessions éphémères
+# (``logs/`` n'est pas versionné). La seule source de vérité qui persiste est le broker
+# lui-même — même raison qui avait fait passer la garde de cadence sur l'historique
+# d'ordres. La reconstruction part donc de ``get_orders``.
+#
+# **Asymétrie assumée, et c'est le cœur de la conception.** Les deux directions d'écart
+# n'ont pas la même valeur de preuve :
+#
+# * **détenu sans explication** → écart RÉEL. Une position que l'historique d'ordres ne
+#   justifie pas signifie qu'un ordre a contourné le chokepoint audité, ou qu'une
+#   opération sur titre a créé une ligne. C'est exactement ce qu'on veut détecter, et
+#   c'est robuste : mesuré 0/56 sur le compte réel.
+# * **attendu sans être détenu** → INFORMATIF seulement. ``get_orders`` ne renvoie qu'une
+#   fenêtre récente : un titre dont les achats sont hors fenêtre mais les ventes dedans
+#   apparaît comme « attendu short, non détenu » alors que rien d'anormal ne s'est
+#   produit. Mesuré sur le compte réel : 22 faux écarts de ce type, tous des large-caps
+#   de l'ancien book momentum liquidé. En faire un échec reproduirait exactement le
+#   défaut qu'on vient de corriger sur la réconciliation d'ordres — une alarme
+#   perpétuellement rouge, donc ignorée.
+#
+# Une clôture normale ne crée aucun bruit : le net des ordres tombe à zéro et le symbole
+# disparaît de l'attendu.
+
+
+@dataclass
+class PositionReconciliationReport:
+    """Résultat d'une réconciliation positions détenues ↔ historique d'ordres."""
+
+    matched: list[dict[str, Any]] = field(default_factory=list)
+    unexpected: list[dict[str, Any]] = field(default_factory=list)
+    qty_mismatch: list[dict[str, Any]] = field(default_factory=list)
+    unexplained_expected: list[dict[str, Any]] = field(default_factory=list)
+    history_truncated: bool = False
+
+    @property
+    def ok(self) -> bool:
+        """Vrai si aucune position inexpliquée ni aucun écart de quantité/sens.
+
+        ``unexplained_expected`` n'entre PAS dans le verdict (cf. l'asymétrie
+        documentée ci-dessus : cette direction est contaminée par la troncature de
+        l'historique du broker).
+        """
+        return not self.unexpected and not self.qty_mismatch
+
+    def summary(self) -> str:
+        trunc = " (historique tronqué)" if self.history_truncated else ""
+        return (
+            f"positions: {len(self.matched)} appariées, "
+            f"{len(self.unexpected)} inexpliquées, "
+            f"{len(self.qty_mismatch)} écarts de quantité, "
+            f"{len(self.unexplained_expected)} attendues non détenues (informatif)"
+            f"{trunc} → {'OK' if self.ok else 'ÉCART'}"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "reconciliation",
+            "scope": "positions",
+            "ok": self.ok,
+            "n_matched": len(self.matched),
+            "unexpected": self.unexpected,
+            "qty_mismatch": self.qty_mismatch,
+            "unexplained_expected": self.unexplained_expected,
+            "history_truncated": self.history_truncated,
+        }
+
+
+def positions_from_orders(broker_orders: list[dict[str, Any]]) -> dict[str, float]:
+    """Reconstruit les positions attendues en sommant les ordres **remplis**.
+
+    Achat = quantité positive, vente = négative. Les symboles au net nul (position
+    ouverte puis refermée) sont écartés : ils ne sont pas « attendus ».
+
+    Args:
+        broker_orders: ordres du broker (``get_orders``), avec ``symbol``, ``side``,
+            ``status`` et ``filled_qty`` (à défaut ``qty``).
+
+    Returns:
+        ``{symbole: quantité nette}``, symboles au net nul exclus.
+    """
+    from collections import defaultdict
+
+    net: dict[str, float] = defaultdict(float)
+    for o in broker_orders:
+        if str(o.get("status", "")).lower() not in _FILLED:
+            continue
+        symbol = str(o.get("symbol") or "")
+        if not symbol:
+            continue
+        raw = o.get("filled_qty")
+        qty = float(raw if raw not in (None, "") else (o.get("qty") or 0) or 0)
+        if str(o.get("side", "")).lower() == "sell":
+            qty = -qty
+        net[symbol] += qty
+    return {s: q for s, q in net.items() if abs(q) > 1e-9}
+
+
+def reconcile_positions(
+    broker_orders: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    *,
+    qty_tolerance: float = 1e-6,
+    order_limit: int | None = None,
+) -> PositionReconciliationReport:
+    """Réconcilie les positions détenues avec l'historique d'ordres du broker.
+
+    À utiliser les jours **sans rééquilibrage** : c'est le contrôle qui prouve que
+    l'état du compte reste celui que le chemin audité a produit.
+
+    Args:
+        broker_orders: historique d'ordres du broker.
+        positions: positions détenues (``get_positions``), avec ``symbol`` et ``qty``.
+        qty_tolerance: écart de quantité toléré avant de déclarer un désaccord.
+        order_limit: limite demandée à ``get_orders``. Si l'historique renvoyé atteint
+            cette limite, il est probablement **tronqué** : on le signale (les positions
+            anciennes peuvent alors paraître inexpliquées à tort).
+
+    Returns:
+        :class:`PositionReconciliationReport`.
+    """
+    expected = positions_from_orders(broker_orders)
+    actual = {
+        str(p.get("symbol")): float(p.get("qty", 0) or 0)
+        for p in positions
+        if p.get("symbol")
+    }
+    truncated = bool(order_limit) and len(broker_orders) >= int(order_limit)
+    report = PositionReconciliationReport(history_truncated=truncated)
+
+    for symbol, qty in sorted(actual.items()):
+        if symbol not in expected:
+            # Détenu sans qu'aucun ordre ne l'explique : drapeau rouge.
+            report.unexpected.append({"symbol": symbol, "qty": qty})
+            continue
+        exp = expected[symbol]
+        entry = {"symbol": symbol, "expected_qty": exp, "actual_qty": qty}
+        if abs(exp - qty) > qty_tolerance:
+            report.qty_mismatch.append(entry)
+        else:
+            report.matched.append(entry)
+
+    for symbol, qty in sorted(expected.items()):
+        if symbol not in actual:
+            report.unexplained_expected.append({"symbol": symbol, "expected_qty": qty})
 
     return report

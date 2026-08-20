@@ -339,7 +339,7 @@ au début du run absent du journal reste un drapeau rouge (5 tests de régressio
 
 | # | Constat | Gravité | Pourquoi c'est laissé ouvert |
 |---|---|---|---|
-| A | **Le critère #1 n'avance que les jours de rééquilibrage.** La réconciliation est appelée après exécution ; les jours où la garde de cadence tient le book, aucun rapport n'est écrit. 20 runs propres × 21 j ≈ **1,7 an** pour satisfaire le critère. | haute | Le corriger, c'est **redéfinir ce qu'est un « run propre »** pour la porte d'accès au live. Changer unilatéralement la sémantique d'un garde-fou de sûreté serait exactement le genre de décision qui ne m'appartient pas. Piste : les jours tenus, réconcilier les **positions** (broker ↔ book cible) plutôt que les ordres. |
+| A | ~~Le critère #1 n'avance que les jours de rééquilibrage (~1,7 an)~~ → **CORRIGÉ le 2026-08-20**, cf. §16. | ~~haute~~ | Réconciliation de **positions** les jours de book tenu + le rapport regarde enfin le bon book. 1,7 an → ~4 semaines. |
 | B | ~~La formule d'Amihud est écrite 5 fois~~ → **CORRIGÉ le 2026-08-19**, cf. §15. | ~~haute~~ | Définition unique dans `backtest/illiquidity.py`, consommée par le live, le moniteur et les 5 scripts. Parité vérifiée sur données + garde-fou anti-duplication. |
 | C | **Aucun contrôle de « shortable / easy-to-borrow » dans le chemin d'ordre.** | **basse** | Vérifié sur le book réel : **28/28 des shorts sont `shortable` ET `easy_to_borrow`**. Structurel, pas chanceux : on shorte par construction les titres *les plus liquides*. Reste un contrôle pré-trade standard ailleurs, à ajouter par hygiène. |
 | D | **Aucun plafond de participation / ADV à l'ordre.** La capacité (~19 M$) a été mesurée en backtest, rien ne l'applique en live. | basse | À 97 k$ d'equity sur des titres à 31 M$/jour de volume médian, la participation est de l'ordre de **0,003 %** — immatériel. Devient réel si le capital change d'ordre de grandeur. |
@@ -447,3 +447,74 @@ moteur*. La parité complète à la NautilusTrader (même horloge, même modèle
 d'événements, même simulateur de fill en backtest et en live) reste hors de portée de
 ce dépôt, et n'est pas nécessaire pour un book rééquilibré à 21 jours. Ce qui est
 désormais garanti, c'est que **le book qui trade est celui qui a été validé**.
+
+
+---
+
+## 16. Correctif A — le critère #1 peut enfin avancer (1,7 an → ~4 semaines)
+
+Le §14.1 avait corrigé la réconciliation d'**ordres** (bornage au run). Restait le
+point (A) : ce contrôle ne s'exécute que les **jours de rééquilibrage**, soit 1 séance
+sur 21. À 20 runs propres exigés, le critère demandait ~1,7 an. Ce n'est pas une porte
+d'accès, c'est un mur.
+
+### La question de conception, et pourquoi elle n'était pas triviale
+
+Corriger, c'était **redéfinir ce qu'est un « run propre »** pour un garde-fou de
+sûreté. La contrainte dure : `logs/` n'est pas versionné, donc les journaux **ne
+survivent pas aux sessions éphémères**. La seule source de vérité durable est le
+**broker** — même raison qui avait fait passer la garde de cadence sur l'historique
+d'ordres. Le contrôle des jours tenus doit donc se reconstruire depuis `get_orders`.
+
+### Ce qui a été mesuré avant de coder
+
+Reconstruction des positions en sommant les ordres remplis, comparée aux positions
+réelles du compte :
+
+| | résultat |
+|---|---|
+| positions détenues appariées (sens **et** quantité) | **56/56 exactes** |
+| détenues sans explication | **0** |
+| attendues non détenues | 22 — **tous** des large-caps de l'ancien book momentum liquidé |
+
+Les 22 sont un pur artefact de **troncature** : `get_orders` ne renvoie qu'une fenêtre,
+et un titre dont les achats sont hors fenêtre mais les ventes dedans apparaît
+« attendu short, non détenu » sans qu'il se soit rien passé. Une clôture normale, elle,
+ne fait aucun bruit (le net tombe à zéro, le symbole disparaît de l'attendu).
+
+### L'asymétrie assumée
+
+Les deux directions n'ont pas la même valeur de preuve, donc elles ne pèsent pas pareil :
+
+* **détenu sans explication → ÉCHEC.** Une ligne que l'historique ne justifie pas
+  signifie qu'un ordre a contourné le chokepoint, ou qu'une opération sur titre a créé
+  une position. Robuste : mesuré 0/56.
+* **écart de quantité ou de sens → ÉCHEC.** Robuste : mesuré 56/56 exactes.
+* **attendu non détenu → INFORMATIF.** En faire un échec reproduirait exactement le
+  défaut corrigé au §14.1 : une alarme perpétuellement rouge, donc ignorée.
+
+Le contrôle **peut échouer** — c'est ce que vérifient d'abord ses tests (position
+étrangère, écart de quantité, inversion de sens), avant de vérifier qu'il reste vert
+sur un book sain.
+
+### Un troisième défaut trouvé en vérifiant
+
+Le contrôle écrivait bien son rapport, et le critère restait à `streak=0`. Cause : les
+motifs par défaut du rapport de readiness nommaient `multistrat_paper_*` **en dur** et
+ne voyaient donc pas `amihud_paper_*`. **Le rapport mesurait la préparation au live de
+stratégies éteintes en ignorant la seule en forward-test.** Un garde-fou qui regarde
+ailleurs ne garde rien.
+
+Motif générique `logs/*_paper_*.jsonl`, qui s'auto-entretient, plus un test qui vérifie
+que les motifs couvrent les noms de journaux réellement produits.
+
+### Résultat
+
+| | avant | après |
+|---|---|---|
+| journaux vus par le rapport | 6 | **24** |
+| critère #1 | `streak=0` | **`streak=1`**, +1 par séance |
+| délai pour 20 runs propres | ~1,7 an | **~4 semaines** |
+
+Le critère reste **bloquant** aujourd'hui, et c'est normal : il doit accumuler ses
+20 séances. Ce qui a changé, c'est qu'il le **peut**.

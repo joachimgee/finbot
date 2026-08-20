@@ -86,6 +86,38 @@ def _peak_equity_from_journals(pattern: str = "logs/amihud_paper_*.jsonl") -> fl
         return None
 
 
+ORDER_HISTORY_LIMIT = 500
+
+
+def _reconcile_held_positions(adapter, journal, positions: list) -> None:
+    """Réconcilie les positions détenues avec l'historique d'ordres du broker.
+
+    Les jours de rééquilibrage, la réconciliation porte sur les ORDRES. Les jours où le
+    book est tenu — 20 sur 21 — aucun ordre n'est émis : sans ce contrôle, le critère #1
+    du runbook (20 runs consécutifs sans écart) n'avancerait que d'un cran toutes les
+    21 séances, soit ~1,7 an. Le contrôle porte donc ici sur l'**état** : chaque position
+    détenue est-elle expliquée par l'historique d'ordres du broker ?
+    """
+    from financial_analyzer.trading.reconciliation import reconcile_positions
+
+    try:
+        orders = adapter.get_orders(status="all", limit=ORDER_HISTORY_LIMIT) or []
+    except Exception as e:  # noqa: BLE001
+        print(f"    (réconciliation de positions impossible — historique illisible : {e})")
+        return
+    rep = reconcile_positions(orders, positions, order_limit=ORDER_HISTORY_LIMIT)
+    print(f"    {'✅' if rep.ok else '🚨'} {rep.summary()}")
+    for u in rep.unexpected[:5]:
+        print(f"       ⚠️ position inexpliquée : {u['symbol']} {u['qty']:+.0f}")
+    for m in rep.qty_mismatch[:5]:
+        print(f"       ⚠️ écart de quantité {m['symbol']} : attendu {m['expected_qty']:+.0f}, "
+              f"détenu {m['actual_qty']:+.0f}")
+    try:
+        journal.record_reconciliation(rep.to_dict())
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _daily_health_check(adapter, journal, equity: float, since: int, cadence: int) -> None:
     """Audit quotidien du book détenu, les jours SANS rééquilibrage."""
     from financial_analyzer.trading.book_health import check_book_health
@@ -111,6 +143,8 @@ def _daily_health_check(adapter, journal, equity: float, since: int, cadence: in
             print(f"    🚨 {a}")
     else:
         print("    ✅ aucune anomalie (neutralité, levier, concentration, drawdown).")
+
+    _reconcile_held_positions(adapter, journal, positions)
 
     # Journalise l'audit + alerte via l'AlertManager si anomalie.
     try:

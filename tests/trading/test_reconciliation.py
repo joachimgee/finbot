@@ -1,7 +1,11 @@
 """Tests de la réconciliation ordres journalisés ↔ broker (P5)."""
 from __future__ import annotations
 
-from financial_analyzer.trading.reconciliation import reconcile_orders
+from financial_analyzer.trading.reconciliation import (
+    positions_from_orders,
+    reconcile_orders,
+    reconcile_positions,
+)
 
 
 def _j(order_id, symbol="AAPL", status="accepted"):
@@ -131,3 +135,98 @@ class TestSinceScoping:
         journal = [{"order_id": "a", "symbol": "AAA", "status": "filled"}]
         broker = [self._broker("a", "2026-08-18T14:05:00+00:00")]
         assert reconcile_orders(journal, broker).ok
+
+
+class TestPositionReconciliation:
+    """Contrôle des jours où le book est TENU : positions ↔ historique d'ordres.
+
+    Sans ce contrôle, le critère #1 du runbook n'avance qu'un jour sur 21 (~1,7 an).
+    Mais un contrôle qui ne peut pas échouer serait pire que rien : les tests
+    ci-dessous vérifient d'abord qu'il **échoue quand il doit**.
+    """
+
+    @staticmethod
+    def _order(symbol, side, qty, status="filled"):
+        return {"symbol": symbol, "side": side, "filled_qty": qty, "status": status,
+                "order_id": f"{symbol}-{side}-{qty}"}
+
+    @staticmethod
+    def _pos(symbol, qty):
+        return {"symbol": symbol, "qty": qty}
+
+    # --- reconstruction ---
+
+    def test_positions_are_rebuilt_from_fills(self) -> None:
+        orders = [self._order("AAA", "buy", 100), self._order("BBB", "sell", 50)]
+        assert positions_from_orders(orders) == {"AAA": 100.0, "BBB": -50.0}
+
+    def test_closed_position_disappears_from_expectation(self) -> None:
+        """Une clôture normale ne doit produire aucun bruit (net nul → écarté)."""
+        orders = [self._order("AAA", "buy", 100), self._order("AAA", "sell", 100)]
+        assert positions_from_orders(orders) == {}
+
+    def test_unfilled_orders_are_ignored(self) -> None:
+        orders = [self._order("AAA", "buy", 100),
+                  self._order("AAA", "buy", 999, status="canceled")]
+        assert positions_from_orders(orders) == {"AAA": 100.0}
+
+    # --- le contrôle échoue quand il doit ---
+
+    def test_position_with_no_matching_order_is_flagged(self) -> None:
+        """Drapeau rouge : une ligne détenue qu'aucun ordre n'explique."""
+        rep = reconcile_positions([self._order("AAA", "buy", 100)],
+                                  [self._pos("AAA", 100), self._pos("ROGUE", 42)])
+        assert not rep.ok
+        assert [u["symbol"] for u in rep.unexpected] == ["ROGUE"]
+
+    def test_quantity_mismatch_is_flagged(self) -> None:
+        rep = reconcile_positions([self._order("AAA", "buy", 100)],
+                                  [self._pos("AAA", 137)])
+        assert not rep.ok
+        assert rep.qty_mismatch[0]["expected_qty"] == 100
+        assert rep.qty_mismatch[0]["actual_qty"] == 137
+
+    def test_side_flip_is_flagged_as_mismatch(self) -> None:
+        """Un short devenu long est un écart, pas un appariement."""
+        rep = reconcile_positions([self._order("AAA", "sell", 100)],
+                                  [self._pos("AAA", 100)])
+        assert not rep.ok and rep.qty_mismatch
+
+    # --- ... et reste vert quand tout va bien ---
+
+    def test_clean_book_reconciles(self) -> None:
+        orders = [self._order("AAA", "buy", 100), self._order("BBB", "sell", 50)]
+        rep = reconcile_positions(orders, [self._pos("AAA", 100), self._pos("BBB", -50)])
+        assert rep.ok and len(rep.matched) == 2 and not rep.unexpected
+
+    def test_truncated_history_does_not_fail_the_run(self) -> None:
+        """L'asymétrie assumée : « attendu non détenu » est INFORMATIF.
+
+        ``get_orders`` ne renvoie qu'une fenêtre : un titre dont les achats sont hors
+        fenêtre et les ventes dedans apparaît attendu-short sans anomalie réelle
+        (mesuré : 22 faux écarts de ce type sur le compte réel). En faire un échec
+        reproduirait le défaut qu'on vient de corriger — une alarme toujours rouge.
+        """
+        orders = [self._order("AAA", "buy", 100), self._order("OLD", "sell", 30)]
+        rep = reconcile_positions(orders, [self._pos("AAA", 100)])
+        assert rep.ok
+        assert [u["symbol"] for u in rep.unexplained_expected] == ["OLD"]
+
+    def test_truncation_is_reported_when_history_hits_the_limit(self) -> None:
+        orders = [self._order(f"S{i}", "buy", 1) for i in range(10)]
+        positions = [self._pos(f"S{i}", 1) for i in range(10)]
+        assert reconcile_positions(orders, positions, order_limit=10).history_truncated
+        assert not reconcile_positions(orders, positions, order_limit=50).history_truncated
+
+    # --- intégration avec le critère de readiness ---
+
+    def test_report_is_countable_by_the_readiness_criterion(self) -> None:
+        """Le rapport doit porter le même ``kind`` que celui des ordres, sinon le
+        critère #1 ne le compte pas — c'est tout l'objet du correctif."""
+        rep = reconcile_positions([self._order("AAA", "buy", 100)], [self._pos("AAA", 100)])
+        d = rep.to_dict()
+        assert d["kind"] == "reconciliation" and d["ok"] is True
+        assert d["scope"] == "positions"      # distingue les deux portées à la lecture
+
+    def test_empty_book_reconciles(self) -> None:
+        assert reconcile_positions([], []).ok

@@ -88,6 +88,14 @@ def load_runs(paths: list[str | Path]) -> list[dict]:
     Un run *exécuté* écrit un enregistrement ``reconciliation`` ; un dry-run n'en a
     pas (il est ignoré du décompte des runs live-pertinents). Fail-safe : un journal
     illisible est ignoré.
+
+    Deux portées coexistent, et c'est voulu : les jours de rééquilibrage la
+    réconciliation porte sur les **ordres** (journal ↔ broker), les jours où le book est
+    tenu elle porte sur les **positions** (détenues ↔ historique d'ordres du broker).
+    Sans la seconde, ce critère n'avancerait que d'un cran toutes les 21 séances — soit
+    ~1,7 an pour être satisfait, ce qui n'est pas une porte d'accès mais un mur. Les deux
+    portées écrivent le même ``kind`` et sont donc comptées de la même façon ; le champ
+    ``scope`` les distingue à la lecture.
     """
     from financial_analyzer.trading.journal import TradingJournal
 
