@@ -552,6 +552,15 @@ titre et par run).
 Un achat n'emprunte rien, et une vente qui **solde un long** n'est pas un short : les
 deux passent sans contrôle d'emprunt.
 
+**⚠️ Limite de la vérification, à ne pas surinterpréter.** Le contrôle est vérifié
+*câblé* (`order_gateway.pretrade` actif) et *correct* (ses tests prouvent qu'il refuse
+quand les drapeaux le disent), mais **pas contre des conditions d'emprunt réelles** :
+sur le compte **paper**, `GME` et `AMC` — notoirement difficiles à emprunter — sont
+rapportés `shortable=True, easy_to_borrow=True`, comme les 28 shorts du book. Les
+métadonnées d'Alpaca paper sont donc permissives et le contrôle ne peut pas mordre ici.
+Il mordra en live, où ces drapeaux reflètent l'inventaire réel du prêteur. Autrement
+dit : (C) est une protection **pour le live**, pas une validation obtenue en paper.
+
 ### (D) Participation
 
 Limite par défaut : **1 % du volume quotidien moyen**. L'assiette vient des volumes
