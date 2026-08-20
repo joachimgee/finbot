@@ -575,6 +575,42 @@ class AlpacaAdapter(BrokerAdapter):
             raise BrokerAPIError(f"Failed to fetch positions: {e}") from e
     
     @retry_on_api_error(max_retries=3, backoff=1.0)
+    def get_asset(self, symbol: str) -> Optional[Dict]:
+        """Métadonnées de négociabilité d'un titre (contrôle pré-trade).
+
+        Args:
+            symbol: symbole à interroger.
+
+        Returns:
+            ``{'symbol', 'tradable', 'shortable', 'easy_to_borrow', 'fractionable',
+            'status'}``, ou ``None`` si le titre est inconnu du broker.
+
+        Note:
+            **Fail-safe volontaire** : une métadonnée illisible renvoie ``None``, et
+            l'appelant décide. Un contrôle pré-trade ne doit pas bloquer un book entier
+            parce qu'une requête d'information a échoué — mais il ne doit pas non plus
+            inventer un ``shortable=True`` qu'il n'a pas vérifié.
+        """
+        if not self.connected or self.api is None:
+            raise BrokerAPIError("Not connected to broker. Call connect() first.")
+
+        self._check_rate_limit()
+
+        try:
+            a = self.api.get_asset(symbol)
+            return {
+                'symbol': getattr(a, 'symbol', symbol),
+                'tradable': bool(getattr(a, 'tradable', False)),
+                'shortable': bool(getattr(a, 'shortable', False)),
+                'easy_to_borrow': bool(getattr(a, 'easy_to_borrow', False)),
+                'fractionable': bool(getattr(a, 'fractionable', False)),
+                'status': str(getattr(a, 'status', '')),
+            }
+        except Exception as e:
+            logger.warning(f"Asset metadata unavailable for {symbol}: {e}")
+            return None
+
+    @retry_on_api_error(max_retries=3, backoff=1.0)
     def get_orders(
         self,
         status: Literal['open', 'closed', 'all'] = 'all',

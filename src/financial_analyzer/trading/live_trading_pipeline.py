@@ -258,6 +258,7 @@ class LiveTradingPipeline:
         account_monitor: Optional[AccountMonitor] = None,
         risk_guard: Optional[RiskGuard] = None,
         journal: Optional[TradingJournal] = None,
+        pretrade: Optional[object] = None,
         target_vol: Optional[float] = None,
         vol_lookback: int = 126,
         max_exposure: float = 1.0,
@@ -330,7 +331,8 @@ class LiveTradingPipeline:
 
         # Single audited execution chokepoint (mode-gate + risk + idempotence +
         # audit). Le journal partagé, s'il est fourni, persiste chaque ordre.
-        self.order_gateway = OrderGateway(self.broker, self.risk_guard, journal=journal)
+        self.order_gateway = OrderGateway(self.broker, self.risk_guard, journal=journal,
+                                          pretrade=pretrade)
 
         # Overlay de gestion de volatilité (Tier 1.2), opt-in. Si target_vol est
         # défini, l'exposition est scalée = min(max_exposure, target_vol/vol_ex_ante)

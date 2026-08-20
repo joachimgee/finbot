@@ -341,9 +341,9 @@ au début du run absent du journal reste un drapeau rouge (5 tests de régressio
 |---|---|---|---|
 | A | ~~Le critère #1 n'avance que les jours de rééquilibrage (~1,7 an)~~ → **CORRIGÉ le 2026-08-20**, cf. §16. | ~~haute~~ | Réconciliation de **positions** les jours de book tenu + le rapport regarde enfin le bon book. 1,7 an → ~4 semaines. |
 | B | ~~La formule d'Amihud est écrite 5 fois~~ → **CORRIGÉ le 2026-08-19**, cf. §15. | ~~haute~~ | Définition unique dans `backtest/illiquidity.py`, consommée par le live, le moniteur et les 5 scripts. Parité vérifiée sur données + garde-fou anti-duplication. |
-| C | **Aucun contrôle de « shortable / easy-to-borrow » dans le chemin d'ordre.** | **basse** | Vérifié sur le book réel : **28/28 des shorts sont `shortable` ET `easy_to_borrow`**. Structurel, pas chanceux : on shorte par construction les titres *les plus liquides*. Reste un contrôle pré-trade standard ailleurs, à ajouter par hygiène. |
-| D | **Aucun plafond de participation / ADV à l'ordre.** La capacité (~19 M$) a été mesurée en backtest, rien ne l'applique en live. | basse | À 97 k$ d'equity sur des titres à 31 M$/jour de volume médian, la participation est de l'ordre de **0,003 %** — immatériel. Devient réel si le capital change d'ordre de grandeur. |
-| E | **`execution_algos` (Almgren-Chriss/TWAP) et `SlicedExecution` existent mais ne sont pas câblés** : les ordres partent au marché. | basse | Même raison que D : sans contrainte de capacité, découper n'apporte rien. À câbler le jour où le capital le justifie. |
+| C | ~~Aucun contrôle shortable / easy-to-borrow~~ → **FAIT le 2026-08-20**, cf. §17. | ~~basse~~ | `trading/pretrade.py`, branché sur le chokepoint. |
+| D | ~~Aucun plafond de participation / ADV~~ → **FAIT le 2026-08-20**, cf. §17. | ~~basse~~ | Limite 1 % du volume quotidien, ordre **réduit** plutôt que refusé. Marge mesurée : ×138. |
+| E | ~~`execution_algos` non câblé~~ → **CÂBLÉ (opt-in) le 2026-08-20**, cf. §17. | ~~basse~~ | `--execution sliced` disponible et testé ; **défaut `direct`**, car découper à 0,007 % de participation triple les ordres sans réduire d'impact. |
 
 ### 14.3 Comparaison honnête aux systèmes de référence
 
@@ -518,3 +518,84 @@ que les motifs couvrent les noms de journaux réellement produits.
 
 Le critère reste **bloquant** aujourd'hui, et c'est normal : il doit accumuler ses
 20 séances. Ce qui a changé, c'est qu'il le **peut**.
+
+
+---
+
+## 17. Correctifs C, D, E — contrôles pré-trade et exécution découpée
+
+Les trois points d'hygiène du §14.2, traités ensemble parce qu'ils s'articulent :
+**(D)** définit une limite de participation, et **(E)** en est la réponse naturelle —
+découper plutôt que renoncer.
+
+### Où ils vivent, et pourquoi c'est le point important
+
+Un nouveau module `trading/pretrade.py`, branché sur l'``OrderGateway``. Le gateway est
+le **chokepoint unique** : y placer les contrôles signifie que *tout* chemin d'ordre en
+hérite — daemon, runner Amihud, exécution découpée — sans qu'aucun appelant ait à y
+penser, et sans possibilité d'en faire l'économie. Les mettre dans les runners aurait
+recréé la duplication que le §15 vient d'éliminer.
+
+Trois issues, et la nuance compte : `allow`, `resize` (l'ordre dépasse la limite mais
+une fraction passe — on réduit, le book se complètera au rééquilibrage suivant), et
+`reject` (infaisable). Refuser en bloc un ordre trop gros laisserait une jambe béante ;
+réduire dégrade proprement.
+
+### (C) Emprunt
+
+Un short exige `shortable` **et** `easy_to_borrow`. Le second n'est pas du zèle : un
+titre *hard-to-borrow* est empruntable cher et surtout **rappelable**, et sur un book
+tenu 21 jours un rappel force un rachat au pire moment. Exigence configurable.
+Nouvelle méthode `AlpacaAdapter.get_asset`, avec cache par symbole (un appel réseau par
+titre et par run).
+
+Un achat n'emprunte rien, et une vente qui **solde un long** n'est pas un short : les
+deux passent sans contrôle d'emprunt.
+
+### (D) Participation
+
+Limite par défaut : **1 % du volume quotidien moyen**. L'assiette vient des volumes
+**consolidés Yahoo** — les mêmes que ceux du signal. Mesurer la participation sur le
+feed IEX (~4 % du volume réel) surestimerait l'impact d'un facteur 20 à 70 et
+déclencherait des réductions injustifiées.
+
+**Mesuré sur le book réel** (56 positions, equity ~99 k$) :
+
+| grandeur | valeur |
+|---|---|
+| participation **maximale** | **0,00723 %** (LEG : 1 804 $ sur 24,96 M$/jour) |
+| participation médiane | 0,00269 % |
+| limite en vigueur | 1,000 % |
+| **marge avant que le contrôle morde** | **×138** |
+
+Autrement dit : le book devrait atteindre ~**13,7 M$** d'equity avant qu'un seul ordre
+touche le plafond. Le contrôle est **armé mais dormant** — c'est exactement ce qu'on
+veut d'un garde-fou de capacité.
+
+### (E) Exécution découpée
+
+`ScheduledExecution` (TWAP / Almgren-Chriss) est désormais atteignable via
+`--execution sliced`, et vérifié de bout en bout : 45 ordres parents → **135 tranches**,
+0 rejet, chaque tranche passant par le **même gateway audité** avec sa propre clé
+d'idempotence.
+
+**Le défaut reste `direct`, et c'est une décision, pas un oubli.** À 0,007 % de
+participation, découper triple le nombre d'ordres — donc le nombre de franchissements
+de spread — pour réduire un impact de marché qui n'existe pas. Le module documente
+lui-même sa limite : sans driver temps réel, les tranches partent en séquence et le
+bénéfice d'étalement ne se matérialise pas. C'est le contrôle (D) qui dira quand
+basculer.
+
+### Ce qui garantit que ces contrôles servent
+
+18 tests, et l'ordre dans lequel ils sont écrits reflète la priorité : ils vérifient
+**d'abord que les contrôles refusent quand ils doivent** (short non empruntable, titre
+non négociable, ordre surdimensionné, ordre irréductible sous une action), *ensuite*
+qu'ils laissent passer un book sain. Un garde-fou incapable de bloquer est pire que pas
+de garde-fou : il donne l'illusion d'une protection.
+
+Comportement en dégradation, explicitement testé : sans politique, comportement
+historique inchangé ; provider en panne → **fail-open** assumé (le broker refusera
+lui-même un short impossible, et ce refus est journalisé donc visible ; l'inverse
+transformerait une panne d'API en arrêt de la stratégie), avec fail-closed disponible
+pour qui préfère.

@@ -89,6 +89,35 @@ def _peak_equity_from_journals(pattern: str = "logs/amihud_paper_*.jsonl") -> fl
 ORDER_HISTORY_LIMIT = 500
 
 
+def _average_dollar_volume(universe: list[str], lookback: int = 60) -> dict[str, float]:
+    """Volume quotidien moyen en dollars, par titre — assiette du contrôle (D).
+
+    Volumes **consolidés** (Yahoo), les mêmes que ceux qui servent au signal : mesurer
+    la participation sur le feed IEX (~4 % du volume réel) surestimerait l'impact d'un
+    facteur 20 à 70 et déclencherait des réductions d'ordres injustifiées.
+    """
+    from datetime import timedelta
+
+    import pandas as pd
+
+    from financial_analyzer.data.yahoo_history import fetch_daily_ohlcv_yahoo
+
+    try:
+        end = datetime.now()  # noqa: DTZ005
+        start = end - timedelta(days=int(lookback * 2.2))
+        o = fetch_daily_ohlcv_yahoo(universe, start.strftime("%Y-%m-%d"),
+                                    end.strftime("%Y-%m-%d"))
+        out: dict[str, float] = {}
+        for sym, df in o.items():
+            dv = (df["close"] * df["volume"]).tail(lookback).dropna()
+            if len(dv) >= 5:
+                out[sym] = float(dv.mean())
+        return out
+    except Exception as e:  # noqa: BLE001 - sans volume, le contrôle (D) s'abstient
+        print(f"    (volumes moyens indisponibles — contrôle de participation inactif : {e})")
+        return {}
+
+
 def _reconcile_held_positions(adapter, journal, positions: list) -> None:
     """Réconcilie les positions détenues avec l'historique d'ordres du broker.
 
@@ -201,6 +230,13 @@ def main() -> None:
     ap.add_argument("--no-trade-band", type=float, default=0.0,
                     help="Bande de non-transaction (0 = désactivée, valeur testée).")
     ap.add_argument("--ignore-cadence", action="store_true")
+    ap.add_argument("--max-participation", type=float, default=0.01,
+                    help="Part max du volume quotidien par ordre (défaut 1 %%).")
+    ap.add_argument("--no-pretrade", action="store_true",
+                    help="Désactive les contrôles d'emprunt et de participation.")
+    ap.add_argument("--execution", choices=("direct", "sliced"), default="direct",
+                    help="'sliced' découpe les ordres (TWAP/Almgren-Chriss).")
+    ap.add_argument("--n-slices", type=int, default=5)
     args = ap.parse_args()
 
     from financial_analyzer.trading.alpaca_adapter import AlpacaAdapter
@@ -284,11 +320,38 @@ def main() -> None:
         "max_leverage": 2.0,  # long/short : le brut atteint ~2× le net
         "enable_circuit_breaker": True,
     }
+    # (C)+(D) Contrôles pré-trade branchés sur le CHOKEPOINT, donc hérités par tous les
+    # ordres : emprunt (un short exige shortable ET easy_to_borrow) et participation au
+    # volume quotidien. Le volume moyen vient des panels consolidés Yahoo déjà utilisés
+    # pour le signal — pas d'une source parallèle qui pourrait diverger.
+    pretrade = None
+    if not args.no_pretrade:
+        from financial_analyzer.trading.pretrade import PretradePolicy
+
+        adv = _average_dollar_volume(universe)
+        pretrade = PretradePolicy(
+            max_participation=args.max_participation,
+            require_easy_to_borrow=True,
+            adv_provider=adv.get,
+            asset_provider=adapter.get_asset,
+        )
+        print(f"    Pré-trade : participation ≤ {args.max_participation:.1%} du volume "
+              f"quotidien ({len(adv)} titres mesurés), short exigeant easy_to_borrow.")
+
     pipeline = LiveTradingPipeline(broker_adapter=adapter, tickers=universe, journal=journal,
                                    no_trade_band=max(0.0, args.no_trade_band),
-                                   risk_config=risk_config)
+                                   risk_config=risk_config, pretrade=pretrade)
     pipeline.construction = AmihudConstruction(pipeline, window=args.window,
                                                quantile=args.quantile)
+    # (E) Exécution découpée (TWAP / Almgren-Chriss) — opt-in. Elle n'a de sens que si
+    # les ordres pèsent devant le volume : à 0,003 % de participation, découper ajoute
+    # des franchissements de spread sans réduire d'impact. Le contrôle (D) ci-dessus dit
+    # quand cela bascule.
+    if args.execution == "sliced":
+        from financial_analyzer.trading.framework import ScheduledExecution
+
+        pipeline.execution = ScheduledExecution(pipeline, n_slices=args.n_slices)
+        print(f"    Exécution DÉCOUPÉE en {args.n_slices} tranches (via le même gateway).")
 
     print(f"\n[1] Book illiquidité (long illiquides / short liquides)…")
     target, _data = pipeline.compute_target_weights()

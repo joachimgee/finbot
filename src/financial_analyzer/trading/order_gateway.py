@@ -18,12 +18,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from financial_analyzer.trading.broker_adapter import BrokerAdapter
-from financial_analyzer.trading.risk_guard import RiskGuard
+from financial_analyzer.trading.risk_guard import InvalidOrderError, RiskGuard
 from financial_analyzer.trading.safety import assert_live_allowed
 from financial_analyzer.utils.helpers import get_logger
 
 if TYPE_CHECKING:
     from financial_analyzer.trading.journal import TradingJournal
+    from financial_analyzer.trading.pretrade import PretradePolicy
 
 logger = get_logger(__name__)
 
@@ -55,6 +56,7 @@ class OrderGateway:
         broker: BrokerAdapter,
         risk_guard: RiskGuard,
         journal: TradingJournal | None = None,
+        pretrade: "PretradePolicy | None" = None,
     ) -> None:
         """
         Args:
@@ -63,10 +65,15 @@ class OrderGateway:
             journal: journal d'exécution optionnel ; si fourni, chaque issue
                 (soumission, dry-run, dédup, rejet) y est persistée. La
                 journalisation ne peut jamais interrompre le trading.
+            pretrade: politique de négociabilité optionnelle (emprunt, participation
+                au volume). Branchée **ici** et pas chez les appelants : le gateway
+                est le chokepoint unique, donc tout chemin d'ordre en hérite sans
+                qu'aucun appelant ait à y penser. ``None`` → comportement inchangé.
         """
         self.broker = broker
         self.risk_guard = risk_guard
         self.journal = journal
+        self.pretrade = pretrade
         # Clés d'idempotence déjà soumises pendant cette session -> résultat broker.
         self._submitted: dict[str, dict[str, Any]] = {}
 
@@ -135,6 +142,23 @@ class OrderGateway:
 
             # 3. Contrôle de risque (les exceptions remontent volontairement).
             self.risk_guard.validate_order(symbol=symbol, qty=qty, side=side, price=price)
+
+            # 3 bis. Négociabilité du titre : emprunt (short) et participation au
+            # volume. Un ordre trop gros est RÉDUIT plutôt que refusé — le book se
+            # complètera au rééquilibrage suivant ; un short non empruntable est refusé.
+            if self.pretrade is not None:
+                decision = self.pretrade.check(symbol, qty, side, price)
+                if decision.action == "reject":
+                    raise InvalidOrderError(f"Pré-trade: {decision.reason}")
+                if decision.action == "resize":
+                    logger.warning("Pré-trade: %s", decision.reason)
+                    self._record(
+                        symbol=symbol, side=side, qty=qty, order_type=order_type,
+                        status="resized", price=price, reason=decision.reason,
+                        dry_run=dry_run, new_qty=decision.qty,
+                    )
+                    qty = decision.qty
+                    key = idempotency_key or f"{symbol}:{side}:{qty}:{order_type}"
         except Exception as e:
             self._record(
                 symbol=symbol, side=side, qty=qty, order_type=order_type,
